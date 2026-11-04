@@ -198,8 +198,9 @@ Independent QA coverage lives in [docs/verification.md](docs/verification.md):
 fallback, redirects, 429/Retry-After, pause → resume, resume across kernel
 restart, cancel/retry/remove, SHA-256 success/mismatch, speed limit, ETag-change
 resume safety, chunked unknown-length, protocol errors, stdin-EOF exit), plus
-measurements: 4.39 MiB binary, ~5.7–6.7 MiB idle resident memory, 109.1 MiB/s
-loopback multi-connection throughput (single run; 139–146 MiB/s in earlier runs).
+measurements: 4.39 MiB binary, ~5.7–6.7 MiB idle resident memory, 109–145 MiB/s
+loopback multi-connection throughput (single runs; machine-specific). The suite
+runs with `npm run verify`.
 
 ## Limitations
 
