@@ -1,0 +1,171 @@
+use crate::engine::{control_error, finalize, Counters, EngineError, Reporter, STALL_TIMEOUT, WRITE_BUFFER_BYTES};
+use crate::error::EngineResult;
+use crate::http;
+use crate::protocol::{Meta, Spec, Status};
+use crate::rate::TokenBucket;
+use crate::task::{Control, Task};
+use reqwest::Client;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+use tokio::time::timeout;
+enum AttemptError {
+    Stopped,
+    Retry { reason: String, retry_after: Option<Duration> },
+    Fatal(EngineError),
+}
+pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, total: Option<u64>, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
+    let control = task.control();
+    let _ = tokio::fs::remove_file(state_path).await;
+    task.set_plan(1, None, 0);
+    task.set_status(Status::Running);
+    task.add_event("plan", Some("single-stream transfer (no range support)".to_string()), None, None, None);
+    task.add_event("started", Some("transfer started".to_string()), None, None, None);
+    if let Some(error) = control_error(&control) {
+        return Err(error);
+    }
+    let limiter = (spec.speed_limit_bps > 0).then(|| Arc::new(TokenBucket::new(spec.speed_limit_bps)));
+    let counters = Arc::new(Counters::default());
+    let reporter = Reporter::start(Arc::clone(task), Arc::clone(&counters), total);
+    let mut attempt = 0u32;
+    let mut result: EngineResult<()> = Ok(());
+    loop {
+        if let Some(error) = control_error(&control) {
+            result = Err(error);
+            break;
+        }
+        attempt += 1;
+        counters.downloaded.store(0, std::sync::atomic::Ordering::Relaxed);
+        match attempt_once(task, &control, client, meta, total, part, &counters, limiter.as_ref()).await {
+            Ok(()) => break,
+            Err(AttemptError::Stopped) => {
+                result = Err(control_error(&control).unwrap_or(EngineError::Cancelled));
+                break;
+            }
+            Err(AttemptError::Fatal(error)) => {
+                result = Err(error);
+                break;
+            }
+            Err(AttemptError::Retry { reason, retry_after }) => {
+                if attempt >= spec.max_attempts.max(1) {
+                    result = Err(EngineError::network(format!("single-stream download failed after {attempt} attempts: {reason}")));
+                    break;
+                }
+                task.note_retry();
+                let delay = retry_after.unwrap_or_else(|| http::backoff(attempt));
+                task.add_event("retry", Some(reason), Some(0), Some(attempt), Some(delay.as_millis().min(u128::from(u64::MAX)) as u64));
+                if !control.sleep(delay).await {
+                    result = Err(control_error(&control).unwrap_or(EngineError::Cancelled));
+                    break;
+                }
+            }
+        }
+    }
+    reporter.stop().await;
+    let final_bytes = counters.downloaded();
+    task.progress(final_bytes, total, 0, 0, counters.peak());
+    result?;
+    let sha = finalize(task, spec, part, state_path, target, total).await?;
+    if let Some(total) = total {
+        task.progress(total, Some(total), 0, 0, counters.peak());
+    }
+    Ok(sha)
+}
+#[allow(clippy::too_many_arguments)]
+async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client, meta: &Meta, total: Option<u64>, part: &Path, counters: &Arc<Counters>, limiter: Option<&Arc<TokenBucket>>) -> Result<(), AttemptError> {
+    let response = tokio::select! {
+        result = client.get(&meta.final_url).send() => result,
+        _ = control.wait_stopped() => return Err(AttemptError::Stopped),
+    };
+    let mut response = match response {
+        Ok(response) => response,
+        Err(error) => return Err(AttemptError::Retry { reason: format!("request failed: {error}"), retry_after: None }),
+    };
+    let status = response.status();
+    if !status.is_success() {
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            return Err(AttemptError::Retry { reason: format!("server returned HTTP {}", status.as_u16()), retry_after: http::retry_after(response.headers()) });
+        }
+        if http::is_retryable_status(status.as_u16()) {
+            return Err(AttemptError::Retry { reason: format!("server returned HTTP {}", status.as_u16()), retry_after: http::retry_after(response.headers()) });
+        }
+        return Err(AttemptError::Fatal(EngineError::http_status(status.as_u16(), &meta.final_url)));
+    }
+    if let (Some(expected), Some(advertised)) = (total, response.content_length()) {
+        if advertised != expected {
+            return Err(AttemptError::Fatal(EngineError::remote_changed(format!("advertised length {advertised} differs from probed {expected}"))));
+        }
+    }
+    let mut file = tokio::fs::File::create(part).await.map_err(|error| AttemptError::Fatal(EngineError::io(format!("create .part: {error}"))))?;
+    let mut buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER_BYTES);
+    let mut received: u64 = 0;
+    loop {
+        let chunk = tokio::select! {
+            result = timeout(STALL_TIMEOUT, response.chunk()) => match result {
+                Ok(result) => result,
+                Err(_) => {
+                    flush(&mut buffer, &mut file, counters).await;
+                    return Err(AttemptError::Retry {
+                        reason: format!(
+                            "no body data for {} s (stalled connection)",
+                            STALL_TIMEOUT.as_secs()
+                        ),
+                        retry_after: None,
+                    });
+                }
+            },
+            _ = control.wait_stopped() => {
+                flush(&mut buffer, &mut file, counters).await;
+                return Err(AttemptError::Stopped);
+            }
+        };
+        let bytes = match chunk {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => break,
+            Err(error) => {
+                flush(&mut buffer, &mut file, counters).await;
+                return Err(AttemptError::Retry { reason: format!("body read failed: {error}"), retry_after: None });
+            }
+        };
+        let len = bytes.len() as u64;
+        counters.add_net_rx(len);
+        if let Some(limiter) = limiter {
+            tokio::select! {
+                _ = limiter.acquire(len) => {}
+                _ = control.wait_stopped() => {
+                    flush(&mut buffer, &mut file, counters).await;
+                    return Err(AttemptError::Stopped);
+                }
+            }
+        }
+        received += len;
+        if let Some(total) = total {
+            if received > total {
+                return Err(AttemptError::Fatal(EngineError::remote_changed(format!("server sent {received} bytes, more than the advertised {total}"))));
+            }
+        }
+        buffer.extend_from_slice(&bytes);
+        if buffer.len() >= WRITE_BUFFER_BYTES {
+            flush(&mut buffer, &mut file, counters).await;
+        }
+    }
+    flush(&mut buffer, &mut file, counters).await;
+    if let Some(total) = total {
+        if received != total {
+            task.add_event("info", Some(format!("short body: {received} of {total} bytes; retrying")), None, None, None);
+            return Err(AttemptError::Retry { reason: format!("single-stream length mismatch: {received} of {total} bytes"), retry_after: None });
+        }
+    }
+    Ok(())
+}
+async fn flush(buffer: &mut Vec<u8>, file: &mut tokio::fs::File, counters: &Arc<Counters>) {
+    if buffer.is_empty() {
+        return;
+    }
+    let len = buffer.len() as u64;
+    if file.write_all(buffer).await.is_ok() {
+        counters.add_downloaded(len);
+    }
+    buffer.clear();
+}

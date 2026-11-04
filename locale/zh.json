@@ -1,0 +1,136 @@
+{
+  "meta": {
+    "title": "RDM 下载器",
+    "description": "常驻 RDM 下载内核，提供 rdm_* 智能体工具与实时下载面板。"
+  },
+  "panel": {
+    "title": "RDM 下载器",
+    "intro": "代理与你共用的常驻下载队列。粘贴链接即可开始，任务会在后台继续。"
+  },
+  "kernel": {
+    "running": "内核运行中",
+    "starting": "内核启动中",
+    "stopped": "内核未运行",
+    "error": "内核错误",
+    "unreachable": "下载器不可用",
+    "connecting": "正在连接内核"
+  },
+  "route": {
+    "errorTitle": "下载面板暂时连不上 Host 端",
+    "errorHint": "插件的 Host 半边可能仍在启动；页面会每秒自动重试。",
+    "retry": "立即重试",
+    "retrying": "重试中…"
+  },
+  "form": {
+    "title": "开始一个下载",
+    "url": "下载链接",
+    "urlPlaceholder": "粘贴下载链接",
+    "start": "开始下载",
+    "starting": "开始中…",
+    "options": "选项",
+    "optionsHide": "收起选项",
+    "directory": "保存到",
+    "directoryPlaceholder": "默认目录",
+    "connections": "连接数",
+    "connectionsPlaceholder": "默认",
+    "urlRequired": "先粘贴一个链接。",
+    "urlInvalid": "只支持 http(s) 链接。",
+    "connectionsInvalid": "连接数需为 1 到 32 的整数。",
+    "startFailed": "下载没能开始。"
+  },
+  "tasks": {
+    "title": "下载",
+    "runningCount": "{n} 个下载中",
+    "idle": "空闲",
+    "failedCount": "{n} 个失败",
+    "filterLabel": "筛选下载",
+    "filterAll": "全部",
+    "filterActive": "未完成",
+    "filterFinished": "历史",
+    "filterEmpty": "这个筛选下没有下载。"
+  },
+  "empty": {
+    "title": "队列是空的",
+    "desc": "代理用 rdm_download 开始的任务会出现在这里；也可以在上方粘贴链接。"
+  },
+  "row": {
+    "pause": "暂停",
+    "resume": "继续",
+    "cancel": "取消下载",
+    "retry": "重新下载",
+    "remove": "从列表移除",
+    "more": "更多操作",
+    "copyPath": "复制路径",
+    "copyUrl": "复制链接",
+    "copiedPath": "已复制路径",
+    "copiedUrl": "已复制链接",
+    "details": "详情",
+    "hideDetails": "收起详情",
+    "size": "大小",
+    "downloaded": "已下载",
+    "speed": "速度",
+    "eta": "剩余",
+    "connections": "连接",
+    "target": "保存到",
+    "savedTo": "已保存到",
+    "progressUnknown": "正在传输，大小未知",
+    "events": "事件",
+    "eventsLoading": "正在加载事件…",
+    "eventsEmpty": "暂无事件。",
+    "eventsFailed": "事件加载失败。",
+    "errorTitle": "操作失败"
+  },
+  "details": {
+    "title": "任务详情",
+    "url": "来源",
+    "path": "保存位置",
+    "size": "大小",
+    "peakConnections": "峰值连接",
+    "chunkSize": "分块大小",
+    "chunkSingle": "单流",
+    "resumedChunks": "续传分块",
+    "checksum": "SHA-256",
+    "expectedChecksum": "预期 SHA-256",
+    "startedAt": "开始",
+    "elapsed": "用时",
+    "retries": "重试次数",
+    "unknown": "未知",
+    "error": "错误详情"
+  },
+  "status": {
+    "queued": "排队中",
+    "probing": "探测中",
+    "running": "下载中",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+    "interrupted": "已中断"
+  },
+  "common": {
+    "loading": "连接中…",
+    "copyFailed": "复制失败"
+  },
+  "error": {
+    "code": {
+      "invalid_request": "请求无效",
+      "not_found": "任务不存在",
+      "conflict": "当前状态不允许该操作",
+      "http_status": "服务器返回 HTTP 错误",
+      "network": "网络错误",
+      "offline": "网络错误",
+      "timeout": "请求超时",
+      "invalid_response": "插件路由返回了无效响应",
+      "remote_changed": "下载期间远程文件发生变化",
+      "checksum_mismatch": "校验和不匹配",
+      "io": "本地文件错误",
+      "cancelled": "已取消",
+      "unsupported": "不支持",
+      "internal": "内核内部错误",
+      "kernel_not_running": "内核尚未运行",
+      "kernel_exited": "内核已退出",
+      "kernel_missing": "内核可执行文件缺失",
+      "unknown": "未知错误"
+    }
+  }
+}

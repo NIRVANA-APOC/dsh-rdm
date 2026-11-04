@@ -1,0 +1,136 @@
+{
+  "meta": {
+    "title": "RDM Downloader",
+    "description": "Resident RDM downloader kernel with rdm_* agent tools and a live download panel."
+  },
+  "panel": {
+    "title": "RDM Downloader",
+    "intro": "A resident download queue shared with your agents. Paste a link to start one; transfers keep running in the background."
+  },
+  "kernel": {
+    "running": "Engine running",
+    "starting": "Engine starting",
+    "stopped": "Engine not running",
+    "error": "Engine error",
+    "unreachable": "Downloader unavailable",
+    "connecting": "Connecting to engine"
+  },
+  "route": {
+    "errorTitle": "The downloader panel can't reach its host",
+    "errorHint": "The plugin's host half may still be starting. This page retries every second.",
+    "retry": "Retry now",
+    "retrying": "Retrying…"
+  },
+  "form": {
+    "title": "Start a download",
+    "url": "Download link",
+    "urlPlaceholder": "Paste a download link",
+    "start": "Start download",
+    "starting": "Starting…",
+    "options": "Options",
+    "optionsHide": "Hide options",
+    "directory": "Save to",
+    "directoryPlaceholder": "Default folder",
+    "connections": "Connections",
+    "connectionsPlaceholder": "Default",
+    "urlRequired": "Paste a link first.",
+    "urlInvalid": "Only http(s) links work.",
+    "connectionsInvalid": "Connections must be a whole number from 1 to 32.",
+    "startFailed": "The download could not start."
+  },
+  "tasks": {
+    "title": "Downloads",
+    "runningCount": "{n} downloading",
+    "idle": "Idle",
+    "failedCount": "{n} failed",
+    "filterLabel": "Filter downloads",
+    "filterAll": "All",
+    "filterActive": "Unfinished",
+    "filterFinished": "History",
+    "filterEmpty": "No downloads match this filter."
+  },
+  "empty": {
+    "title": "The queue is empty",
+    "desc": "Downloads your agents start with rdm_download appear here. You can also paste a link above."
+  },
+  "row": {
+    "pause": "Pause",
+    "resume": "Resume",
+    "cancel": "Cancel download",
+    "retry": "Download again",
+    "remove": "Remove from list",
+    "more": "More actions",
+    "copyPath": "Copy path",
+    "copyUrl": "Copy link",
+    "copiedPath": "Path copied",
+    "copiedUrl": "Link copied",
+    "details": "Details",
+    "hideDetails": "Hide details",
+    "size": "Size",
+    "downloaded": "Downloaded",
+    "speed": "Speed",
+    "eta": "ETA",
+    "connections": "Connections",
+    "target": "Target",
+    "savedTo": "Saved to",
+    "progressUnknown": "Transferring; size unknown",
+    "events": "Events",
+    "eventsLoading": "Loading events…",
+    "eventsEmpty": "No events yet.",
+    "eventsFailed": "Could not load events.",
+    "errorTitle": "Action failed"
+  },
+  "details": {
+    "title": "Task details",
+    "url": "Source",
+    "path": "Saved file",
+    "size": "Size",
+    "peakConnections": "Peak connections",
+    "chunkSize": "Chunk size",
+    "chunkSingle": "Single stream",
+    "resumedChunks": "Resumed chunks",
+    "checksum": "SHA-256",
+    "expectedChecksum": "Expected SHA-256",
+    "startedAt": "Started",
+    "elapsed": "Elapsed",
+    "retries": "Retries",
+    "unknown": "Unknown",
+    "error": "Error detail"
+  },
+  "status": {
+    "queued": "Queued",
+    "probing": "Probing",
+    "running": "Downloading",
+    "paused": "Paused",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "interrupted": "Interrupted"
+  },
+  "common": {
+    "loading": "Connecting…",
+    "copyFailed": "Could not copy"
+  },
+  "error": {
+    "code": {
+      "invalid_request": "Invalid request",
+      "not_found": "Task not found",
+      "conflict": "Action not allowed in the current state",
+      "http_status": "The server returned an HTTP error",
+      "network": "Network error",
+      "offline": "Network error",
+      "timeout": "Timed out",
+      "invalid_response": "Invalid response from the plugin route",
+      "remote_changed": "The remote file changed during download",
+      "checksum_mismatch": "Checksum mismatch",
+      "io": "Local file error",
+      "cancelled": "Cancelled",
+      "unsupported": "Not supported",
+      "internal": "Kernel internal error",
+      "kernel_not_running": "The kernel is not running yet",
+      "kernel_exited": "The kernel exited",
+      "kernel_missing": "The kernel binary is missing",
+      "unknown": "Unknown error"
+    }
+  }
+}

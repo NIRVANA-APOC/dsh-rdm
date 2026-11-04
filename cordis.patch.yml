@@ -1,0 +1,12 @@
+# dsh-rdm bundle patch: insert the resident RDM downloader plugin row.
+# Installed with plugin_manager install_bundle (local directory) or as an npm
+# bundle; the profile boot merges this patch and mounts the Host plugin.
+- insert:
+    - id: dsh-rdm
+      name: dsh-rdm
+      config:
+        connections: 8
+        chunkSizeMiB: 4
+        autoResume: true
+        startOnDemand: true
+        logLevel: warn

@@ -1,0 +1,4 @@
+# The kernel is intentionally compact: it serves one NDJSON task API and keeps
+# its dependency surface small.
+max_width = 240
+use_small_heuristics = "Max"

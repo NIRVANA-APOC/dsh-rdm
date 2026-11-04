@@ -1,0 +1,79 @@
+{
+  "name": "dsh-rdm",
+  "version": "0.1.0",
+  "description": "Resident multi-connection download engine for DeepSeek Harness: rdm_* agent tools, a sidebar download panel, resumable and verifiable transfers.",
+  "type": "module",
+  "main": "lib/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NIRVANA-APOC/dsh-rdm.git"
+  },
+  "homepage": "https://github.com/NIRVANA-APOC/dsh-rdm#readme",
+  "bugs": {
+    "url": "https://github.com/NIRVANA-APOC/dsh-rdm/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "download",
+    "download-manager",
+    "resumable"
+  ],
+  "author": "NIRVANA-APOC",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**",
+    "bin/**",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "screenshots.json",
+    "assets/**",
+    "PROTOCOL.md",
+    "README.md",
+    "docs/**",
+    "kernel/Cargo.toml",
+    "kernel/src/**",
+    "kernel/tests/**",
+    "scripts/**",
+    "vendor/**",
+    "kernel/Cargo.lock",
+    "kernel/rustfmt.toml",
+    "tests/**"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    },
+    "manifestVersion": 1
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:kernel": "node scripts/build-kernel.mjs",
+    "verify": "node scripts/verify-kernel.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT OR Apache-2.0"
+}

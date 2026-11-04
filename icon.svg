@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="RDM Downloader">
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="#0F766E"/>
+  <rect x="2" y="2" width="60" height="30" rx="16" fill="#14B8A6" opacity="0.35"/>
+  <path d="M32 13v23" fill="none" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round"/>
+  <path d="M21 27l11 11 11-11" fill="none" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15 42v5a6 6 0 0 0 6 6h22a6 6 0 0 0 6-6v-5" fill="none" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+</svg>

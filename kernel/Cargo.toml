@@ -1,0 +1,34 @@
+[package]
+name = "rdm-kernel"
+version = "1.0.0"
+edition = "2021"
+description = "Slim resident download kernel for the dsh-rdm DSH plugin"
+license = "MIT OR Apache-2.0"
+
+# Standalone workspace: this crate must not attach to the repo workspace.
+[workspace]
+
+[lib]
+name = "rdm_kernel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rdm-kernel"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+url = "2"
+httpdate = "1"
+percent-encoding = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
