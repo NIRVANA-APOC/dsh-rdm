@@ -34,6 +34,8 @@
     "bin/**",
     "locale/*.json",
     "icon.svg",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
     "cordis.patch.yml",
     "screenshots.json",
     "assets/**",
@@ -51,6 +53,9 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dsh": {
     "bundle": {

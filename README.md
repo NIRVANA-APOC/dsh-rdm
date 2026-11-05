@@ -72,7 +72,13 @@ rdm_wait     { taskIds: ["t_9f3a…"], timeoutSec: 120 }
 
 ## Install
 
-Install straight from GitHub into a profile:
+Install from npm into a profile:
+
+```powershell
+dsh plugin --profile web add dsh-rdm
+```
+
+Or straight from GitHub:
 
 ```powershell
 dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
@@ -88,10 +94,11 @@ Refresh the Web page after the first install. The plugin row is inserted by
 `cordis.patch.yml`; the kernel binary is resolved from
 `bin/<platform>-<arch>/rdm-kernel[.exe]` inside the package.
 
-A GitHub install or a release-tarball install needs no build step: the package
-ships its built `lib/` bundles plus prebuilt kernels for every supported
-platform (see [Prebuilt kernels](#prebuilt-kernels)). Releases also publish the
-complete plugin tarball, which is the most reproducible install:
+An npm install, a GitHub install or a release-tarball install needs no build
+step: the package ships its built `lib/` bundles plus prebuilt kernels for every
+supported platform (see [Prebuilt kernels](#prebuilt-kernels)). GitHub releases
+also publish the complete plugin tarball, which is the most reproducible
+install:
 
 ```powershell
 dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
@@ -276,8 +283,8 @@ exec bit intact, SHA-256 reported); the same check gates every release.
   `dataDir` fallback covers this, and `dataDir` lets deployments pin the store.
 * Visual paint was verified with browser captures against the real bundle, but
   behaviour depends on the host's theme tokens and locale.
-* The plugin is not published to npm; install it from GitHub or a release
-  tarball. Prebuilt kernels are produced by CI, not on the installing host.
+* Kernel binaries are prebuilt by CI: the npm package and every GitHub install
+  carry all five, and installing never compiles Rust on the host.
 
 ## License
 
