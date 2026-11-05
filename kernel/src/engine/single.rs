@@ -98,6 +98,20 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
         }
     }
     let mut file = tokio::fs::File::create(part).await.map_err(|error| AttemptError::Fatal(EngineError::io(format!("create .part: {error}"))))?;
+    let outcome = stream_body(task, control, &mut response, &mut file, total, counters, limiter).await;
+    // `tokio::fs::File` buffers up to 2 MiB of writes internally and polling only
+    // spawns the blocking write; `Drop` does not wait for the final buffer. Flush
+    // here or `finalize()` can stat a still-short .part (a spurious
+    // `remote_changed`) and a retry's `File::create` can truncate the file while
+    // a stale write is still in flight.
+    if let Err(error) = file.flush().await {
+        return Err(AttemptError::Fatal(EngineError::io(format!("flush .part: {error}"))));
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_body(task: &Arc<Task>, control: &Arc<Control>, response: &mut reqwest::Response, file: &mut tokio::fs::File, total: Option<u64>, counters: &Arc<Counters>, limiter: Option<&Arc<TokenBucket>>) -> Result<(), AttemptError> {
     let mut buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER_BYTES);
     let mut received: u64 = 0;
     loop {
@@ -105,7 +119,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
             result = timeout(STALL_TIMEOUT, response.chunk()) => match result {
                 Ok(result) => result,
                 Err(_) => {
-                    flush(&mut buffer, &mut file, counters).await;
+                    flush(&mut buffer, file, counters).await?;
                     return Err(AttemptError::Retry {
                         reason: format!(
                             "no body data for {} s (stalled connection)",
@@ -116,7 +130,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
                 }
             },
             _ = control.wait_stopped() => {
-                flush(&mut buffer, &mut file, counters).await;
+                flush(&mut buffer, file, counters).await?;
                 return Err(AttemptError::Stopped);
             }
         };
@@ -124,7 +138,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
             Ok(Some(bytes)) => bytes,
             Ok(None) => break,
             Err(error) => {
-                flush(&mut buffer, &mut file, counters).await;
+                flush(&mut buffer, file, counters).await?;
                 return Err(AttemptError::Retry { reason: format!("body read failed: {error}"), retry_after: None });
             }
         };
@@ -134,7 +148,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
             tokio::select! {
                 _ = limiter.acquire(len) => {}
                 _ = control.wait_stopped() => {
-                    flush(&mut buffer, &mut file, counters).await;
+                    flush(&mut buffer, file, counters).await?;
                     return Err(AttemptError::Stopped);
                 }
             }
@@ -147,10 +161,10 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
         }
         buffer.extend_from_slice(&bytes);
         if buffer.len() >= WRITE_BUFFER_BYTES {
-            flush(&mut buffer, &mut file, counters).await;
+            flush(&mut buffer, file, counters).await?;
         }
     }
-    flush(&mut buffer, &mut file, counters).await;
+    flush(&mut buffer, file, counters).await?;
     if let Some(total) = total {
         if received != total {
             task.add_event("info", Some(format!("short body: {received} of {total} bytes; retrying")), None, None, None);
@@ -159,13 +173,14 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
     }
     Ok(())
 }
-async fn flush(buffer: &mut Vec<u8>, file: &mut tokio::fs::File, counters: &Arc<Counters>) {
+
+async fn flush(buffer: &mut Vec<u8>, file: &mut tokio::fs::File, counters: &Arc<Counters>) -> Result<(), AttemptError> {
     if buffer.is_empty() {
-        return;
+        return Ok(());
     }
     let len = buffer.len() as u64;
-    if file.write_all(buffer).await.is_ok() {
-        counters.add_downloaded(len);
-    }
+    file.write_all(buffer).await.map_err(|error| AttemptError::Fatal(EngineError::io(format!("write .part: {error}"))))?;
+    counters.add_downloaded(len);
     buffer.clear();
+    Ok(())
 }

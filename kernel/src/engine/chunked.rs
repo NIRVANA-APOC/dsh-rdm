@@ -357,6 +357,13 @@ async fn worker(shared: Arc<Shared>) {
             ClaimOutcome::Failed => break,
         }
     }
+    // `tokio::fs::File` buffers up to 2 MiB of writes internally and `Drop` does
+    // not wait for the last blocking write; flush before the workers are joined,
+    // otherwise `finalize()` can stat a still-short .part (spurious
+    // `remote_changed`). This matters for the tail of every download.
+    if let Err(error) = file.flush().await {
+        shared.fail(EngineError::io(format!("flush .part: {error}")));
+    }
 }
 async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: Claim) -> ClaimOutcome {
     let mut written: u64 = 0;
