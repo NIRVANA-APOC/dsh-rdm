@@ -1,5 +1,5 @@
 // Build the N-API-free resident Rust kernel and ship it with the plugin:
-//   kernel/  --cargo build --release-->  bin/win32-x64/rdm-kernel.exe
+//   kernel/  --cargo build --release-->  bin/<platform>-<arch>/rdm-kernel[.exe]
 //
 // Usage: node scripts/build-kernel.mjs [--no-build]
 //
@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const kernelDir = path.join(root, 'kernel')
-const outDir = path.join(root, 'bin', 'win32-x64')
+// The plugin resolves the bundled kernel from bin/<platform>-<arch>/ at runtime
+// (see resolveKernelPath in src/kernel-client.ts), so the build output must use
+// the same directory layout on every platform.
+const outDir = path.join(root, 'bin', `${process.platform}-${process.arch}`)
 const isWindows = process.platform === 'win32'
 const fileName = isWindows ? 'rdm-kernel.exe' : 'rdm-kernel'
 const builtExe = path.join(kernelDir, 'target', 'release', fileName)

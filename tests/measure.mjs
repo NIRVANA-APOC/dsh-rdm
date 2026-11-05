@@ -1,8 +1,9 @@
 // Measurements for the dsh-rdm verification report:
 //   * kernel Rust source line count
 //   * shipped kernel binary size + sha256
-//   * idle resident memory of a live kernel (Windows WorkingSet64)
-//   * loopback download throughput (multi-connection) + curl.exe single-stream baseline
+//   * idle resident memory of a live kernel (procfs on Linux, `ps` on other
+//     POSIX hosts, WorkingSet64/PeakWorkingSet64 via PowerShell on Windows)
+//   * loopback download throughput (multi-connection) + curl single-stream baseline
 //   * plugin artifact sanity (lib/index.js ESM host bundle, lib/client.js loader wrapper)
 //
 // Every measurement returns a structured entry with an explicit status:
@@ -338,24 +339,54 @@ function syntaxCheck(filePath) {
   }
 }
 
-/** Read WorkingSet64 / PeakWorkingSet64 for one Windows pid via PowerShell. */
-function queryProcessMemory(pid) {
-  const powershell = safeExec('powershell.exe', [
-    '-NoProfile',
-    '-Command',
-    `$p = Get-Process -Id ${pid}; Write-Output $p.WorkingSet64; Write-Output $p.PeakWorkingSet64`,
-  ])
-  if (!powershell.ok) return { ok: false, error: powershell.error, stderr: powershell.stderr }
-  const [workingSetRaw, peakRaw] = powershell.stdout.split(/\r?\n/).map((line) => Number(String(line).trim()))
-  const workingSet = Number.isFinite(workingSetRaw) ? workingSetRaw : null
-  const peak = Number.isFinite(peakRaw) ? peakRaw : null
+/** Package working-set/peak memory numbers (bytes) into the measurement shape. */
+function processMemoryResult(workingSet, peak) {
+  const workingSetBytes = typeof workingSet === 'number' && workingSet > 0 ? workingSet : null
+  const peakBytes = typeof peak === 'number' && peak > 0 ? peak : null
   return {
-    ok: typeof workingSet === 'number' && workingSet > 0,
-    workingSetBytes: workingSet,
-    peakWorkingSetBytes: peak,
-    workingSetMiB: workingSet ? Math.round((workingSet / MIB) * 100) / 100 : null,
-    peakWorkingSetMiB: peak ? Math.round((peak / MIB) * 100) / 100 : null,
+    ok: workingSetBytes !== null,
+    workingSetBytes,
+    peakWorkingSetBytes: peakBytes,
+    workingSetMiB: workingSetBytes ? Math.round((workingSetBytes / MIB) * 100) / 100 : null,
+    peakWorkingSetMiB: peakBytes ? Math.round((peakBytes / MIB) * 100) / 100 : null,
   }
+}
+
+/**
+ * Read resident (working-set) and peak resident memory for one pid, in bytes.
+ * Windows reports both via PowerShell (`WorkingSet64` / `PeakWorkingSet64`);
+ * Linux exposes both in `/proc/<pid>/status` (`VmRSS` / `VmHWM`); other POSIX
+ * hosts fall back to `ps -o rss=`, where a peak value is unavailable.
+ */
+function queryProcessMemory(pid) {
+  if (process.platform === 'win32') {
+    const powershell = safeExec('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `$p = Get-Process -Id ${pid}; Write-Output $p.WorkingSet64; Write-Output $p.PeakWorkingSet64`,
+    ])
+    if (!powershell.ok) return { ok: false, error: powershell.error, stderr: powershell.stderr, workingSetBytes: null }
+    const [workingSetRaw, peakRaw] = powershell.stdout.split(/\r?\n/).map((line) => Number(String(line).trim()))
+    return processMemoryResult(
+      Number.isFinite(workingSetRaw) ? workingSetRaw : null,
+      Number.isFinite(peakRaw) ? peakRaw : null,
+    )
+  }
+  try {
+    const status = fsp.readFileSync(`/proc/${pid}/status`, 'utf8')
+    const readKb = (key) => {
+      const match = status.match(new RegExp(`^${key}:\\s+(\\d+)\\s+kB`, 'm'))
+      return match ? Number(match[1]) * 1024 : null
+    }
+    const result = processMemoryResult(readKb('VmRSS'), readKb('VmHWM'))
+    if (result.ok) return result
+  } catch {
+    /* no procfs (or the pid is gone): fall through to ps */
+  }
+  const ps = safeExec('ps', ['-o', 'rss=', '-p', String(pid)])
+  if (!ps.ok) return { ok: false, error: ps.error, stderr: ps.stderr, workingSetBytes: null }
+  const kib = Number(String(ps.stdout).trim())
+  return processMemoryResult(Number.isFinite(kib) ? kib * 1024 : null, null)
 }
 
 function makeEntry(id, label, status, fields = {}) {
@@ -390,7 +421,11 @@ async function measureLoc(root) {
 }
 
 async function measureBinary(root, kernelPath) {
-  const candidates = [kernelPath, path.join(root, 'bin', 'win32-x64', 'rdm-kernel.exe')]
+  const bundledName = process.platform === 'win32' ? 'rdm-kernel.exe' : 'rdm-kernel'
+  const candidates = [
+    kernelPath,
+    path.join(root, 'bin', `${process.platform}-${process.arch}`, bundledName),
+  ]
   const found = candidates.find((candidate) => candidate && fsp.existsSync(candidate))
   if (!found) {
     return makeEntry('kernel.binary', 'Kernel binary', 'fail', { value: null, unit: 'bytes', details: { candidates } })
@@ -457,7 +492,7 @@ async function measureThroughput(fixture, kernelPath) {
         unit: 'MiB/s',
         details: { reason: `kernel binary missing: ${kernelPath}` },
       }),
-      makeEntry('baseline.curl', 'curl.exe single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: {} }),
+      makeEntry('baseline.curl', 'curl single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: {} }),
     ]
   }
   const tempRoot = await makeTempDir('dsh-rdm-throughput-')
@@ -503,28 +538,30 @@ async function measureThroughput(fixture, kernelPath) {
       }),
     )
 
-    // curl.exe baseline: single connection, no ranges -> comparable wall-clock number.
+    // curl baseline: single connection, no ranges -> comparable wall-clock number.
     // Must run async: the fixture server lives in this Node process.
-    const curlVersion = safeExec('curl.exe', ['--version'])
+    const curlBinary = process.platform === 'win32' ? 'curl.exe' : 'curl'
+    const curlSink = process.platform === 'win32' ? 'NUL' : '/dev/null'
+    const curlVersion = safeExec(curlBinary, ['--version'])
     if (!curlVersion.ok) {
-      entries.push(makeEntry('baseline.curl', 'curl.exe single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: { reason: 'curl.exe not available' } }))
+      entries.push(makeEntry('baseline.curl', 'curl single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: { reason: `${curlBinary} not available` } }))
     } else {
       const curlStart = performance.now()
       const curlResult = await safeExecAsync(
-        'curl.exe',
-        ['-sS', '-o', 'NUL', '-w', '%{speed_download}', '--max-time', '120', '--noproxy', '*', '-4', url],
+        curlBinary,
+        ['-sS', '-o', curlSink, '-w', '%{speed_download}', '--max-time', '120', '--noproxy', '*', '-4', url],
         { timeoutMs: 150000 },
       )
       const curlWallMs = performance.now() - curlStart
       const bytesPerSecond = Number(String(curlResult.stdout).split(/\r?\n/).pop())
       if (!curlResult.ok || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
-        entries.push(makeEntry('baseline.curl', 'curl.exe single-stream loopback baseline', 'skipped', {
+        entries.push(makeEntry('baseline.curl', 'curl single-stream loopback baseline', 'skipped', {
           value: null,
           unit: 'MiB/s',
           details: { error: curlResult.error, stdout: curlResult.stdout, stderr: curlResult.stderr },
         }))
       } else {
-        entries.push(makeEntry('baseline.curl', 'curl.exe single-stream loopback baseline', 'pass', {
+        entries.push(makeEntry('baseline.curl', 'curl single-stream loopback baseline', 'pass', {
           value: Math.round((bytesPerSecond / MIB) * 100) / 100,
           unit: 'MiB/s',
           details: { wallMs: Math.round(curlWallMs), curl: curlVersion.stdout.split(/\r?\n/)[0] },
@@ -538,7 +575,7 @@ async function measureThroughput(fixture, kernelPath) {
       details: { error: `${err.name ?? 'Error'}: ${err.message}` },
     }))
     if (entries.length < 2) {
-      entries.push(makeEntry('baseline.curl', 'curl.exe single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: { reason: 'throughput run failed first' } }))
+      entries.push(makeEntry('baseline.curl', 'curl single-stream loopback baseline', 'skipped', { value: null, unit: 'MiB/s', details: { reason: 'throughput run failed first' } }))
     }
   } finally {
     if (kernel && !kernel.exited.at) {

@@ -48,7 +48,7 @@ dsh-rdm/
 │   ├── Cargo.toml
 │   ├── src/…
 │   └── tests/…
-├── bin/win32-x64/rdm-kernel.exe  # generated kernel binary shipped with plugin
+├── bin/<platform>-<arch>/rdm-kernel[.exe]  # generated kernel binary, built per platform
 └── scripts/
     ├── build.mjs             # esbuild host + client bundles
     ├── build-kernel.mjs      # cargo build --release + copy binary (kernel owner)
@@ -189,17 +189,36 @@ callers); `start`/`control` validate the same way the tools do.
 
 ## Build & install
 
-```powershell
+```bash
 cd dsh-rdm
 npm install                     # local dev deps: esbuild, typescript
-node scripts/build-kernel.mjs   # cargo build --release → bin/<platform>/rdm-kernel
+node scripts/build-kernel.mjs   # cargo build --release → bin/<platform>-<arch>/rdm-kernel[.exe]
 node scripts/build.mjs          # esbuild → lib/index.js + lib/client.js
+node scripts/verify-kernels.mjs --host --run   # host kernel present, right format, starts
 ```
+
+The repository ships prebuilt kernels for `linux-x64`, `linux-arm64`,
+`win32-x64`, `darwin-x64` and `darwin-arm64` under
+`bin/<platform>-<arch>/`. They are produced natively by
+`.github/workflows/prebuilt-kernels.yml` (manual run commits them to `bin/`;
+a `v*` tag attaches the complete plugin tarball plus per-platform kernels to a
+GitHub release). `scripts/verify-kernels.mjs` validates the assembled set —
+existence, executable format (ELF/PE/Mach-O), POSIX exec bit, SHA-256, and a
+`--help` start on native hosts — and gates the release packaging job. Installing
+the plugin never compiles the kernel: `package.json` has no `prepare`/`install`/
+`postinstall` hook, so `dsh plugin add`/`plugin_manager install_bundle` only
+unpacks files and the host resolves the bundled binary lazily.
 
 Install into a profile from GitHub:
 
 ```
 dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
+```
+
+From a release tarball (contains `lib/` and all five kernel directories):
+
+```
+dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
 ```
 
 Or install a local checkout as a directory bundle:
@@ -215,8 +234,9 @@ page/plugin per plugin_manager output.
 
 ## Acceptance criteria
 
-1. `node scripts/build-kernel.mjs` produces `bin/win32-x64/rdm-kernel.exe`;
+1. `node scripts/build-kernel.mjs` produces `bin/<platform>-<arch>/rdm-kernel[.exe]`;
    `node scripts/build.mjs` produces `lib/index.js` + `lib/client.js`;
+   `node scripts/verify-kernels.mjs` passes for all five prebuilt targets;
    kernel unit/integration tests pass.
 2. Kernel supports, against a local fixture server: ranged multi-connection
    download, no-range single-stream fallback, pause→resume (same kernel) and
@@ -229,4 +249,5 @@ page/plugin per plugin_manager output.
 5. Kernel idle resident cost, binary size and source line count are measured and
    documented.
 6. README + verification report document build/install/usage/limits honestly
-   (Linux/macOS binaries not built here; visual UI verification limits).
+   (which hosts run the full e2e suite vs. CI smoke tests; visual UI verification
+   limits).

@@ -13,7 +13,15 @@ import { fileURLToPath } from 'node:url'
 
 export const RDM_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-export const DEFAULT_KERNEL_PATH = path.join(RDM_ROOT, 'bin', 'win32-x64', 'rdm-kernel.exe')
+// The bundled kernel lives under bin/<platform>-<arch>/ (same layout the plugin
+// resolves at runtime), so the suite finds a locally built binary on any host.
+const KERNEL_FILE_NAME = process.platform === 'win32' ? 'rdm-kernel.exe' : 'rdm-kernel'
+export const DEFAULT_KERNEL_PATH = path.join(
+  RDM_ROOT,
+  'bin',
+  `${process.platform}-${process.arch}`,
+  KERNEL_FILE_NAME,
+)
 
 // This host denies the kernel process writing under %LOCALAPPDATA%\Temp (os.tmpdir())
 // — `create_dir_all(<data-dir>/tasks)` fails with ACCESS_DENIED (os error 5) when the
