@@ -257,8 +257,19 @@ built from commit `d1cbed7` on native runners and committed by CI as `9109739`:
 exists, matches its target executable format (ELF / PE / Mach-O), keeps the
 POSIX executable bit, and reports the SHA-256 above; each CI build also starts
 its own binary (`--help`) natively. `npm pack` of the committed tree produces
-`dsh-rdm-0.1.1.tgz` (11,092,948 bytes) containing `lib/` plus all five kernel
+`dsh-rdm-0.1.1.tgz` (~11.1 MB) containing `lib/` plus all five kernel
 directories, with `755` modes preserved for the Unix binaries.
+
+The published release asset is `dsh-rdm-0.1.1.tgz` (11,434,873 bytes; same 59
+entries and identical per-file sizes as the committed tree — the byte
+difference is npm/gzip packaging metadata, not content). Its per-platform
+kernel hashes are listed in the release's `rdm-kernels.sha256`; Linux x64/arm64
+and macOS x64/arm64 rebuilds are byte-identical to the committed copies above.
+The Windows MSVC binary is not byte-identical between the commit run and the tag
+release run: the PE header embeds the linker timestamp, so two builds of the
+same source differ in 24 metadata bytes (same size, same code sections). Treat
+the release's `sha256` asset as the hash of the release files and the table
+above as the hash of the committed `bin/` copies.
 
 **Not verified on the other hosts:** the macOS x64/arm64 and Linux arm64
 binaries only receive the native `--help` smoke test (no e2e suite there), and
