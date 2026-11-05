@@ -43,6 +43,10 @@ without asking an agent to shell out to `curl`.
   talks to the host over the authenticated `POST /api/dsh-rdm/api` route.
 * **Self-contained host half** — the host bundle imports only Node built-ins;
   the schema library it needs is vendored (MIT) and bundled.
+* **Prebuilt kernels, no install-time compile** — `bin/<platform>-<arch>/rdm-kernel[.exe]`
+  ships for Windows x64, Linux x64/arm64 and macOS x64/arm64, built on native CI
+  runners. Installing the plugin never runs cargo; the resident kernel starts
+  lazily from the bundled binary (see [Prebuilt kernels](#prebuilt-kernels)).
 
 ## Tools
 
@@ -84,8 +88,54 @@ Refresh the Web page after the first install. The plugin row is inserted by
 `cordis.patch.yml`; the kernel binary is resolved from
 `bin/<platform>-<arch>/rdm-kernel[.exe]` inside the package.
 
-The repository ships its built `lib/` bundles and the Windows x64 kernel
-binary, so a GitHub install needs no build step.
+A GitHub install or a release-tarball install needs no build step: the package
+ships its built `lib/` bundles plus prebuilt kernels for every supported
+platform (see [Prebuilt kernels](#prebuilt-kernels)). Releases also publish the
+complete plugin tarball, which is the most reproducible install:
+
+```powershell
+dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
+```
+
+## Prebuilt kernels
+
+`rdm-kernel` is a Rust binary, but it is compiled **before** packaging, on a
+machine with the matching toolchain — never on the host that installs the
+plugin. There is no `prepare`/`install`/`postinstall` hook in `package.json`;
+the host resolves the bundled file at runtime and starts it lazily on first use.
+
+| target directory | platform | built on |
+|---|---|---|
+| `bin/linux-x64/rdm-kernel` | Linux x64 | `ubuntu-24.04` |
+| `bin/linux-arm64/rdm-kernel` | Linux arm64 | `ubuntu-24.04-arm` |
+| `bin/win32-x64/rdm-kernel.exe` | Windows x64 | `windows-latest` |
+| `bin/darwin-x64/rdm-kernel` | macOS x64 | `macos-15-intel` |
+| `bin/darwin-arm64/rdm-kernel` | macOS arm64 | `macos-15` |
+
+[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
+builds all five targets natively and runs `node scripts/verify-kernels.mjs --host
+--run` on each runner. Two jobs consume the artifacts:
+
+* **Tag `v*`** — packs `dsh-rdm-<version>.tgz` with `lib/` plus all five bin
+  directories, attaches it, the individual kernels and a `sha256` list to the
+  GitHub release. The tarball is what the release install command above uses.
+* **Manual run (`workflow_dispatch`)** — after building, by default commits the
+  refreshed kernels back into `bin/` on the default branch, so the plain
+  `github:…` install stays cross-platform. Uncheck `commit_binaries` to only
+  produce artifacts. The job needs the repository's workflow token to have
+  write access (Settings → Actions → General → Workflow permissions); branch
+  protection must also allow the bot to push to the default branch.
+
+Local checks (no network, no Rust needed once the binaries exist):
+
+```bash
+node scripts/verify-kernels.mjs            # all five targets, format magic + exec bit + sha256
+node scripts/verify-kernels.mjs --host --run   # current host only, and start it once
+```
+
+The same script runs inside the packaging job, so a release cannot be published
+with a missing or mislabeled kernel. Release artifacts also carry a
+`rdm-kernels.sha256` file.
 
 ## UI
 
@@ -176,20 +226,27 @@ crashes, and task records plus resume state persist across restarts.
 
 ## Build
 
-Requirements: Node ≥ 20 (plugin build), Rust stable with the platform's C toolchain
-(kernel build; the Windows x64 binary here is built with the
-`x86_64-pc-windows-gnu` target and MinGW-w64 GCC on `PATH`).
+Requirements for building locally: Node ≥ 20 (plugin bundles) and Rust stable
+with the platform's C toolchain (kernel). `scripts/build-kernel.mjs` is
+platform-aware: it runs `cargo build --release` and copies the result to
+`bin/${process.platform}-${process.arch}/rdm-kernel[.exe]`, exactly where the
+runtime resolver looks. The Windows CI job uses the MSVC toolchain; a developer
+build uses whatever Rust host toolchain is installed.
 
-```powershell
+```bash
 cd dsh-rdm
 npm install                    # esbuild + typescript (dev only)
-node scripts/build-kernel.mjs  # cargo build --release → bin/<platform>-<arch>/rdm-kernel
+node scripts/build-kernel.mjs  # cargo build --release → bin/<platform>-<arch>/rdm-kernel[.exe]
 node scripts/build.mjs         # esbuild → lib/index.js + lib/client.js
+node scripts/verify-kernels.mjs --host --run   # host binary: present, right format, starts
 npm run verify                 # fixture self-test + kernel e2e suite + measurements
 ```
 
-Only the current platform binary is produced. Linux/macOS binaries are not
-shipped here — build them with the same script on that platform.
+A local build only produces the current host's kernel. The CI workflow in
+[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
+builds every supported target on native runners; binaries are then committed to
+`bin/` (manual run) and attached to releases (tag push). See
+[Prebuilt kernels](#prebuilt-kernels).
 
 ## Verification
 
@@ -200,19 +257,24 @@ restart, cancel/retry/remove, SHA-256 success/mismatch, speed limit, ETag-change
 resume safety, chunked unknown-length, protocol errors, stdin-EOF exit), plus
 measurements: 4.39 MiB binary, ~5.7–6.7 MiB idle resident memory, 109–145 MiB/s
 loopback multi-connection throughput (single runs; machine-specific). The suite
-runs with `npm run verify`.
+runs with `npm run verify`. Prebuilt kernels are additionally checked by
+`npm run verify:kernels` (all five targets present, right executable format,
+exec bit intact, SHA-256 reported); the same check gates every release.
 
 ## Limitations
 
-* The Windows x64 kernel binary is built and verified here; other platforms need
-  a local kernel build.
+* Full kernel e2e verification has been run on Windows x64 and Linux x64 only.
+  The macOS and Linux arm64 binaries are built and smoke-tested (`--help`) on
+  native CI runners, but the 14-scenario e2e suite has not been executed on
+  those hosts.
 * Downloads require origins that speak HTTP/1.1; mirrors, HTTP/2 multiplexing
   preference and per-origin budget learning are not part of this plugin.
 * Some DSH hosts confine child-process writes to the session workspace; the
   `dataDir` fallback covers this, and `dataDir` lets deployments pin the store.
 * Visual paint was verified with browser captures against the real bundle, but
   behaviour depends on the host's theme tokens and locale.
-* The plugin does not install Linux/macOS binaries and is not published to npm.
+* The plugin is not published to npm; install it from GitHub or a release
+  tarball. Prebuilt kernels are produced by CI, not on the installing host.
 
 ## License
 

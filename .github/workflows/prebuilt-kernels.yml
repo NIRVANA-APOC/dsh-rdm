@@ -1,0 +1,273 @@
+name: Prebuilt kernels
+
+# Build real rdm-kernel binaries on every platform the plugin supports and ship
+# them inside the plugin package. The runtime resolver looks for
+# bin/<platform>-<arch>/rdm-kernel[.exe] in the installed package
+# (src/kernel-client.ts, resolveKernelPath), so an install needs no Rust
+# toolchain on the target host — these are the "precompiled kernels" the plugin
+# distribution promises.
+#
+# Triggers:
+#   * workflow_dispatch — build all targets; by default also commit the fresh
+#     binaries into bin/ on the default branch (that keeps `dsh plugin add
+#     github:<owner>/<repo>` cross-platform).
+#   * push of a v* tag — build all targets, pack the complete plugin tarball
+#     (lib/ plus every bin/<platform>-<arch>/) and attach it, the individual
+#     kernels and their sha256 list to a GitHub release. Install an existing
+#     release with:
+#       dsh plugin --profile web add https://github.com/<owner>/<repo>/releases/download/<tag>/dsh-rdm-<version>.tgz
+#
+# Everything runs on GitHub-hosted native runners (no cross-compilation, no
+# Apple SDK requirement); std runners are free for public repositories.
+on:
+  workflow_dispatch:
+    inputs:
+      commit_binaries:
+        description: Commit the freshly built kernels into bin/ on the default branch
+        type: boolean
+        default: true
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: prebuilt-kernels-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.dir }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dir: linux-x64
+            os: ubuntu-24.04
+          - dir: linux-arm64
+            os: ubuntu-24.04-arm
+          - dir: win32-x64
+            os: windows-latest
+          - dir: darwin-x64
+            os: macos-15-intel
+          - dir: darwin-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the kernel (cargo build --release → bin/<platform>-<arch>/)
+        run: node scripts/build-kernel.mjs
+        env:
+          CARGO_TERM_COLOR: always
+
+      - name: Smoke-test the built kernel
+        run: node scripts/verify-kernels.mjs --host --run
+
+      # Archive inside the build job so the executable bit is part of the
+      # artifact; upload-artifact itself does not promise to preserve modes.
+      - name: Bundle the kernel with its exec bit intact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -czf "dist/rdm-kernel-${{ matrix.dir }}.tgz" -C "bin/${{ matrix.dir }}" .
+
+      - name: Upload the kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdm-kernel-${{ matrix.dir }}
+          path: dist/rdm-kernel-${{ matrix.dir }}.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Assemble plugin package
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download every platform kernel
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rdm-kernel-*
+          path: kernels
+          merge-multiple: true
+
+      - name: Unpack kernels into bin/<platform>-<arch>/
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in kernels/rdm-kernel-*.tgz; do
+            dir="${archive##*/rdm-kernel-}"
+            dir="${dir%.tgz}"
+            mkdir -p "bin/${dir}"
+            tar -xzf "${archive}" -C "bin/${dir}"
+          done
+          chmod 755 bin/*/rdm-kernel
+          chmod 644 bin/*/rdm-kernel.exe 2>/dev/null || true
+
+      - name: Verify the assembled kernel set
+        run: node scripts/verify-kernels.mjs
+
+      - name: Check tag and package version agree
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package version v${version}"
+            exit 1
+          fi
+
+      - name: Pack the plugin tarball
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
+
+      - name: Assert every kernel is inside the tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(ls dist/dsh-rdm-*.tgz)"
+          echo "tarball: ${tarball}"
+          tar -tzf "${tarball}" | grep -E '^package/bin/(linux-x64/rdm-kernel|linux-arm64/rdm-kernel|win32-x64/rdm-kernel\.exe|darwin-x64/rdm-kernel|darwin-arm64/rdm-kernel)$' | sort
+          count="$(tar -tzf "${tarball}" | grep -cE '^package/bin/[^/]+/rdm-kernel(\.exe)?$')"
+          if [ "${count}" -ne 5 ]; then
+            echo "::error::expected 5 kernels inside ${tarball}, found ${count}"
+            exit 1
+          fi
+          sha256sum bin/*/rdm-kernel bin/*/rdm-kernel.exe 2>/dev/null | sed 's#bin/##' | sort > dist/rdm-kernels.sha256
+
+      - name: Upload the plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-rdm-package
+          path: |
+            dist/dsh-rdm-*.tgz
+            dist/rdm-kernels.sha256
+          if-no-files-found: error
+
+      - name: Upload the assembled kernels
+        uses: actions/upload-artifact@v4
+        with:
+          name: rdm-kernels-all
+          path: bin
+          if-no-files-found: error
+
+  commit:
+    name: Commit kernels into bin/
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && inputs.commit_binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download the assembled kernels
+        uses: actions/download-artifact@v4
+        with:
+          name: rdm-kernels-all
+          path: bin
+
+      - name: Commit and push the refreshed binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod 755 bin/*/rdm-kernel
+          chmod 644 bin/*/rdm-kernel.exe 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bin
+          if git diff --cached --quiet; then
+            echo "bin/ is already up to date"
+            exit 0
+          fi
+          git commit -m "chore: update prebuilt rdm-kernel binaries [skip ci]"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+  release:
+    name: Publish release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+
+      - name: Download the plugin package
+        uses: actions/download-artifact@v4
+        with:
+          name: dsh-rdm-package
+          path: dist
+
+      - name: Download every platform kernel
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rdm-kernel-*
+          path: kernels
+          merge-multiple: true
+
+      - name: Name the per-platform release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets/work
+          for archive in kernels/rdm-kernel-*.tgz; do
+            dir="${archive##*/rdm-kernel-}"
+            dir="${dir%.tgz}"
+            mkdir -p "assets/work/${dir}"
+            tar -xzf "${archive}" -C "assets/work/${dir}"
+            source="assets/work/${dir}/rdm-kernel"
+            [ -f "${source}" ] || source="assets/work/${dir}/rdm-kernel.exe"
+            if [ ! -f "${source}" ]; then
+              echo "::error::missing kernel for ${dir}"
+              exit 1
+            fi
+            suffix=""
+            [ "${source##*.}" = "exe" ] && suffix=".exe"
+            cp "${source}" "assets/rdm-kernel-${dir}${suffix}"
+          done
+          sha256sum assets/rdm-kernel-* | sed 's#assets/##' | sort > assets/rdm-kernels.sha256
+          cat assets/rdm-kernels.sha256
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(ls dist/dsh-rdm-*.tgz)"
+          gh release create "${GITHUB_REF_NAME}" \
+            "${tarball}" \
+            assets/rdm-kernel-linux-* \
+            assets/rdm-kernel-win32-* \
+            assets/rdm-kernel-darwin-* \
+            assets/rdm-kernels.sha256 \
+            --title "dsh-rdm ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag

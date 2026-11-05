@@ -5,5 +5,9 @@ tests/.tmp-e2e/
 .tmp/
 .tmp-*/
 .design/
+.cargo-home/
+dist/
+reports/
+bin/*/*.old-*
 *.log
 .DS_Store
