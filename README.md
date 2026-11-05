@@ -72,16 +72,16 @@ rdm_wait     { taskIds: ["t_9f3a…"], timeoutSec: 120 }
 
 ## Install
 
-Install from npm into a profile:
-
-```powershell
-dsh plugin --profile web add dsh-rdm
-```
-
-Or straight from GitHub:
+Install straight from GitHub into a profile:
 
 ```powershell
 dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
+```
+
+Or install the published npm package:
+
+```powershell
+dsh plugin --profile web add dsh-rdm
 ```
 
 Or install a local checkout as a directory bundle from a DSH session:
