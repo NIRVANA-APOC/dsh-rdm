@@ -257,7 +257,10 @@ restart, cancel/retry/remove, SHA-256 success/mismatch, speed limit, ETag-change
 resume safety, chunked unknown-length, protocol errors, stdin-EOF exit), plus
 measurements: 4.39 MiB binary, ~5.7–6.7 MiB idle resident memory, 109–145 MiB/s
 loopback multi-connection throughput (single runs; machine-specific). The suite
-runs with `npm run verify`. Prebuilt kernels are additionally checked by
+runs with `npm run verify`. The 0.1.1 prebuilt kernel set is additionally
+e2e-verified on Linux x64 (14/14, 241/241) and smoke-tested on the other native
+CI runners; see [verification §7](docs/verification.md#7-prebuilt-kernel-refresh-2026-11-05-dsh-rdm-011--kernel-101).
+Prebuilt kernels are additionally checked by
 `npm run verify:kernels` (all five targets present, right executable format,
 exec bit intact, SHA-256 reported); the same check gates every release.
 

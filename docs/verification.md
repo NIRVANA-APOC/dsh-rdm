@@ -6,7 +6,11 @@ protocol ([PROTOCOL.md](../PROTOCOL.md)), the live plugin path through the
 installed DSH plugin, measured size/resource/throughput numbers, and static
 sanity of the built plugin bundles.
 
-* Host: Windows x64 only. Linux/macOS kernels are **not built and not verified**.
+* Host: Windows x64 only for the 0.1.0 run below. **2026-11-05 refresh:** the
+  0.1.1 prebuilt kernel set covers `linux-x64`, `linux-arm64`, `win32-x64`,
+  `darwin-x64` and `darwin-arm64`, built on native CI runners and committed
+  under `bin/`; Linux x64 is e2e-verified and the others are smoke-tested by
+  their build runner. See §7.
 * Status legend: `PASS` = observed and asserted by the harness; `FAIL` =
   observed and not meeting the stated criterion; `NOT VERIFIED` = explicitly out
   of scope / no evidence, never claimed as success.
@@ -177,8 +181,11 @@ Numbers from the final run (single run, machine-specific).
   click-through, locale switching and theme tokens are covered by separate
   browser-capture and DOM-contract work, not by this kernel suite; static bundle
   sanity of `lib/client.js` is reported above.
-* **Linux/macOS kernels are not built or tested** — only
-  `bin/win32-x64/rdm-kernel.exe`.
+* **Full Linux/macOS e2e coverage** — the 0.1.0 run documented here was Windows
+  x64 only. For 0.1.1, Linux x64 ran the full 14-scenario suite (§7); the macOS
+  x64/arm64 and Linux arm64 binaries are only smoke-tested (`--help`) on native
+  CI runners, and the Windows binary was rebuilt with MSVC and smoke-tested
+  there too. The suite has not been executed on macOS or on any arm64 host.
 * **HTTPS/TLS** (valid, invalid/`insecure`, SNI), **HTTP proxy** (`proxy`), custom
   **headers/cookie/referer/userAgent**, HTTP redirect auth semantics, HTTP/2,
   mirrors, and per-origin budget learning are not covered by this suite (the
@@ -212,3 +219,48 @@ Numbers from the final run (single run, machine-specific).
   users; the harness accepts either and records which happened.
 * Sandboxed-host data-dir behaviour is described in §2; it is a host environment
   limitation, not kernel behaviour.
+
+## 7. Prebuilt kernel refresh (2026-11-05, dsh-rdm 0.1.1 / kernel 1.0.1)
+
+A Linux x64 e2e run of the 0.1.1 kernel surfaced one real defect that the
+Windows 0.1.0 run had not caught, and it was fixed before this refresh:
+
+* **Defect:** `tokio::fs::File` buffers up to 2 MiB of writes internally and
+  only spawns the blocking write; dropping the handle does not wait for it. The
+  single-stream path could therefore reach `finalize()` while the `.part` inode
+  was still short, failing a healthy download with `remote_changed: file size
+  425984 does not match advertised 524288` (reproduced deterministically as
+  scenario 4 of the suite; a retry could also truncate over a stale write).
+* **Fix:** `kernel/src/engine/single.rs` flushes the response file before
+  returning and propagates write errors; `kernel/src/engine/chunked.rs` flushes
+  when its workers exit (commit `109e7d8`).
+* **Verification after the fix:** full suite on the local Linux x64 build —
+  14/14 scenarios, 241/241 checks, run twice; full suite on the CI-built
+  `linux-x64` binary — 14/14 scenarios, 241/241 checks; `cargo test --release`
+  27 passed / 0 failed across the crate; `cargo fmt --all --check` passing.
+
+Prebuilt kernels were produced by GitHub Actions workflow run
+[41987197780](https://github.com/NIRVANA-APOC/dsh-rdm/actions/runs/41987197780)
+(all `Build *` jobs, `Assemble plugin package` and `Commit kernels into bin/`
+succeeded; the release job is tag-only and was skipped on this manual run),
+built from commit `d1cbed7` on native runners and committed by CI as `9109739`:
+
+| target | built on | size (bytes) | sha256 |
+|---|---|---|---|
+| `bin/linux-x64/rdm-kernel` | `ubuntu-24.04` | 4,863,920 | `321a9d446396e88aaad5c3cd4976677c9ffe9c1571ff07a587290e155ffed091` |
+| `bin/linux-arm64/rdm-kernel` | `ubuntu-24.04-arm` | 4,404,112 | `76432ed43a6ee2aaa404d42f8b149da1ee7130abe8f879c0af21375a26c9d2bd` |
+| `bin/win32-x64/rdm-kernel.exe` | `windows-latest` (MSVC) | 5,328,384 | `40d750d4b154b2ee1ad3793092545e8e90baac8d7297e637fb4880c22fdd11f9` |
+| `bin/darwin-x64/rdm-kernel` | `macos-15-intel` | 4,498,496 | `3dc3ac8fac05e0d20d7bc228117a7a802487714039bc1558a3f2744c1281c0df` |
+| `bin/darwin-arm64/rdm-kernel` | `macos-15` (arm64) | 4,227,600 | `3661c6d54a27f056e99fde359d78e4b6262a5e36048941928de772f74689577c` |
+
+`node scripts/verify-kernels.mjs` passes 5/5 on the committed tree: every file
+exists, matches its target executable format (ELF / PE / Mach-O), keeps the
+POSIX executable bit, and reports the SHA-256 above; each CI build also starts
+its own binary (`--help`) natively. `npm pack` of the committed tree produces
+`dsh-rdm-0.1.1.tgz` (11,092,948 bytes) containing `lib/` plus all five kernel
+directories, with `755` modes preserved for the Unix binaries.
+
+**Not verified on the other hosts:** the macOS x64/arm64 and Linux arm64
+binaries only receive the native `--help` smoke test (no e2e suite there), and
+the Windows 0.1.1 MSVC binary replaces the 0.1.0 MinGW binary that passed the
+Windows 14/14 run; both are the same crate source, but the toolchains differ.
