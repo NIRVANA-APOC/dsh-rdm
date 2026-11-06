@@ -11,6 +11,9 @@ pub const MAX_CONNECTIONS: usize = 32;
 pub const DEFAULT_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 pub const MIN_CHUNK_SIZE: u64 = 256 * 1024;
 pub const MAX_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
+/// Automatic chunk sizing (`chunkSizeBytes: 0`) targets four chunks per
+/// connection, bounded by `MIN_CHUNK_SIZE` and this cap.
+pub const MAX_AUTO_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 pub const DEFAULT_MAX_ATTEMPTS: u32 = 6;
 pub const EVENT_RING_CAPACITY: usize = 200;
 
@@ -31,11 +34,12 @@ impl KernelInfo {
 pub struct Config {
     pub default_dir: Option<String>, pub connections: usize, pub chunk_size_bytes: u64,
     pub speed_limit_bps: u64, pub max_attempts: u32, pub auto_resume: bool, pub log_level: String,
+    pub fsync_on_complete: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { default_dir: None, connections: DEFAULT_CONNECTIONS, chunk_size_bytes: 0, speed_limit_bps: 0, max_attempts: DEFAULT_MAX_ATTEMPTS, auto_resume: true, log_level: "warn".to_string() }
+        Self { default_dir: None, connections: DEFAULT_CONNECTIONS, chunk_size_bytes: 0, speed_limit_bps: 0, max_attempts: DEFAULT_MAX_ATTEMPTS, auto_resume: true, log_level: "warn".to_string(), fsync_on_complete: false }
     }
 }
 
@@ -86,7 +90,7 @@ pub struct Spec {
     pub chunk_size_bytes: u64, pub headers: BTreeMap<String, String>, pub cookie: Option<String>,
     pub referer: Option<String>, pub user_agent: Option<String>, pub expected_sha256: Option<String>,
     pub speed_limit_bps: u64, pub resume: bool, pub single_stream: bool, pub proxy: Option<String>,
-    pub insecure: bool, pub max_attempts: u32,
+    pub insecure: bool, pub max_attempts: u32, #[serde(default)] pub fsync_on_complete: bool,
 }
 
 impl Spec {
@@ -137,6 +141,7 @@ impl Spec {
             proxy: raw.proxy.filter(|v| !v.is_empty()),
             insecure: raw.insecure,
             max_attempts: raw.max_attempts.unwrap_or(config.max_attempts).max(1),
+            fsync_on_complete: config.fsync_on_complete,
         })
     }
     pub fn user_agent(&self) -> &str {

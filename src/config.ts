@@ -36,6 +36,8 @@ export interface RdmConfig {
   connections?: number
   /** Default chunk size in MiB (0 = auto, else 0.25..64). */
   chunkSizeMiB?: number
+  /** Flush each completed file to stable storage before renaming it (slower). */
+  fsyncOnComplete?: boolean
   /** Default global/per-task bandwidth cap in bytes/second (0 = unlimited). */
   speedLimitBps?: number
   /** Per-chunk retry budget for new tasks (1..100). */
@@ -64,13 +66,18 @@ export interface ResolvedRdmConfig {
   kernelPath: string
   logLevel: LogLevel
   startOnDemand: boolean
+  fsyncOnComplete: boolean
 }
 
 /** Default config values, exported so tests and docs share one source. */
 export const CONFIG_DEFAULTS: ResolvedRdmConfig = {
   defaultDir: '',
   connections: 8,
-  chunkSizeMiB: 4,
+  // 0 = automatic chunk sizing in the kernel (four chunks per connection,
+  // bounded to 0.25..8 MiB). A fixed 4 MiB default under-uses the connection
+  // pool for files below ~32 MiB: a 10 MiB download then runs three ranges
+  // instead of ten and takes about twice as long on a fast origin.
+  chunkSizeMiB: 0,
   speedLimitBps: 0,
   maxAttempts: 6,
   autoResume: true,
@@ -78,6 +85,7 @@ export const CONFIG_DEFAULTS: ResolvedRdmConfig = {
   kernelPath: '',
   logLevel: 'warn',
   startOnDemand: true,
+  fsyncOnComplete: false,
 }
 
 /**
@@ -134,6 +142,10 @@ export const Config = z.object({
     .boolean()
     .description('Start the kernel on first use instead of at plugin load.')
     .default(CONFIG_DEFAULTS.startOnDemand),
+  fsyncOnComplete: z
+    .boolean()
+    .description('Flush each completed file to stable storage (fsync) before renaming it. Off by default: it adds a full file flush to every download and protects only against OS/power loss.')
+    .default(CONFIG_DEFAULTS.fsyncOnComplete),
 })
 
 // ── Direct-call default resolution ──────────────────────────────────────────
@@ -190,5 +202,6 @@ export function resolveConfig(config: RdmConfig | undefined): ResolvedRdmConfig 
     kernelPath: stringOr(raw.kernelPath, CONFIG_DEFAULTS.kernelPath),
     logLevel: logLevelOr(raw.logLevel, CONFIG_DEFAULTS.logLevel),
     startOnDemand: booleanOr(raw.startOnDemand, CONFIG_DEFAULTS.startOnDemand),
+    fsyncOnComplete: booleanOr(raw.fsyncOnComplete, CONFIG_DEFAULTS.fsyncOnComplete),
   }
 }

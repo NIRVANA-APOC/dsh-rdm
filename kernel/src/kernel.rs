@@ -59,6 +59,7 @@ pub struct Kernel {
     tasks: Mutex<TaskTable>,
     outbox: Outbox,
     background_stop: Notify,
+    status_notify: Arc<Notify>,
     shutting_down: AtomicBool,
     self_ref: OnceLock<std::sync::Weak<Kernel>>,
 }
@@ -76,6 +77,7 @@ impl Kernel {
             tasks: Mutex::new(TaskTable { by_id: HashMap::new(), order: Vec::new() }),
             outbox,
             background_stop: Notify::new(),
+            status_notify: Arc::new(Notify::new()),
             shutting_down: AtomicBool::new(false),
             self_ref: OnceLock::new(),
         });
@@ -119,7 +121,7 @@ impl Kernel {
                 continue;
             }
             table.order.push(id.clone());
-            table.by_id.insert(id, Task::from_record(record));
+            table.by_id.insert(id, Task::from_record(record, Arc::clone(&self.status_notify)));
         }
         Ok(())
     }
@@ -140,7 +142,7 @@ impl Kernel {
     }
     async fn persist(&self, task: &Arc<Task>) {
         let record = task.record();
-        let data = match serde_json::to_vec_pretty(&record) {
+        let data = match serde_json::to_vec(&record) {
             Ok(data) => data,
             Err(error) => {
                 klog!(warn, "could not serialize task: {error}");
@@ -171,7 +173,7 @@ impl Kernel {
                 if task.take_notification(Duration::from_millis(500), now) {
                     self.notify(&task);
                 }
-                if task.take_dirty() {
+                if task.take_persist(Duration::from_millis(1_000), now) {
                     self.persist(&task).await;
                 }
             }
@@ -204,7 +206,7 @@ impl Kernel {
         http::client_for_spec(&spec)?;
         tokio::fs::create_dir_all(&spec.dir).await.map_err(|error| ApiError::new("io", format!("{}: {error}", spec.dir.display())))?;
         let id = new_task_id();
-        let task = Task::new(id, spec);
+        let task = Task::new(id, spec, Arc::clone(&self.status_notify));
         {
             let mut table = self.tasks.lock().expect("tasks mutex poisoned");
             table.order.push(task.id.clone());
@@ -270,7 +272,18 @@ impl Kernel {
                 return Ok(json!({ "tasks": views, "timedOut": !terminal }));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            tokio::time::sleep(remaining.min(Duration::from_millis(50))).await;
+            // Wake on the next status transition instead of polling every 50 ms:
+            // a terminal task is reported as soon as the engine finalizes it.
+            let notified = self.status_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if tasks.iter().all(|task| task.status().is_terminal()) {
+                continue;
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep(remaining) => {}
+            }
         }
     }
     pub async fn control(&self, id: &str, action: &str, delete_part: bool) -> Result<Value, ApiError> {

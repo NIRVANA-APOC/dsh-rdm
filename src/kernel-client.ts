@@ -671,6 +671,7 @@ function normalizeInitializeConfig(raw: unknown): InitializeConfig {
     maxAttempts: uint(record.maxAttempts, DEFAULT_MAX_ATTEMPTS),
     autoResume: bool(record.autoResume, true),
     logLevel: str(record.logLevel, 'warn'),
+    fsyncOnComplete: bool(record.fsyncOnComplete, false),
   }
 }
 
@@ -1004,6 +1005,7 @@ export class KernelService {
       maxAttempts: this.config.maxAttempts,
       autoResume: this.config.autoResume,
       logLevel: this.config.logLevel,
+      fsyncOnComplete: this.config.fsyncOnComplete,
     }
     if (overrides !== undefined) {
       for (const key of Object.keys(overrides) as (keyof InitializeParams)[]) {

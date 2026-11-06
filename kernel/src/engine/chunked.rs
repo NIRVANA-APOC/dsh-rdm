@@ -1,4 +1,4 @@
-use crate::engine::{control_error, finalize, prepare_part, Counters, EngineError, Reporter, Slot, SAVE_INTERVAL, STALL_TIMEOUT, WRITE_BUFFER_BYTES};
+use crate::engine::{control_error, finalize, prepare_part, Counters, EngineError, Reporter, Slot, SAVE_INTERVAL, STALL_TIMEOUT};
 use crate::error::EngineResult;
 use crate::http;
 use crate::klog;
@@ -107,10 +107,10 @@ impl Shared {
             }
         }
     }
-    async fn save_state(&self) {
+    async fn save_state(&self, durable: bool) {
         let _guard = self.save_lock.lock().await;
         let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, self.scheduler.completed_ranges(), self.counters.downloaded());
-        if let Err(error) = state::save_atomic(&self.state_path, &state).await {
+        if let Err(error) = state::save_atomic(&self.state_path, &state, durable).await {
             klog!(warn, "could not save resume state: {error}");
         }
         *self.last_save.lock().expect("save mutex poisoned") = Instant::now();
@@ -122,7 +122,10 @@ impl Shared {
         }
         let due = self.last_save.lock().expect("save mutex poisoned").elapsed() >= SAVE_INTERVAL;
         if due {
-            self.save_state().await;
+            // Periodic resume state is written without fsync: the bytes are in
+            // the page cache, a process crash keeps them, and an OS crash loses
+            // data and state together. Pause/stop/final paths fsync.
+            self.save_state(false).await;
         } else {
             self.dirty.store(true, Ordering::SeqCst);
         }
@@ -248,7 +251,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let _ = timeout(Duration::from_secs(2), saver).await;
     reporter.stop().await;
     if let Some(outcome) = control.stop_kind() {
-        shared.save_state().await;
+        shared.save_state(true).await;
         task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
         return Err(match outcome {
             StopKind::Paused => EngineError::Paused,
@@ -261,12 +264,12 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         return super::single::run(task, spec, client, meta, Some(total), target, part, state_path).await;
     }
     if let Some(error) = shared.take_failure() {
-        shared.save_state().await;
+        shared.save_state(true).await;
         task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
         return Err(error);
     }
     if !scheduler.is_finished() {
-        shared.save_state().await;
+        shared.save_state(true).await;
         task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
         return Err(EngineError::internal("transfer ended before every byte range completed"));
     }
@@ -518,7 +521,8 @@ async fn stream_body(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: &C
     if let Err(error) = file.seek(SeekFrom::Start(claim.start + written)).await {
         return BodyResult::Fatal(EngineError::io(format!("seek failed: {error}")));
     }
-    let mut buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER_BYTES);
+    let buffer_limit = super::write_buffer_bytes(claim.len());
+    let mut buffer: Vec<u8> = Vec::with_capacity(buffer_limit);
     loop {
         if written >= claim.len() {
             return BodyResult::Complete;
@@ -566,7 +570,7 @@ async fn stream_body(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: &C
             }
         }
         buffer.extend_from_slice(&bytes);
-        if buffer.len() >= WRITE_BUFFER_BYTES {
+        if buffer.len() >= buffer_limit {
             written = flush1!(&mut buffer, file, written);
             claim.update_progress(written);
             shared.dirty.store(true, Ordering::SeqCst);

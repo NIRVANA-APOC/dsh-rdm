@@ -193,7 +193,7 @@ settings); defaults are shown in `cordis.patch.yml`.
 |---|---|---|
 | `defaultDir` | `""` | default download directory; empty = `<active dataDir>/downloads` |
 | `connections` | `8` | per-task connection cap (1–32) |
-| `chunkSizeMiB` | `4` | request chunk size used by the planner |
+| `chunkSizeMiB` | `0` | fixed request chunk size (0.25–64 MiB); `0` = automatic (four chunks per connection, 0.25–8 MiB) |
 | `speedLimitBps` | `0` | default per-task bandwidth limit (0 = unlimited) |
 | `maxAttempts` | `6` | per-chunk retry budget |
 | `autoResume` | `true` | resume interrupted tasks on kernel restart |
@@ -201,6 +201,7 @@ settings); defaults are shown in `cordis.patch.yml`.
 | `kernelPath` | `""` | explicit kernel binary override |
 | `logLevel` | `warn` | kernel stderr log level |
 | `startOnDemand` | `true` | start the kernel on first use instead of plugin load |
+| `fsyncOnComplete` | `false` | flush a finished file to stable storage before renaming it (slower, survives power loss) |
 
 Kernel state lives in `<dataDir>/tasks/*.json`; incomplete downloads use
 `<target>.part` + `<target>.part.json` next to the final file and resume from
@@ -225,8 +226,9 @@ bin/<platform>/ built kernel binary shipped with the plugin
 Engine flow: `probe (HEAD → ranged GET fallback) → plan (chunk size, target
 name, resume scan) → chunked worker pool with a dynamic chunk queue and AIMD
 concurrency → retries/backoff/Retry-After → SHA-256 verify → atomic rename`.
-Pause/cancel are cooperative; one kernel process is restarted with backoff if it
-crashes, and task records plus resume state persist across restarts.
+Pause/cancel are cooperative and event-driven (no timer polling); one kernel
+process is restarted with backoff if it crashes, and task records plus resume
+state persist across restarts.
 
 [PROTOCOL.md](PROTOCOL.md) documents the exact kernel contract;
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes the design.

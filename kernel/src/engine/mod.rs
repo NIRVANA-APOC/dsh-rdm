@@ -17,8 +17,20 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout, MissedTickBehavior};
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
-pub const WRITE_BUFFER_BYTES: usize = 256 * 1024;
+/// Largest per-worker write buffer. Writes are dispatched to the blocking pool
+/// one at a time, so a 256 KiB buffer spends a measurable share of a transfer
+/// inside that hand-off; 1 MiB cuts the dispatch count 4x at a bounded memory
+/// cost (1 MiB per worker, 32 MiB at the 32-connection cap).
+pub const WRITE_BUFFER_BYTES: usize = 1024 * 1024;
+pub const MIN_WRITE_BUFFER_BYTES: usize = 256 * 1024;
 pub const SAVE_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Write buffer for one claim: a quarter of the chunk size, bounded to
+/// [256 KiB, 1 MiB], so small chunks do not allocate a full megabyte each.
+pub fn write_buffer_bytes(chunk_size: u64) -> usize {
+    let quarter = (chunk_size / 4).max(1);
+    usize::try_from(quarter).unwrap_or(WRITE_BUFFER_BYTES).clamp(MIN_WRITE_BUFFER_BYTES, WRITE_BUFFER_BYTES)
+}
 pub enum EngineOutcome {
     Completed { sha256: Option<String> },
     Paused,
@@ -188,7 +200,9 @@ pub async fn finalize(task: &Arc<Task>, spec: &Spec, part: &Path, state_path: &P
             return Err(EngineError::remote_changed(format!("file size {} does not match advertised {total}", metadata.len())));
         }
     }
-    sync_all(part).await?;
+    if spec.fsync_on_complete {
+        sync_all(part).await?;
+    }
     let sha256 = match spec.expected_sha256.as_deref() {
         Some(expected) => {
             task.add_event("verify", Some("hashing file for sha256".to_string()), None, None, None);

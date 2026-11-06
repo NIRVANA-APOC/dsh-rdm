@@ -1,4 +1,4 @@
-use crate::protocol::{DEFAULT_CHUNK_SIZE, MIN_CHUNK_SIZE};
+use crate::protocol::{MAX_AUTO_CHUNK_SIZE, MIN_CHUNK_SIZE};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkPlan {
     pub total: u64,
@@ -8,7 +8,16 @@ pub struct ChunkPlan {
 impl ChunkPlan {
     pub fn new(total: u64, connections: usize, requested: u64) -> Self {
         let connections = connections.max(1) as u64;
-        let chunk_size = if requested > 0 { requested } else { (total / (connections * 4)).clamp(MIN_CHUNK_SIZE, DEFAULT_CHUNK_SIZE) };
+        let chunk_size = if requested > 0 {
+            requested
+        } else {
+            // Auto mode: four chunks per connection, so every worker starts with
+            // a queued tail to steal from. A 256 KiB request is the smallest that
+            // still amortizes HTTP round trips; 8 MiB caps the state file and the
+            // slow tail of a multi-gigabyte transfer on one connection.
+            let floor = MIN_CHUNK_SIZE.min(total.max(1));
+            (total / (connections * 4)).clamp(floor, MAX_AUTO_CHUNK_SIZE)
+        };
         Self::with_chunk_size(total, chunk_size)
     }
     pub fn with_chunk_size(total: u64, chunk_size: u64) -> Self {

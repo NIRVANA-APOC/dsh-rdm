@@ -251,6 +251,7 @@ async function main() {
       exitCode,
     }
     const jsonPath = path.resolve(args.jsonPath)
+    await fs.mkdir(path.dirname(jsonPath), { recursive: true })
     await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
     log(`report:    ${jsonPath}`)
   }

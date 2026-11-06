@@ -1,6 +1,6 @@
 {
   "name": "dsh-rdm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Resident multi-connection download engine for DeepSeek Harness: rdm_* agent tools, a sidebar download panel, resumable and verifiable transfers.",
   "type": "module",
   "main": "lib/index.js",

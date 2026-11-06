@@ -109,7 +109,7 @@ pub async fn load(path: &Path) -> Option<ResumeState> {
         }
     }
 }
-pub async fn save_atomic(path: &Path, state: &ResumeState) -> std::io::Result<()> {
+pub async fn save_atomic(path: &Path, state: &ResumeState, durable: bool) -> std::io::Result<()> {
     let data = serde_json::to_vec(state).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -121,7 +121,9 @@ pub async fn save_atomic(path: &Path, state: &ResumeState) -> std::io::Result<()
         use tokio::io::AsyncWriteExt;
         let mut file = tokio::fs::File::create(&tmp).await?;
         file.write_all(&data).await?;
-        file.sync_all().await?;
+        if durable {
+            file.sync_all().await?;
+        }
     }
     tokio::fs::rename(&tmp, path).await
 }

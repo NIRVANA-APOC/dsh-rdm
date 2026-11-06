@@ -150,7 +150,8 @@ authoritative.
 
 ```jsonc
 {"defaultDir":"C:\\Downloads","connections":8,"chunkSizeBytes":0,
- "speedLimitBps":0,"maxAttempts":6,"autoResume":true,"logLevel":"warn"}
+ "speedLimitBps":0,"maxAttempts":6,"autoResume":true,"logLevel":"warn",
+ "fsyncOnComplete":false}
 ```
 
 Result:
@@ -159,11 +160,17 @@ Result:
 {"protocol":1,
  "kernel":{"version":"1.0.0","pid":1234,"dataDir":"C:\\Users\\x\\.dsh\\dsh-rdm"},
  "config":{"defaultDir":"C:\\Downloads","connections":8,"chunkSizeBytes":0,
-           "speedLimitBps":0,"maxAttempts":6,"autoResume":true,"logLevel":"warn"}}
+           "speedLimitBps":0,"maxAttempts":6,"autoResume":true,"logLevel":"warn",
+           "fsyncOnComplete":false}}
 ```
 
 Defaults apply for omitted fields. `initialize` may be sent once; later calls
 update defaults for *new* tasks only.
+
+`chunkSizeBytes: 0` selects the automatic plan: four chunks per connection,
+bounded to 256 KiB..8 MiB. `fsyncOnComplete: true` flushes each finished file to
+stable storage before the atomic rename; the default (`false`) leaves the data in
+the OS page cache, which protects against process crashes but not power loss.
 
 ### `probe`
 

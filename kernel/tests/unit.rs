@@ -107,16 +107,40 @@ fn chunk_plan_geometry() {
     let plan = ChunkPlan::new(64 * MB, 8, 0);
     assert_eq!(plan.chunk_size, 2 * MB);
     assert_eq!(plan.total_chunks, 32);
+    // Auto sizing keeps four chunks per connection; a file below the 256 KiB
+    // floor stays one chunk.
     let small = ChunkPlan::new(1024, 8, 0);
-    assert_eq!(small.chunk_size, 256 * 1024);
+    assert_eq!(small.chunk_size, 1024);
+    assert_eq!(small.total_chunks, 1);
+    let medium = ChunkPlan::new(10 * MB, 8, 0);
+    assert_eq!(medium.chunk_size, 10 * MB / 32);
+    assert_eq!(medium.total_chunks, 32);
+    // Auto sizing caps at 8 MiB even for a multi-gigabyte file on one stream.
     let large = ChunkPlan::new(4 * 1024 * MB, 1, 0);
-    assert_eq!(large.chunk_size, 4 * MB);
+    assert_eq!(large.chunk_size, 8 * MB);
     let explicit = ChunkPlan::new(10, 4, 3);
     assert_eq!(explicit.total_chunks, 4);
     assert_eq!(explicit.byte_range(3), (9, 10));
     assert_eq!(split_work(vec![(0, 10), (20, 26)], 4), vec![(0, 4), (4, 8), (8, 10), (20, 24), (24, 26)]);
     let base = ChunkPlan::with_chunk_size(100, 10);
     assert_eq!(covered_chunks(&base, &[(0, 30), (50, 55)]), 3);
+}
+
+#[test]
+fn scheduler_merges_completed_ranges_incrementally() {
+    use rdm_kernel::scheduler::Scheduler;
+    let scheduler = Scheduler::new(16, Vec::new(), vec![(0, 16)], 4);
+    let first = scheduler.claim_with(0, 0).expect("claim 1");
+    let second = scheduler.claim_with(0, 0).expect("claim 2");
+    let third = scheduler.claim_with(0, 0).expect("claim 3");
+    // Out-of-order completion still produces merged, sorted ranges.
+    scheduler.complete(third, 4);
+    assert_eq!(scheduler.completed_ranges(), vec![(8, 12)]);
+    scheduler.complete(first, 4);
+    assert_eq!(scheduler.completed_ranges(), vec![(0, 4), (8, 12)]);
+    scheduler.complete(second, 4);
+    assert_eq!(scheduler.completed_ranges(), vec![(0, 12)]);
+    assert_eq!(scheduler.done_bytes(), 12);
 }
 
 #[test]

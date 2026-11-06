@@ -1,4 +1,4 @@
-use crate::engine::{control_error, finalize, Counters, EngineError, Reporter, STALL_TIMEOUT, WRITE_BUFFER_BYTES};
+use crate::engine::{control_error, finalize, Counters, EngineError, Reporter, STALL_TIMEOUT};
 use crate::error::EngineResult;
 use crate::http;
 use crate::protocol::{Meta, Spec, Status};
@@ -112,7 +112,8 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
 
 #[allow(clippy::too_many_arguments)]
 async fn stream_body(task: &Arc<Task>, control: &Arc<Control>, response: &mut reqwest::Response, file: &mut tokio::fs::File, total: Option<u64>, counters: &Arc<Counters>, limiter: Option<&Arc<TokenBucket>>) -> Result<(), AttemptError> {
-    let mut buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER_BYTES);
+    let buffer_limit = super::WRITE_BUFFER_BYTES;
+    let mut buffer: Vec<u8> = Vec::with_capacity(buffer_limit);
     let mut received: u64 = 0;
     loop {
         let chunk = tokio::select! {
@@ -160,7 +161,7 @@ async fn stream_body(task: &Arc<Task>, control: &Arc<Control>, response: &mut re
             }
         }
         buffer.extend_from_slice(&bytes);
-        if buffer.len() >= WRITE_BUFFER_BYTES {
+        if buffer.len() >= buffer_limit {
             flush(&mut buffer, file, counters).await?;
         }
     }

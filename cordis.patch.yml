@@ -6,7 +6,8 @@
       name: dsh-rdm
       config:
         connections: 8
-        chunkSizeMiB: 4
+        chunkSizeMiB: 0
         autoResume: true
         startOnDemand: true
         logLevel: warn
+        fsyncOnComplete: false

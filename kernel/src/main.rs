@@ -48,7 +48,9 @@ fn main() {
             let _ = lock.flush();
         }
     });
-    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap_or_else(|error| {
+    let default_workers = std::thread::available_parallelism().map(|value| value.get()).unwrap_or(4).clamp(2, 4);
+    let worker_threads = std::env::var("RDM_WORKER_THREADS").ok().and_then(|value| value.trim().parse::<usize>().ok()).filter(|value| *value > 0 && *value <= 64).unwrap_or(default_workers);
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(worker_threads).enable_all().build().unwrap_or_else(|error| {
         eprintln!("rdm-kernel: could not start async runtime: {error}");
         std::process::exit(1);
     });

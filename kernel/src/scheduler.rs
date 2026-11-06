@@ -9,6 +9,32 @@ pub const COALESCE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 pub const COALESCE_MIN_BYTES: u64 = 16 * 1024 * 1024;
 const STEAL_FRACTION_DIVISOR: u64 = 8;
 const MIN_KEPT_BYTES: u64 = 1024;
+
+/// Insert `[start, end)` into the sorted, merged range list in O(log n + moves)
+/// instead of re-sorting every saved snapshot. Chunks usually complete near the
+/// end of the list, so the common case is an append.
+fn insert_done(done: &mut Vec<(u64, u64)>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    let mut index = done.partition_point(|(range_start, _)| *range_start < start);
+    if index > 0 && done[index - 1].1 >= start {
+        index -= 1;
+        if done[index].1 >= end {
+            return;
+        }
+        done[index].1 = end;
+    } else {
+        done.insert(index, (start, end));
+    }
+    while index + 1 < done.len() && done[index].1 >= done[index + 1].0 {
+        let next_end = done[index + 1].1;
+        if next_end > done[index].1 {
+            done[index].1 = next_end;
+        }
+        done.remove(index + 1);
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Segment {
     start: u64,
@@ -132,7 +158,7 @@ impl Scheduler {
         }
         let prefix_end = claim.start + covered;
         if covered > 0 {
-            state.done.push((claim.start, prefix_end));
+            insert_done(&mut state.done, claim.start, prefix_end);
             state.done_bytes += covered;
         }
         let completion = if prefix_end < claim.end {
@@ -161,7 +187,7 @@ impl Scheduler {
     }
     pub fn completed_ranges(&self) -> Vec<(u64, u64)> {
         let state = self.state.lock().expect("scheduler mutex poisoned");
-        merge_ranges(state.done.clone())
+        state.done.clone()
     }
     pub async fn wait_for_change(&self, timeout: Duration) {
         let _ = tokio::time::timeout(timeout, self.notify.notified()).await;

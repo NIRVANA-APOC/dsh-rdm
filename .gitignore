@@ -1,6 +1,7 @@
 node_modules/
 kernel/target/
 tests/.tmp-e2e/
+tests/.bench/
 .rdm-data/
 .tmp/
 .tmp-*/

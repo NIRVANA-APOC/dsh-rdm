@@ -287,6 +287,7 @@ export interface InitializeParams {
   maxAttempts?: number
   autoResume?: boolean
   logLevel?: string
+  fsyncOnComplete?: boolean
 }
 
 /** Effective kernel defaults echoed by `initialize` (and by `stats`). */
@@ -298,6 +299,7 @@ export interface InitializeConfig {
   maxAttempts: number
   autoResume: boolean
   logLevel: string
+  fsyncOnComplete: boolean
 }
 
 /** Result of `initialize`. */

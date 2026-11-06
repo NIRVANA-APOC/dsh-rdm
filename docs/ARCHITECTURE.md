@@ -69,17 +69,23 @@ workspace) built for one purpose: serve the plugin's protocol.
 | Resume state | `.part` + `.part.json` |
 | Task store | kernel-owned `tasks/<id>.json` |
 | Logging | stderr `log` lines |
-| Runtime | tokio with 2 worker threads |
+| Runtime | tokio, `min(4, cores)` worker threads (≥2) |
 
 Engine flow: `probe (HEAD → ranged GET fallback) → plan (chunk size, target
 name, resume scan) → chunked worker pool with dynamic chunk queue and AIMD
 concurrency → retries/backoff/Retry-After → SHA-256 verify → atomic rename`.
 Servers without range support transparently fall back to one stream.
-Pause/cancel are cooperative; resume state is persisted every ~500 ms.
+Pause/cancel are cooperative and event-driven; resume state is persisted every
+~500 ms and fsynced on pause/stop. Chunk sizing is automatic by default
+(4 chunks per connection, 256 KiB..8 MiB) and each worker writes through a
+1 MiB buffer. Completed files are renamed without an fsync by default
+(`fsyncOnComplete` opts back in).
 
 Design constraints: correctness over cleverness; no task panics (task errors
 become `failed` states); stdout reserved for protocol; bounded memory
-(≤ 200 events/task, no full-body buffering).
+(≤ 200 events/task, no full-body buffering, ≤ 1 MiB write buffer per worker).
+Performance work and its measurements live in
+[OPTIMIZATION.md](OPTIMIZATION.md).
 
 Kernel CLI: `rdm-kernel --data-dir <dir> [--log-level warn]`. Exit on stdin EOF.
 

@@ -20,17 +20,21 @@ const CANCEL: u8 = 2;
 
 pub struct Control {
     mode: AtomicU8,
+    notify: Notify,
 }
 
 impl Control {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { mode: AtomicU8::new(RUN) })
+        Arc::new(Self { mode: AtomicU8::new(RUN), notify: Notify::new() })
     }
     pub fn pause(&self) {
-        let _ = self.mode.compare_exchange(RUN, PAUSE, Ordering::SeqCst, Ordering::SeqCst);
+        if self.mode.compare_exchange(RUN, PAUSE, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            self.notify.notify_waiters();
+        }
     }
     pub fn cancel(&self) {
         self.mode.store(CANCEL, Ordering::SeqCst);
+        self.notify.notify_waiters();
     }
     pub fn stop_kind(&self) -> Option<StopKind> {
         match self.mode.load(Ordering::SeqCst) {
@@ -42,25 +46,31 @@ impl Control {
     pub fn is_stopped(&self) -> bool {
         self.stop_kind().is_some()
     }
+    /// Sleep, waking immediately when the task is paused or cancelled.
     pub async fn sleep(&self, duration: Duration) -> bool {
-        let deadline = Instant::now() + duration;
-        loop {
-            if self.is_stopped() {
-                return false;
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return true;
-            }
-            tokio::time::sleep((deadline - now).min(Duration::from_millis(25))).await;
+        if self.is_stopped() {
+            return false;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => !self.is_stopped(),
+            _ = self.wait_stopped() => false,
         }
     }
+    /// Resolve as soon as the task leaves `RUN`; no timer polling.
     pub async fn wait_stopped(&self) -> StopKind {
         loop {
             if let Some(kind) = self.stop_kind() {
                 return kind;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Register before the second check so a pause() cannot slip in
+            // between the check and the await.
+            notified.as_mut().enable();
+            if let Some(kind) = self.stop_kind() {
+                return kind;
+            }
+            notified.await;
         }
     }
 }
@@ -86,12 +96,15 @@ struct Inner {
     dirty: bool,
     notify_pending: bool,
     last_notified: Instant,
+    last_persist: Instant,
+    persisted_status: Status,
 }
 
 pub struct Task {
     pub id: String,
     inner: Mutex<Inner>,
     status_tx: watch::Sender<Status>,
+    status_notify: Arc<Notify>,
     control: Mutex<Option<Arc<Control>>>,
     running: AtomicBool,
     pub persist_wake: Notify,
@@ -112,7 +125,7 @@ fn provisional_name(spec: &Spec) -> String {
 }
 
 impl Task {
-    pub fn new(id: String, spec: Spec) -> Arc<Self> {
+    pub fn new(id: String, spec: Spec, status_notify: Arc<Notify>) -> Arc<Self> {
         let view = ViewState {
             status: Status::Queued,
             final_url: None,
@@ -136,22 +149,24 @@ impl Task {
             started_at: None,
             finished_at: None,
         };
-        Self::assemble(id, spec, view, VecDeque::new(), 0)
+        Self::assemble(id, spec, view, VecDeque::new(), 0, status_notify)
     }
 
-    fn assemble(id: String, spec: Spec, view: ViewState, events: VecDeque<TaskEvent>, seq: u64) -> Arc<Self> {
+    fn assemble(id: String, spec: Spec, view: ViewState, events: VecDeque<TaskEvent>, seq: u64, status_notify: Arc<Notify>) -> Arc<Self> {
         let (status_tx, _) = watch::channel(view.status);
+        let persisted_status = view.status;
         Arc::new(Self {
             id,
-            inner: Mutex::new(Inner { spec, view, events, seq, run_gen: 0, accumulated_ms: 0, run_started: None, dirty: false, notify_pending: true, last_notified: Instant::now() }),
+            inner: Mutex::new(Inner { spec, view, events, seq, run_gen: 0, accumulated_ms: 0, run_started: None, dirty: false, notify_pending: true, last_notified: Instant::now(), last_persist: Instant::now(), persisted_status }),
             status_tx,
+            status_notify,
             control: Mutex::new(None),
             running: AtomicBool::new(false),
             persist_wake: Notify::new(),
         })
     }
 
-    pub fn from_record(record: TaskRecord) -> Arc<Self> {
+    pub fn from_record(record: TaskRecord, status_notify: Arc<Notify>) -> Arc<Self> {
         let TaskRecord { spec, view: stored } = record;
         let status = if stored.status.is_active() { Status::Interrupted } else { stored.status };
         let changed = status != stored.status;
@@ -178,7 +193,7 @@ impl Task {
             started_at: stored.started_at,
             finished_at: stored.finished_at,
         };
-        let task = Self::assemble(stored.id, spec, view, VecDeque::new(), 0);
+        let task = Self::assemble(stored.id, spec, view, VecDeque::new(), 0, status_notify);
         {
             let mut inner = task.inner.lock().unwrap();
             inner.accumulated_ms = stored.elapsed_ms;
@@ -248,7 +263,8 @@ impl Task {
 
     pub fn set_status(&self, status: Status) {
         let mut inner = self.lock();
-        if inner.view.status == status {
+        let previous = inner.view.status;
+        if previous == status {
             return;
         }
         if status.is_active() && inner.view.started_at.is_none() {
@@ -267,6 +283,9 @@ impl Task {
         inner.notify_pending = true;
         drop(inner);
         let _ = self.status_tx.send(status);
+        if previous != status {
+            self.status_notify.notify_waiters();
+        }
         self.persist_wake.notify_waiters();
     }
 
@@ -395,6 +414,25 @@ impl Task {
         std::mem::take(&mut self.lock().dirty)
     }
 
+    /// Persist decision: a status change is written immediately (crash safety
+    /// for lifecycle transitions); progress-only updates are coalesced to one
+    /// write per `interval`, because the kernel view is a cache the next kernel
+    /// generation only needs for resume display.
+    pub fn take_persist(&self, interval: Duration, now: Instant) -> bool {
+        let mut inner = self.lock();
+        if !inner.dirty {
+            return false;
+        }
+        let status_changed = inner.persisted_status != inner.view.status;
+        if !status_changed && now.duration_since(inner.last_persist) < interval {
+            return false;
+        }
+        inner.dirty = false;
+        inner.last_persist = now;
+        inner.persisted_status = inner.view.status;
+        true
+    }
+
     pub fn reset_for_retry(&self) {
         self.mutate(
             |inner| {
@@ -420,5 +458,6 @@ impl Task {
             true,
         );
         let _ = self.status_tx.send(Status::Queued);
+        self.status_notify.notify_waiters();
     }
 }
