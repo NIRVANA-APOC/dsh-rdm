@@ -1,5 +1,7 @@
 # dsh-rdm
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A resident multi-connection download engine for **DeepSeek Harness**.
 
 `dsh-rdm` keeps one long-lived Rust `rdm-kernel` process warm behind five

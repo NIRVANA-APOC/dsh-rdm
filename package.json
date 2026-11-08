@@ -41,6 +41,7 @@
     "assets/**",
     "PROTOCOL.md",
     "README.md",
+    "README.zh-CN.md",
     "docs/**",
     "kernel/Cargo.toml",
     "kernel/src/**",
