@@ -1,18 +1,25 @@
-// Client half of the dsh-rdm plugin.
+// Client half of the dsh-rdm plugin (0.2.0).
 //
-// Compiled by scripts/build.mjs into the Harness module-loader format:
+// Compiled by scripts/dev-build.sh into the Harness module-loader format:
 // `window.__ModuleLoader__.load({ id: 'dsh-rdm', factory(require) { ... } })`.
 // The factory's `require` provides the baseline `react` module, so React is
 // imported normally and JSX compiles to `React.createElement` (classic runtime).
 //
-// The plugin registers a sidebar entry (`sidebar.panellist`, id `rdm`) whose icon
-// opens the RDM download panel in the root-scoped `main` keyed slot (`rdm`).
+// Surfaces:
+//   * `sidebar.panellist` entry (id `rdm`) → the root-scoped `main` keyed slot
+//     `rdm`, which renders the global review page (flight recorder, no composer);
+//   * the session right-sidebar native tab `dsh-rdm/downloads`, registered only
+//     when the profile injects `@deepseek-ai/dsh-client-ui-sidebar-right`.
+//
+// A missing sidebar service must never break the left page: the native
+// registration is awaited in the background and is fully guarded.
 
 import React from 'react'
 import en from '../../locale/en.json'
 import zh from '../../locale/zh.json'
 import { Icon } from './icon'
-import { Panel } from './panel'
+import { ReviewPage } from './ledger'
+import { registerNativeSidebar } from './native'
 import type { ClientContext, TFunction } from './types'
 
 const NAMESPACE = 'dsh-rdm'
@@ -51,7 +58,7 @@ function apply(ctx: ClientContext): void {
         name: 'sidebar.panellist',
         id: SLOT_ID,
         order: 30,
-        label: () => t('panel.title'),
+        label: () => t('page.title'),
         locale: NAMESPACE,
       },
       (props: { size?: unknown; active?: unknown }) =>
@@ -62,13 +69,20 @@ function apply(ctx: ClientContext): void {
     ),
   )
 
-  // Main panel, selected by the sidebar row through the shared panel id.
+  // Global review page, selected by the sidebar row through the shared panel id.
   ctx.slots.inject('main', () =>
-    ctx.slots.register(
-      { name: 'main', key: SLOT_ID, locale: NAMESPACE },
-      (props: Record<string, unknown>) => React.createElement(Panel, { ...props, t, locale: ctx.locale }),
+    ctx.slots.register({ name: 'main', key: SLOT_ID, locale: NAMESPACE }, (props: Record<string, unknown>) =>
+      React.createElement(ReviewPage, { ...props, t }),
     ),
   )
+
+  // Session review surface: native right-sidebar tab. Optional by construction —
+  // when the sidebar package is not injected this logs and returns.
+  try {
+    registerNativeSidebar(ctx, { t })
+  } catch (error) {
+    console.warn('[dsh-rdm] native right-sidebar registration skipped:', error)
+  }
 }
 
 const name = 'dsh-rdm'

@@ -2,297 +2,244 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A resident multi-connection download engine for **DeepSeek Harness**.
+**An agent-native downloader for DeepSeek Harness.** One resident Rust kernel,
+five model-facing tools that return decision-grade facts, and two review surfaces
+for the human: a global download ledger in the left sidebar, and a
+session-scoped review tab in the right sidebar.
 
-`dsh-rdm` keeps one long-lived Rust `rdm-kernel` process warm behind five
-model-facing tools and a sidebar download panel. Downloads are segmented,
-resumable, verifiable and bandwidth-limited, and they survive pauses, crashes,
-kernel restarts and DSH restarts — without spawning a process per file and
-without asking an agent to shell out to `curl`.
+The agent operates. The human reviews.
 
-![RDM panel — light](assets/screenshots/panel-light.png)
+![Global download review — light](assets/screenshots/review-light.png)
 
-## Features
+## What "agent-native" means here
 
-* **Resident kernel, started lazily** — one `rdm-kernel` child process per DSH
-  host, spawned on first tool/panel use and kept warm. NDJSON over stdio; no
-  listening port. Idles at roughly 5.7–6.7 MiB resident memory.
-* **Segmented multi-connection transfer** — 1–32 connections per task, a chunk
-  queue with in-flight tail stealing, and an AIMD concurrency controller with
-  429/503 pushback. Transfers with no `Content-Length` are followed to EOF.
-* **Resumable by design** — pause state is persisted every ~500 ms as
-  `<target>.part` + `<target>.part.json`, so a paused, killed or interrupted
-  transfer resumes from its own byte ranges after a kernel or DSH restart.
-  Validator checks (ETag, Last-Modified, total size) catch a remote file that
-  changed while paused instead of mixing stale bytes.
-* **Integrity** — optional SHA-256 is verified before the `.part` file is
-  atomically renamed to its final name; a mismatch fails the task and leaves
-  the target path untouched.
-* **Bandwidth control** — per-task `speedLimitBps` cap, plus a profile-wide
-  default.
-* **Probe without downloading** — `rdm_probe` returns final URL, file name,
-  size, range support, content type and validators using HEAD (with a ranged
-  GET fallback).
-* **Agent-first tools** — `rdm_download`, `rdm_probe`, `rdm_tasks`, `rdm_wait`
-  and `rdm_control`, plus a system-prompt section that tells every agent to
-  route file downloads through them.
-* **Sidebar panel** — a download icon in the left sidebar opens a transfer
-  ledger: live status, percent, speed, ETA, a per-task connection lane meter,
-  filters, per-row pause / resume / retry / cancel / remove / copy-path,
-  inline details with the kernel event log, and a start composer.
-* **Bounded and local** — every response is bounded and stable JSON; task
-  events are capped; the kernel never buffers a full body. The browser half
-  talks to the host over the authenticated `POST /api/dsh-rdm/api` route.
-* **Self-contained host half** — the host bundle imports only Node built-ins;
-  the schema library it needs is vendored (MIT) and bundled.
-* **Prebuilt kernels, no install-time compile** — `bin/<platform>-<arch>/rdm-kernel[.exe]`
-  ships for Windows x64, Linux x64/arm64 and macOS x64/arm64, built on native CI
-  runners. Installing the plugin never runs cargo; the resident kernel starts
-  lazily from the bundled binary (see [Prebuilt kernels](#prebuilt-kernels)).
+A downloader used by a model is not a GUI that happens to have an API. The agent
+has to answer, in as few model steps as possible: *is this URL usable, how should
+I fetch it, what is happening now, should I intervene, and can I trust the
+result?* `dsh-rdm` 0.2.0 is built around those questions.
+
+* **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
+  proven range support, validators and RFC 9110 resume safety, signed-URL
+  expiry, TLS certificate validity, redirect chain, checksum availability,
+  rate-limit headers, timing, stable warning codes, and a concrete
+  recommendation. Not just "200 OK, 48 MB".
+* **Preflight on start.** `rdm_download` attaches the same server facts to the
+  task (bounded wait, 2 s default) so the agent does not need a second call
+  before it can decide to pause, verify, or wait.
+* **Honest live telemetry.** Four measured throughput windows (1 s / 5 s /
+  30 s / 300 s), peak, average, stall time, trend, and an `etaConfidence` that
+  degrades to `unknown` instead of faking precision.
+* **Long-poll, not tight polling.** `rdm_wait` blocks until terminal or timeout
+  and returns a typed `timedOut`; status results are flat and bounded.
+* **Structured receipts, bounded canonical JSON.** The model reads line-oriented
+  `key=value` receipts with stable field order; programmatic callers get the
+  canonical JSON. Recoverable failures are values (`error code=…` + `next …`),
+  not thrown strings that lose structure.
+* **Session attribution.** Every download started by an agent carries its
+  session id, so the human can review exactly what *this* agent downloaded.
+* **One policy, stated once.** A short system-prompt section tells every agent
+  to route downloads through `rdm_*`; the tool definitions stay small
+  (first-turn schema cost 7241 → 4966 chars, −31 % vs 0.1.2).
+
+## The two review surfaces
+
+The human never composes a download here; there is no URL bar, no connection
+slider.
+
+* **Global review** (left sidebar entry → page): a throughput recorder strip for
+  the whole kernel, session-grouped ledger of every download, risk markers, and
+  a per-record evidence drawer (request chain, server facts, timing, resume
+  state, verification, bounded event log). Only live records use saturated
+  colour; a record never claims a verification it did not perform.
+* **Session review** (right sidebar tab, "Downloads"): the same evidence
+  language, filtered to the active session. Empty for a session with no
+  downloads; it never steals focus.
+* **Evidence language**: a **throughput pulse** (client-sampled, honestly
+  labelled) and a **verification seal** (expected vs actual hash, only when a
+  hash was compared). Unknowns render `—`.
+
+![Session download review — dark](assets/screenshots/review-session-dark.png)
 
 ## Tools
 
-All tools return bounded, stable JSON. Long downloads run in the background and
-are monitored with `rdm_wait` / `rdm_tasks`.
+Five tools. All outputs are bounded; the model sees a receipt, the caller sees
+canonical JSON.
 
-| tool | purpose |
-|---|---|
-| `rdm_download` | Start a download (`url`, `dir`, `fileName`, `connections`, `headers`, `cookie`, `referer`, `userAgent`, `expectedSha256`, `speedLimitBps`, `resume`, `singleStream`, `proxy`, `insecure`). Returns the task immediately; `waitSec` optionally waits up to 300 s. |
-| `rdm_probe` | Metadata only: final URL, file name, total size, range support, content type. |
-| `rdm_tasks` | Kernel status + task list (filter by status) or one task detail with recent kernel events. |
-| `rdm_wait` | Wait for up to 20 task ids to become terminal (timeout ≤ 300 s). |
-| `rdm_control` | `pause` / `resume` / `cancel` / `retry` / `remove` a task. |
+| tool | what it does | what comes back |
+|---|---|---|
+| `rdm_probe` | inspect an HTTP(S) source without downloading the file body | `ServerFacts`: ranges, validators, resume safety, signed-URL/TLS expiry, redirects, checksums, rate limit, timing, warnings, recommendation |
+| `rdm_download` | start a transfer in the resident kernel | task view + preflight `ServerFacts` (≤2 s) + next-step hint; `waitSec` optionally blocks |
+| `rdm_tasks` | list this session's downloads, or inspect one in depth | flat task views + aggregate; with `taskId`: telemetry, server facts, verification, diagnosis, bounded events |
+| `rdm_wait` | long-poll until terminal or timeout | settled task views + `timedOut` |
+| `rdm_control` | pause, resume, cancel, retry, remove | updated task view (or removed id) |
 
-Example agent flow:
+A probe receipt:
 
 ```text
-rdm_download { url: "https://example.com/img.iso", dir: "C:\\Downloads\\iso", expectedSha256: "…" }
-→ { id: "t_9f3a…", status: "running", … }
-rdm_wait     { taskIds: ["t_9f3a…"], timeoutSec: 120 }
-→ { tasks: [{ status: "completed", path: "C:\\Downloads\\iso\\img.iso", sha256: "…" }], timedOut: false }
+probe host=cdn.example.com status=200 http=HTTP/2.0
+url https://cdn.example.com/app.zip?sig=<redacted>
+file name=app.zip source=content-disposition size=48.1MiB type=application/zip encoding=-
+range=bytes resume=strong signed=valid(19m40s) tls=valid(40d) checksum=none
+plan start=now connections=8 chunk=1.5MiB singleStream=false verify=recommended reason=ranges+strong-etag
+headers server=nginx cache=max-age=3600 vary=Accept-Encoding
+warnings=- redirects=0
+timing probe=84ms ttfb=61ms sample=- origin=known attempts=3 completed=2 median=14MiB/s best=22MiB/s lastError=-
+next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 ```
+
+A task list receipt:
+
+```text
+kernel state=running version=1.1.0 pid=4212
+scope=session count=1
+aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
+t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
+```
+
+## Kernel intelligence
+
+The Rust kernel (`rdm-kernel` 1.1.0, protocol 2) is a resident child process; it
+does not listen on a port, starts lazily and stays warm.
+
+* **Server facts** — manual redirect chain (up to 8 hops), proven range support
+  (a 206 with a validated `Content-Range`, never just an `Accept-Ranges` header),
+  strong/weak validator classification under RFC 9110, signed-URL expiry families
+  (AWS SigV4/SigV2, GCS SigV4, Azure SAS, generic `Expires`) derived from the
+  final URL, TLS leaf `notAfter`, checksum availability
+  (`Content-Digest`/`Content-MD5`/S3 SHA-256/CRC32C), `Retry-After`, probe/TTFB
+  timing and bounded warning codes.
+* **Resume that stays honest** — `.part` + resume state, validator compatibility
+  checks, and an explicit `resumeSafety` of `strong`/`weak`/`none`. The kernel
+  sends `If-Range` only for strong ETags; weak-validator resumes re-probe and
+  validate `Content-Range`/length, and fall back to a full body if the origin
+  ignores ranges. A download in flight survives a signed-URL expiry; a resume
+  after expiry does not — the diagnosis says "do not pause".
+* **Telemetry, measured** — a bounded 3000-sample ring at 100 ms cadence feeds
+  the four windows, peak/average, stall and trend without extra timers.
+* **Origin ledger** — a bounded 256-host memory of attempts/completed/median/best
+  throughput/last error, reported by `rdm_probe` (`origin=…`) and `stats`.
+* **Segmented transfer** — 1–32 connections, dynamic chunk queue with tail
+  stealing, AIMD concurrency with 429/503 pushback, retries with backoff,
+  per-task bandwidth cap and optional SHA-256 verification before the atomic
+  rename.
+* **Bounded** — ≤200 events/task, ≤3000 telemetry samples, ≤256 origins, no
+  full-body buffering, stdout reserved for protocol.
+
+Performance work and measurements live in
+[docs/OPTIMIZATION.md](docs/OPTIMIZATION.md); the architecture and protocol are
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROTOCOL.md](PROTOCOL.md). The
+design reasoning for 0.2.0 is
+[docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md), with an
+evidence note at
+[docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md).
 
 ## Install
 
-Install straight from GitHub into a profile:
+The package ships prebuilt kernels for Windows x64, Linux x64/arm64 and macOS
+x64/arm64; installing never compiles Rust.
 
-```powershell
+From GitHub into a DSH profile:
+
+```bash
 dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
 ```
 
-Or install the published npm package:
+From a release tarball:
 
-```powershell
-dsh plugin --profile web add dsh-rdm
+```bash
+dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
 ```
 
-Or install a local checkout as a directory bundle from a DSH session:
+Local checkout as a directory bundle (DSH UI → Plugins → Install from folder, or
+the `plugin_manager` tool):
 
 ```text
 plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
-Refresh the Web page after the first install. The plugin row is inserted by
-`cordis.patch.yml`; the kernel binary is resolved from
-`bin/<platform>-<arch>/rdm-kernel[.exe]` inside the package.
+After installing, agents see `rdm_*`; the left sidebar gains the downloads entry
+and the right sidebar guide gains a "Downloads" tab. No restart is normally
+required, though a page refresh is safe.
 
-An npm install, a GitHub install or a release-tarball install needs no build
-step: the package ships its built `lib/` bundles plus prebuilt kernels for every
-supported platform (see [Prebuilt kernels](#prebuilt-kernels)). GitHub releases
-also publish the complete plugin tarball, which is the most reproducible
-install:
-
-```powershell
-dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
-```
-
-## Prebuilt kernels
-
-`rdm-kernel` is a Rust binary, but it is compiled **before** packaging, on a
-machine with the matching toolchain — never on the host that installs the
-plugin. There is no `prepare`/`install`/`postinstall` hook in `package.json`;
-the host resolves the bundled file at runtime and starts it lazily on first use.
-
-| target directory | platform | built on |
-|---|---|---|
-| `bin/linux-x64/rdm-kernel` | Linux x64 | `ubuntu-24.04` |
-| `bin/linux-arm64/rdm-kernel` | Linux arm64 | `ubuntu-24.04-arm` |
-| `bin/win32-x64/rdm-kernel.exe` | Windows x64 | `windows-latest` |
-| `bin/darwin-x64/rdm-kernel` | macOS x64 | `macos-15-intel` |
-| `bin/darwin-arm64/rdm-kernel` | macOS arm64 | `macos-15` |
-
-[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
-builds all five targets natively and runs `node scripts/verify-kernels.mjs --host
---run` on each runner. Two jobs consume the artifacts:
-
-* **Tag `v*`** — packs `dsh-rdm-<version>.tgz` with `lib/` plus all five bin
-  directories, attaches it, the individual kernels and a `sha256` list to the
-  GitHub release. The tarball is what the release install command above uses.
-* **Manual run (`workflow_dispatch`)** — after building, by default commits the
-  refreshed kernels back into `bin/` on the default branch, so the plain
-  `github:…` install stays cross-platform. Uncheck `commit_binaries` to only
-  produce artifacts. The job needs the repository's workflow token to have
-  write access (Settings → Actions → General → Workflow permissions); branch
-  protection must also allow the bot to push to the default branch.
-
-Local checks (no network, no Rust needed once the binaries exist):
-
-```bash
-node scripts/verify-kernels.mjs            # all five targets, format magic + exec bit + sha256
-node scripts/verify-kernels.mjs --host --run   # current host only, and start it once
-```
-
-The same script runs inside the packaging job, so a release cannot be published
-with a missing or mislabeled kernel. Release artifacts also carry a
-`rdm-kernels.sha256` file.
-
-## UI
-
-The downloader lives behind a **left-sidebar entry** (`sidebar.panellist`, id
-`rdm`, order 30); selecting it opens the matching **main panel** (`main`, key
-`rdm`). The panel is a transfer ledger rather than a form plus cards:
-
-* header: page title and a plain engine status line (version and pid in its
-  tooltip), no refresh chrome — the page polls once a second and pauses while
-  the document is hidden;
-* start composer: one URL bar with a primary Start button. Directory and
-  connection count sit behind **选项 / Options**; Enter starts, invalid input is
-  explained inline, and focus returns to the bar after a successful start;
-* one ledger surface for all downloads: status dot and status word, filename,
-  percent, and a thin byte rail. Unknown-length transfers sweep instead of
-  faking a percentage; paused, completed and failed states change the rail
-  color and stop the motion;
-* a **connection lane meter** in each row's meta line: one tick per planned
-  connection, staffed ticks lit, and only those breathing while the transfer
-  runs;
-* state-specific telemetry — size, speed, ETA and connection use only while
-  they matter; completed rows show the saved path and a copy action; failed
-  rows show the kernel error;
-* filters (all / unfinished / history) with counts, plus a live aggregate for
-  running count, total speed and failures;
-* per-row icon actions: pause / resume / retry / copy path, details, and an
-  overflow menu (cancel download, remove from list, copy link). At ≤520 px the
-  icon actions fold into that menu so filenames keep their room. Row-level
-  errors are announced with `role="alert"`;
-* inline details: source and final URL, saved path, chunk size, resumed chunks,
-  SHA-256 verification, timing, retries, and a bounded kernel event log;
-* copy actions confirm with a short toast; all copy in Chinese and English
-  comes from `locale/*.json`.
-
-![RDM panel — dark](assets/screenshots/panel-dark.png)
-
-Styling uses host theme tokens only (`--dsw-alias-*`, `--dsw-specific-*`,
-`--ds-*`), so light/dark mode, fonts and radii come from the host. The lane rail
-is the panel's only animated element; `prefers-reduced-motion` disables it and
-the skeleton/menu/detail motion, and focus rings are visible for every control.
-
-## Configuration
-
-Set fields in the plugin row's `config` (profile patch layer or plugin
-settings); defaults are shown in `cordis.patch.yml`.
+### Configuration
 
 | key | default | meaning |
 |---|---|---|
-| `defaultDir` | `""` | default download directory; empty = `<active dataDir>/downloads` |
-| `connections` | `8` | per-task connection cap (1–32) |
-| `chunkSizeMiB` | `0` | fixed request chunk size (0.25–64 MiB); `0` = automatic (four chunks per connection, 0.25–8 MiB) |
-| `speedLimitBps` | `0` | default per-task bandwidth limit (0 = unlimited) |
+| `defaultDir` | `<data-dir>/downloads` when `defaultDir` is unset | directory for downloads started without `dir` |
+| `connections` | `8` | default parallel connections per task (1–32) |
+| `chunkSizeMiB` | `0` (auto) | fixed chunk size; 0 = four chunks per connection, 256 KiB–8 MiB |
+| `speedLimitBps` | `0` | profile-wide default bandwidth cap; 0 = unlimited |
 | `maxAttempts` | `6` | per-chunk retry budget |
-| `autoResume` | `true` | resume interrupted tasks on kernel restart |
-| `dataDir` | `""` | kernel data dir (default `$DSH_HOME/dsh-rdm`, with sandbox fallback) |
-| `kernelPath` | `""` | explicit kernel binary override |
+| `autoResume` | `true` | resume interrupted tasks when the kernel starts |
+| `dataDir` | `$DSH_HOME/dsh-rdm` | kernel data (task records, origin ledger) |
+| `kernelPath` | bundled `bin/<platform>-<arch>/rdm-kernel` | override the kernel binary |
+| `startOnDemand` | `true` | spawn the kernel on first use instead of at plugin load |
 | `logLevel` | `warn` | kernel stderr log level |
-| `startOnDemand` | `true` | start the kernel on first use instead of plugin load |
-| `fsyncOnComplete` | `false` | flush a finished file to stable storage before renaming it (slower, survives power loss) |
-
-Kernel state lives in `<dataDir>/tasks/*.json`; incomplete downloads use
-`<target>.part` + `<target>.part.json` next to the final file and resume from
-there after a pause or a kernel/DSH restart.
-
-### Data directory fallback
-
-Some DSH hosts confine child-process writes to the session workspace. If no
-`dataDir` is configured and the kernel cannot create `$DSH_HOME/dsh-rdm/tasks`,
-the plugin retries once with `<packageRoot>/.rdm-data` and defaults download
-destinations to `<dataDir>/downloads`. Configure `dataDir` to pin a location.
-
-## How it works
-
-```
-src/            host half (TypeScript → lib/index.js): tools, KernelService, browser route
-src/client/     browser half (sidebar entry + panel → lib/client.js)
-kernel/         standalone Rust rdm-kernel crate: NDJSON task API, transfer engine
-bin/<platform>/ built kernel binary shipped with the plugin
-```
-
-Engine flow: `probe (HEAD → ranged GET fallback) → plan (chunk size, target
-name, resume scan) → chunked worker pool with a dynamic chunk queue and AIMD
-concurrency → retries/backoff/Retry-After → SHA-256 verify → atomic rename`.
-Pause/cancel are cooperative and event-driven (no timer polling); one kernel
-process is restarted with backoff if it crashes, and task records plus resume
-state persist across restarts.
-
-[PROTOCOL.md](PROTOCOL.md) documents the exact kernel contract;
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes the design.
-
-## Build
-
-Requirements for building locally: Node ≥ 20 (plugin bundles) and Rust stable
-with the platform's C toolchain (kernel). `scripts/build-kernel.mjs` is
-platform-aware: it runs `cargo build --release` and copies the result to
-`bin/${process.platform}-${process.arch}/rdm-kernel[.exe]`, exactly where the
-runtime resolver looks. The Windows CI job uses the MSVC toolchain; a developer
-build uses whatever Rust host toolchain is installed.
-
-```bash
-cd dsh-rdm
-npm install                    # esbuild + typescript (dev only)
-node scripts/build-kernel.mjs  # cargo build --release → bin/<platform>-<arch>/rdm-kernel[.exe]
-node scripts/build.mjs         # esbuild → lib/index.js + lib/client.js
-node scripts/verify-kernels.mjs --host --run   # host binary: present, right format, starts
-npm run verify                 # fixture self-test + kernel e2e suite + measurements
-```
-
-A local build only produces the current host's kernel. The CI workflow in
-[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
-builds every supported target on native runners; binaries are then committed to
-`bin/` (manual run) and attached to releases (tag push). See
-[Prebuilt kernels](#prebuilt-kernels).
 
 ## Verification
 
-Independent QA coverage lives in [docs/verification.md](docs/verification.md):
-**14/14 kernel e2e scenarios, 241/241 assertions** (multi-connection, no-range
-fallback, redirects, 429/Retry-After, pause → resume, resume across kernel
-restart, cancel/retry/remove, SHA-256 success/mismatch, speed limit, ETag-change
-resume safety, chunked unknown-length, protocol errors, stdin-EOF exit), plus
-measurements: 4.39 MiB binary, ~5.7–6.7 MiB idle resident memory, 109–145 MiB/s
-loopback multi-connection throughput (single runs; machine-specific). The suite
-runs with `npm run verify`. The 0.1.1 prebuilt kernel set is additionally
-e2e-verified on Linux x64 (14/14, 241/241) and smoke-tested on the other native
-CI runners; see [verification §7](docs/verification.md#7-prebuilt-kernel-refresh-2026-11-05-dsh-rdm-011--kernel-101).
-Prebuilt kernels are additionally checked by
-`npm run verify:kernels` (all five targets present, right executable format,
-exec bit intact, SHA-256 reported); the same check gates every release.
+* `node scripts/verify-kernel.mjs` — kernel e2e against a local fixture (this is
+  the canonical suite; it spawns the kernel, so it requires a host where child
+  processes are permitted).
+* `python tests/verify_e2e.py` — out-of-process protocol-2 driver used on hosts
+  where Node cannot spawn children (see below): probe facts, signed URLs,
+  redirects, session scoping, telemetry, pause/resume, stats, aggregate.
+* `node tests/tools-receipts.test.mjs` — receipt contract, policy-once,
+  schema-cost guard, recoverable-error receipts.
+* `node scripts/verify-fixture.mjs` — fixture self-test.
+* `node scripts/verify-kernels.mjs --host --run` — the bundled kernel for this
+  host exists, has the right format, and starts.
 
-## Limitations
+The measured QA report for the release lives in
+[docs/verification.md](docs/verification.md).
 
-* Full kernel e2e verification has been run on Windows x64 and Linux x64 only.
-  The macOS and Linux arm64 binaries are built and smoke-tested (`--help`) on
-  native CI runners, but the 14-scenario e2e suite has not been executed on
-  those hosts.
-* Downloads require origins that speak HTTP/1.1; mirrors, HTTP/2 multiplexing
-  preference and per-origin budget learning are not part of this plugin.
-* Some DSH hosts confine child-process writes to the session workspace; the
-  `dataDir` fallback covers this, and `dataDir` lets deployments pin the store.
-* Visual paint was verified with browser captures against the real bundle, but
-  behaviour depends on the host's theme tokens and locale.
-* Kernel binaries are prebuilt by CI: the npm package and every GitHub install
-  carry all five, and installing never compiles Rust on the host.
+## Security and privacy
+
+* Credential-bearing query values are **redacted canonically**, not just in the
+  UI: `ServerFacts`/task views replace `X-Amz-Signature`, `Signature`, `sig`,
+  `token`, access keys and similar values with `<redacted>`. Request headers and
+  cookies never appear in any protocol view, receipt, or UI.
+* Task records on disk may retain request credentials so a resume after a kernel
+  restart can authenticate. They live only under the kernel data directory; treat
+  that directory as owner-sensitive.
+* The browser route is authenticated by the Harness connection service; the
+  kernel opens no network listener and speaks NDJSON over stdio only.
+* `insecure: true` disables TLS verification for one task (debug only); the probe
+  still reports the certificate facts it can read.
+
+## Limits (honest)
+
+* Mirrors, multi-source scheduling, download approval gates, per-origin enforced
+  concurrency budgets and MCP exposure are deliberate non-goals for 0.2.0.
+* Resume across a remote change is detected through validators; a weak-validator
+  origin can still serve bytes that changed within the same second — the
+  `weak` safety label is the honest signal there.
+* ETA confidence is a heuristic over measured windows; it is `unknown` rather
+  than guessed when data is insufficient.
+* The five-platform prebuilt kernels are built by the release workflow on native
+  runners; a local checkout only contains the current host's freshly built
+  kernel until the workflow refreshes `bin/`.
+* A sandboxed agent host may deny Node child-process creation; in that
+  environment use `bash scripts/dev-build.sh` for builds and
+  `python tests/verify_e2e.py` for the kernel suite (both are documented in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+
+## Development
+
+```bash
+npm install
+bash scripts/dev-build.sh all      # host + client, sandbox-safe
+bash scripts/dev-build.sh kernel   # cargo release build + install to bin/
+node scripts/build.mjs             # canonical build outside a sandbox
+node scripts/build-kernel.mjs      # canonical kernel build outside a sandbox
+python tests/verify_e2e.py         # protocol-2 kernel suite (sandbox-safe)
+node tests/tools-receipts.test.mjs # host receipts contract
+```
+
+The host half imports only Node built-ins (the schema library is vendored); the
+client half registers into `sidebar.panellist`, the keyed `main` slot and the
+native right-sidebar tab seat, with host theme tokens only.
 
 ## License
 
-MIT OR Apache-2.0. Vendored `schemastery` and `cosmokit` are MIT; their license
-files are under `vendor/`.
-
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+MIT OR Apache-2.0.

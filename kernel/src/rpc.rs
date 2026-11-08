@@ -52,11 +52,12 @@ fn required_url(url: &str) -> Result<(), ApiError> {
 #[serde(rename_all = "camelCase", default)]
 struct ListParams {
     status: Option<StatusFilter>,
+    session_id: Option<String>,
     limit: Option<usize>,
 }
 impl Default for ListParams {
     fn default() -> Self {
-        Self { status: None, limit: None }
+        Self { status: None, session_id: None, limit: None }
     }
 }
 #[derive(Deserialize)]
@@ -84,8 +85,11 @@ struct ControlParams {
 pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Value, ApiError> {
     match method {
         "initialize" => {
+            // The host sends `protocol` in its initialize params; a stale host
+            // talking to a 1.1.0 kernel is refused with a stable code (§5.7).
+            let protocol = params.get("protocol").and_then(Value::as_u64).map(|value| value as u32);
             let config = parse(params, method)?;
-            Ok(kernel.initialize(config).await)
+            kernel.initialize(config, protocol).await
         }
         "probe" => {
             let params: crate::protocol::ProbeParams = parse(params, method)?;
@@ -104,11 +108,11 @@ pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Va
                 None => None,
             };
             let limit = params.limit.unwrap_or(50).clamp(1, 200);
-            Ok(kernel.list(statuses, limit))
+            Ok(kernel.list(statuses, params.session_id.as_deref(), limit))
         }
         "get" => {
             let params: GetParams = parse(params, method)?;
-            let events = params.events.unwrap_or(50).min(500);
+            let events = params.events.unwrap_or(50).min(EVENT_LIMIT);
             kernel.get(&params.id, events)
         }
         "wait" => {
@@ -124,6 +128,11 @@ pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Va
             kernel.control(&params.id, &params.action, params.delete_part).await
         }
         "stats" => Ok(kernel.stats()),
+        "shutdown" => {
+            kernel.shutdown().await;
+            Ok(json!({}))
+        }
         other => Err(ApiError::invalid(format!("unknown method `{other}`"))),
     }
 }
+const EVENT_LIMIT: usize = 500;

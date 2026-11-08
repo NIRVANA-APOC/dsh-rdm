@@ -1,5 +1,5 @@
 /**
- * Browser route `POST /api/dsh-rdm/api` for the `dsh-rdm` sidebar panel.
+ * Browser route `POST /api/dsh-rdm/api` for the `dsh-rdm` review surfaces.
  *
  * Registered through `ctx.connection.fetch.register`, which enforces the
  * Host/Origin browser authentication; this module only owns the JSON contract
@@ -10,16 +10,23 @@
  * Envelope: `{"ok":true,"value":...}` or
  * `{"ok":false,"error":{"code","message"}}`; responses are never cached.
  *
+ * Protocol v2 actions (design §4.2): `list` (`{sessionId?, status?, limit?}`,
+ * returns kernel + tasks + aggregate), `get` (`{id, events?}`, returns task +
+ * detail + events), `stats`, `control`. `start` is retained for tests and
+ * programmatic callers but is no longer used by the UI.
+ *
  * @module dsh-rdm/host-api
  */
 
 import { toKernelLogger } from './kernel-client'
 import {
   KernelError,
+  normalizeAggregate,
   normalizeControlAction,
   normalizeRequestSpec,
-  normalizeStatusFilter,
+  normalizeSessionId,
   normalizeTaskId,
+  normalizeStatusFilter,
 } from './kernel-client'
 import type { KernelService } from './kernel-client'
 import {
@@ -27,9 +34,11 @@ import {
   DEFAULT_LIST_LIMIT,
   MAX_LIST_LIMIT,
   ROUTE_MAX_EVENTS,
+  type Aggregate,
   type ApiErrorEnvelope,
   type ApiSuccessEnvelope,
   type KernelStatusView,
+  type TaskDetail,
   type TaskEvent,
   type TaskView,
 } from './protocol'
@@ -117,35 +126,46 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 interface ListValue {
   kernel: KernelStatusView
   tasks: TaskView[]
+  aggregate: Aggregate
 }
 
 /** Payload of a successful `get`. */
 interface GetValue {
   task: TaskView
+  detail: TaskDetail
   events: TaskEvent[]
 }
 
 /**
- * `list`: kernel status plus tasks. A kernel that cannot start is reported
- * through `kernel.error` with an empty task list instead of failing the whole
- * response, because the panel polls this action every second.
+ * `list`: kernel status, tasks and their aggregate.
+ *
+ * `sessionId` scopes the list to one agent session (the right-sidebar tab);
+ * omitting it returns every session's tasks (the global review page). A kernel
+ * that cannot start is reported through `kernel.error` with an empty task list
+ * instead of failing the whole response, because the panel polls this action
+ * every second.
  */
 async function listAction(kernel: KernelService, body: Record<string, unknown>): Promise<ListValue> {
   const status = normalizeStatusFilter(body.status)
   const limit = clampInteger(body.limit, DEFAULT_LIST_LIMIT, 1, MAX_LIST_LIMIT)
+  const sessionId = normalizeSessionId(body.sessionId)
   try {
-    const tasks = await kernel.list(status, limit)
-    return { kernel: kernel.kernelStatus(), tasks }
+    const result = await kernel.list({
+      ...(status === undefined ? {} : { status }),
+      ...(sessionId === null ? {} : { sessionId }),
+      limit,
+    })
+    return { kernel: kernel.kernelStatus(), tasks: result.tasks, aggregate: result.aggregate }
   } catch {
     // A kernel that cannot start is reported through `kernel.error` (which the
     // panel renders); the poll loop must keep receiving a valid envelope.
-    return { kernel: kernel.kernelStatus(), tasks: [] }
+    return { kernel: kernel.kernelStatus(), tasks: [], aggregate: normalizeAggregate(undefined) }
   }
 }
 
-/** `get`: one task plus recent diagnostic events. */
+/** `get`: one task plus its heavy detail and recent diagnostic events. */
 async function getAction(kernel: KernelService, body: Record<string, unknown>): Promise<GetValue> {
-  const taskId = normalizeTaskId(body.id, 'id')
+  const taskId = normalizeTaskId(body.id ?? body.taskId, 'id')
   const events = clampInteger(body.events, DEFAULT_EVENTS, 0, ROUTE_MAX_EVENTS)
   return kernel.get(taskId, events)
 }
@@ -188,6 +208,7 @@ export async function handleRdmApiRequest(kernel: KernelService, request: Reques
       case 'get':
         return okResponse(await getAction(kernel, record))
       case 'start': {
+        // Retained for tests/programmatic callers; the UI never sends it.
         const task = await kernel.start(normalizeRequestSpec(record))
         return okResponse({ task })
       }
@@ -196,10 +217,10 @@ export async function handleRdmApiRequest(kernel: KernelService, request: Reques
         // aliases so an older client cannot silently no-op.
         const verb = record.control ?? record.op ?? record.command
         const verbAction = normalizeControlAction(verb)
-        const taskId = normalizeTaskId(record.id, 'id')
+        const taskId = normalizeTaskId(record.id ?? record.taskId, 'id')
         const deletePart = record.deletePart === true
         const task = await kernel.control(taskId, verbAction, deletePart)
-        return okResponse({ task })
+        return okResponse({ action: verbAction, task, deletePart })
       }
       case 'stats':
         return okResponse(await kernel.stats())

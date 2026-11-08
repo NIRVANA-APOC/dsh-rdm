@@ -1,90 +1,111 @@
-# dsh-rdm — architecture
+# dsh-rdm — architecture (0.2.0, agent-native)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
-long-lived Rust process that stays warm and is driven by model-facing tools and a
-sidebar panel. Transfers are segmented, resumable, verifiable and
+long-lived Rust process that stays warm and is driven by model-facing tools and
+two review surfaces. Transfers are segmented, resumable, verifiable and
 bandwidth-limited without starting a process per download.
+
+0.2.0 reframes the product: the **agent operates** the downloader through
+`rdm_*` tools that return bounded, structured facts; the **human reviews** what
+happened in a global sidebar page and in a session-scoped right sidebar tab.
+The binding contract for this release is
+[design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the kernel wire
+contract is [PROTOCOL.md](../PROTOCOL.md) v2.
 
 ## Goals
 
-1. A compact kernel with one job — serve the plugin's protocol — while covering
-   the whole download feature set: probe, segmented multi-connection transfer,
-   dynamic work distribution, adaptive concurrency, retry/backoff, resume,
-   bandwidth limit, checksum verification, progress events.
-2. `dsh` always downloads through RDM: the plugin registers `rdm_*` tools, adds a
-   short system-prompt section that prefers them over shell downloads, and shows
-   live tasks in a left-sidebar entry + main panel.
-3. Resident cost is small and paid lazily: the kernel starts on the first tool /
-   panel use, then stays warm; it exits when the plugin unloads or stdin closes.
+1. A compact resident kernel with one job — serve the plugin's protocol — while
+   covering probe (with server intelligence), segmented multi-connection
+   transfer, dynamic work distribution, adaptive concurrency, retry/backoff,
+   resume with validator safety, bandwidth limit, checksum verification,
+   windowed telemetry and origin memory.
+2. `dsh` always downloads through RDM: the plugin registers `rdm_*` tools, adds
+   one short system-prompt section that prefers them over shell downloads, and
+   exposes review-only UI (left global sheet + session right sidebar tab).
+3. Information over control: the tools answer "what does the server do?", "how
+   is the transfer doing over several time windows?", "can I resume safely?",
+   "does the result verify?" without follow-up calls.
+4. Resident cost stays small and lazy: the kernel starts on the first tool /
+   review use, then stays warm; it exits when the plugin unloads or stdin closes.
 
 ## Package layout
 
 ```
 dsh-rdm/
-├── package.json              # bundle patch + client manifest + exports
+├── package.json              # bundle patch + client manifest (injects sidebar-right) + exports
 ├── cordis.patch.yml          # inserts the dsh-rdm plugin row
 ├── icon.svg                  # display icon (original artwork)
 ├── locale/{en,zh}.json       # plugin metadata + UI strings
-├── PROTOCOL.md               # kernel <-> plugin NDJSON contract (v1)
-├── docs/ARCHITECTURE.md      # this file
-├── docs/verification.md      # QA report (QA owner)
+├── PROTOCOL.md               # kernel <-> plugin NDJSON contract (v2)
+├── docs/
+│   ├── ARCHITECTURE.md       # this file
+│   ├── OPTIMIZATION.md       # measured kernel work
+│   ├── verification.md       # QA report (verifier-owned; Lead publishes)
+│   ├── design/0.2.0-agent-native.md  # 0.2.0 product/UX/agent contract
+│   └── research/             # external evidence and reasoning notes
 ├── src/                      # TypeScript host + client sources
 │   ├── index.ts              # host plugin: apply(ctx, config)
 │   ├── config.ts             # schemastery Config (vendored schema lib)
-│   ├── protocol.ts           # TS mirrors of PROTOCOL.md types
-│   ├── kernel-client.ts      # spawn + NDJSON RPC + task mirror + restart
-│   ├── tools.ts              # tool registrations (5 tools)
+│   ├── protocol.ts           # TS mirrors of PROTOCOL.md v2 types
+│   ├── kernel-client.ts      # spawn + NDJSON RPC + task mirror + restart + session tagging
+│   ├── tools.ts              # five model-facing tool registrations + line receipts
 │   ├── tool-def.ts           # local defineTool: DSL→JSON Schema + arg validation
-│   ├── host-api.ts           # POST /api/dsh-rdm/api browser route
+│   ├── host-api.ts           # POST /api/dsh-rdm/api browser route (list/get/stats/control)
 │   ├── types.d.ts            # ambient declarations (local typecheck only)
 │   └── client/
-│       ├── index.tsx         # client plugin {inject, apply}
-│       ├── panel.tsx         # main panel (task list / controls / new download)
+│       ├── index.tsx         # client plugin {inject, apply}; left entry + native right tab
+│       ├── panel.tsx         # global review page (session-grouped ledger + evidence drawer)
+│       ├── rightbar.tsx      # session-scoped review tab body/title
+│       ├── components.tsx    # waveform, seals, chips, drawer primitives
 │       ├── api.ts            # fetch wrapper for /api/dsh-rdm/api
 │       └── styles.ts         # theme-token CSS string
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml
-│   ├── src/…
-│   └── tests/…
-├── bin/<platform>-<arch>/rdm-kernel[.exe]  # generated kernel binary, built per platform
+│   ├── Cargo.toml            # rdm-kernel 1.1.0, protocol 2
+│   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine
+│   └── tests/…               # unit + protocol smoke + in-process fixture e2e
+├── bin/<platform>-<arch>/rdm-kernel[.exe]  # generated kernel binary per platform
 └── scripts/
-    ├── build.mjs             # esbuild host + client bundles
-    ├── build-kernel.mjs      # cargo build --release + copy binary (kernel owner)
-    └── verify-*.mjs          # QA harness
+    ├── build.mjs             # canonical esbuild build (host + client)
+    ├── dev-build.sh          # sandbox-safe shell build (Node cannot spawn in DSH sandbox)
+    ├── build-kernel.mjs      # cargo build --release + install to bin/
+    └── verify-*.mjs          # kernel/prebuilt verification harness
 ```
 
 ## Kernel (`kernel/`, Rust)
 
-A standalone Cargo workspace (own `[workspace]`, not a member of the repo
-workspace) built for one purpose: serve the plugin's protocol.
+A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
+plugin's protocol.
 
-| Concern | dsh-rdm kernel |
+| Concern | 0.2.0 kernel |
 |---|---|
-| Public API | NDJSON server + task manager |
+| Public API | NDJSON server + task manager (protocol 2) |
 | GUI/CLI/IPC/MCP/resolver | not present |
+| Probe | manual redirect chain + HEAD/ranged-GET, full `ServerFacts` |
+| Server intelligence | ranges/validators/resume safety, signed-URL expiry (AWS/GCS/Azure/generic), TLS leaf validity, checksum headers, Retry-After, timing |
+| Telemetry | 1s/5s/30s/300s windows, peak/avg, stall, trend, ETA confidence |
+| Memory | bounded per-host origin ledger (`origins.json`, ≤256 hosts) |
 | Adaptive controller | compact AIMD + 429/503 pushback |
-| Probe | HEAD with ranged-GET fallback; returns metadata only |
-| Resume state | `.part` + `.part.json` |
-| Task store | kernel-owned `tasks/<id>.json` |
+| Resume state | `.part` + `.part.json`, `resumeSafety` reported |
+| Task store | kernel-owned `tasks/<id>.json` (v2 fields, v1 records load) |
 | Logging | stderr `log` lines |
 | Runtime | tokio, `min(4, cores)` worker threads (≥2) |
 
-Engine flow: `probe (HEAD → ranged GET fallback) → plan (chunk size, target
-name, resume scan) → chunked worker pool with dynamic chunk queue and AIMD
-concurrency → retries/backoff/Retry-After → SHA-256 verify → atomic rename`.
-Servers without range support transparently fall back to one stream.
-Pause/cancel are cooperative and event-driven; resume state is persisted every
-~500 ms and fsynced on pause/stop. Chunk sizing is automatic by default
-(4 chunks per connection, 256 KiB..8 MiB) and each worker writes through a
-1 MiB buffer. Completed files are renamed without an fsync by default
-(`fsyncOnComplete` opts back in).
+Engine flow: `probe (redirects → HEAD → ranged GET fallback, capture server
+facts) → plan (recommendation-aware chunk size/connections, target name, resume
+scan) → chunked worker pool with dynamic chunk queue and AIMD concurrency →
+retries/backoff/Retry-After → SHA-256 verify → atomic rename`. Servers without
+range support transparently fall back to one stream. Pause/cancel are cooperative
+and event-driven; resume state persists every ~500 ms and fsyncs on pause/stop.
+Chunk sizing is automatic by default (4 chunks per connection, 256 KiB..8 MiB).
+Completed files are renamed without fsync by default (`fsyncOnComplete` opts
+back in).
 
 Design constraints: correctness over cleverness; no task panics (task errors
-become `failed` states); stdout reserved for protocol; bounded memory
-(≤ 200 events/task, no full-body buffering, ≤ 1 MiB write buffer per worker).
-Performance work and its measurements live in
+become `failed` states); stdout reserved for protocol; bounded memory (≤200
+events/task, ≤3000 telemetry samples, ≤256 origins, no full-body buffering,
+≤1 MiB write buffer per worker). Performance work and measurements live in
 [OPTIMIZATION.md](OPTIMIZATION.md).
 
 Kernel CLI: `rdm-kernel --data-dir <dir> [--log-level warn]`. Exit on stdin EOF.
@@ -94,15 +115,8 @@ Kernel CLI: `rdm-kernel --data-dir <dir> [--log-level warn]`. Exit on stdin EOF.
 The host half is **self-contained**: it imports only Node built-ins at runtime.
 The Harness packages a normal plugin would import (`@deepseek-ai/dsh-tools`,
 `@deepseek-ai/schemastery`) are not resolvable from a *linked local* plugin
-directory, so:
-
-* `src/tool-def.ts` reproduces the `defineTool` contract used here — it compiles
-  the author schema DSL to the raw JSON Schema subset (the registry still
-  validates canonical outputs itself) and validates model arguments before
-  `execute`;
-* `@deepseek-ai/schemastery` + `@deepseek-ai/cosmokit` are vendored under
-  `vendor/` (MIT, license files retained) and bundled into `lib/index.js` for
-  the exported `Config` schema.
+directory, so `src/tool-def.ts` reproduces the `defineTool` contract and
+schemastery/cosmokit are vendored under `vendor/`.
 
 * `inject: ['tools', 'connection', 'systemPrompt']`; `apply(ctx, config)` owns a
   `KernelService`:
@@ -110,10 +124,15 @@ directory, so:
     (`config.dataDir` or `$DSH_HOME/dsh-rdm`), `--log-level`;
   * NDJSON RPC (ids, pending map, per-request timeout), task mirror updated by
     `task` notifications, spawn serialization, crash restart with backoff;
+  * protocol handshake: a kernel whose ready frame reports protocol ≠ 2 fails
+    with `protocol_mismatch` and an actionable message;
   * teardown: kill child on plugin dispose (`ctx.effect`).
-* Registers the five tools below and the browser route (see UI API).
-* Registers one system-prompt section (`dsh-rdm:downloads`) telling the model to
-  use `rdm_*` for every download instead of `bash`/`curl`.
+* Registers the five tools below plus one system-prompt section
+  (`dsh-rdm:downloads`) that states the "use rdm_* for downloads" policy exactly
+  once (tool descriptions carry behavior only).
+* Session attribution: `rdm_download` reads the calling agent's session id from
+  the tool execution context and sends it with the request, so the kernel and
+  review UI can scope by session. There is no model-supplied session parameter.
 * Config (`schemastery`): `defaultDir`, `connections`, `chunkSizeMiB`,
   `speedLimitBps`, `maxAttempts`, `autoResume`, `dataDir`, `kernelPath`,
   `logLevel`, `startOnDemand`.
@@ -133,47 +152,47 @@ when an **unconfigured** default data dir is denied:
    cwd being writable.
 
 The fallback is transparent to the caller (the first request succeeds), logged
-at warn level, and visible as `dataDir` in kernel status/stats. A configured
-`dataDir` is never overridden, so fixed deployments keep full control.
-
+at warn level, and visible as `dataDir` in kernel status/stats.
 
 ### Tool surface (model-facing)
 
+Five tools, bounded canonical outputs, line-oriented receipts. The **model reads
+the render**, not the canonical JSON; receipts use stable `key=value` fields in a
+fixed order (see `design/0.2.0-agent-native.md` §3.4).
+
 | tool | params | returns |
 |---|---|---|
-| `rdm_download` | `url*`, `dir?`, `fileName?`, `connections?`, `headers?` (json), `cookie?`, `referer?`, `userAgent?`, `expectedSha256?`, `speedLimitBps?`, `resume?`, `singleStream?`, `proxy?`, `insecure?`, `waitSec?` | task view (+ waits ≤ 300 s when `waitSec>0`) |
-| `rdm_probe` | `url*`, `headers?`, `cookie?`, `referer?`, `userAgent?` | metadata |
-| `rdm_tasks` | `taskId?`, `status?`, `limit?`, `events?` | kernel status + task(s) (+ events for `taskId`) |
-| `rdm_wait` | `taskIds*` (1..20), `timeoutSec?` | tasks + `timedOut` |
-| `rdm_control` | `taskId*`, `action` (`pause\|resume\|cancel\|retry\|remove`) | task (or removed id) |
+| `rdm_download` | `url*`, `dir?`, `fileName?`, `connections?`, `headers?` (json), `cookie?`, `referer?`, `userAgent?`, `expectedSha256?`, `speedLimitBps?`, `resume?`, `singleStream?`, `proxy?`, `insecure?`, `waitSec?` | task view + preflight `ServerFacts` (waits ≤2 s) + next-step hint; `waitSec` waits for completion (≤300 s) |
+| `rdm_probe` | `url*`, `headers?`, `cookie?`, `referer?`, `userAgent?`, `proxy?`, `insecure?`, `timeoutMs?` | full `ServerFacts` receipt: ranges, resume safety, signed-URL expiry, TLS validity, redirects, timing, checksums, recommendation |
+| `rdm_tasks` | `taskId?`, `status?`, `limit?`, `events?`, `scope?` (`session` default, `all`) | list: kernel + tasks + aggregate + counts; detail: task + telemetry + server + verification + diagnosis + events |
+| `rdm_wait` | `taskIds*` (1..20), `timeoutSec?` | tasks + timedOut + hint; wakes on status transitions, not polling |
+| `rdm_control` | `taskId*`, `action` (`pause\|resume\|cancel\|retry\|remove`), `deletePart?` | task (or removed id) |
 
-Tool descriptions state: use these for every file download; they are the
-resident RDM kernel (multi-connection, resumable, verifiable); use
-`bash`/`curl` only if the user explicitly demands it. Outputs are bounded
-(task views, ≤ 20 events) and stable JSON.
+Tool descriptions are deliberately short; parameter rules live on parameters;
+the policy sentence appears only in the system-prompt section (harness
+`agent-experience` guidance).
 
 ## Client UI (`src/client/`)
 
-Registers into two live slots (confirmed via `Slots.listSubTree`):
+Two review surfaces, one visual language. There is **no download composer** and
+no connection tuning: the human reviews what agents did.
 
-* `sidebar.panellist` — `{name:'sidebar.panellist', id:'rdm', order:30,
-  label:()=>t('panel.title'), locale:'dsh-rdm'}`, component receives
-  `{size, active}` and renders the original download icon.
-* `main` — keyed `{name:'main', key:'rdm', locale:'dsh-rdm'}`; renders the
-  **RDM panel**: engine status line, a compact start composer (URL bar with
-  collapsible directory/connection options), a filterable transfer ledger whose
-  rows are state-aware (status, filename, percent, a connection-split lane
-  rail plus a connection-lane meter, and only the telemetry that matters for
-  that state), per-row
-  pause/resume/retry/copy-path + details + overflow actions, an inline details
-  region with task facts and recent kernel events, loading skeleton, empty
-  state, and an inline route-error banner.
-
-The panel polls `POST /api/dsh-rdm/api {action:'list'}` every 1000 ms while it
-is mounted and the document is visible; each action reports its own error. All
-colors/spacings use `--dsw-alias-*`/`--dsw-specific-*` theme tokens; no Harness
-client package is imported. Locale strings live in `locale/{en,zh}.json` and are
-bound through `ctx.locale`.
+* `sidebar.panellist` registers the global entry (`id:'rdm'`, `order:30`) whose
+  icon opens the **global review page** in the keyed `main` slot (`key:'rdm'`).
+* `dsh.client.inject` additionally includes
+  `@deepseek-ai/dsh-client-ui-sidebar-right`; the client registers a native
+  right-sidebar tab type `dsh-rdm/downloads` (kind `rdm`) with a guide entry, a
+  body slot and a title slot. The tab filters tasks by the session id the slot
+  framework injects, giving the **session review** surface.
+* Both surfaces share components: aggregate header, 60–120 s throughput
+  waveform, session-grouped ledger, server chips, verification seal, and an
+  evidence drawer (server facts, timing, resume state, verification, events).
+* All colors/spacings use `--dsw-alias-*`/`--dsw-specific-*` theme tokens; no
+  Harness client package is imported beyond the injected client modules. Locale
+  strings live in `locale/{en,zh}.json` and are bound through `ctx.locale`.
+* The client tolerates an older host API (missing fields render as unknown) and
+  missing right-sidebar services (the left page still works), so a partial
+  deploy never crashes the page.
 
 ### Browser route API
 
@@ -181,39 +200,60 @@ bound through `ctx.locale`.
 connection service enforces Host/Origin/browser authentication), body:
 
 ```jsonc
-{"action":"list"}
-{"action":"start","url":"…","dir":"…","fileName":"…","connections":8}
+{"action":"list","sessionId":"sess_abc","status":"running","limit":50}
 {"action":"get","id":"t_…","events":20}
-{"action":"control","id":"t_…","action":"pause"}
 {"action":"stats"}
+{"action":"control","id":"t_…","action":"pause","deletePart":true}
+{"action":"start","url":"…","dir":"…"}   // retained for tests/programmatic callers; the UI does not use it
 ```
 
 Envelope: `{"ok":true,"value":…}` or `{"ok":false,"error":{"code","message"}}`.
-`list` returns `{kernel:{running,version?,pid?,error?}, tasks:[TaskView]}`.
-Both UI and tools call the same `KernelService` methods (one operation, two
-callers); `start`/`control` validate the same way the tools do.
+`list` returns `{kernel, tasks, aggregate}`; both UI surfaces and tools call the
+same `KernelService` methods (one operation, two callers).
 
 ## Build & install
 
 ```bash
 cd dsh-rdm
 npm install                     # local dev deps: esbuild, typescript
-node scripts/build-kernel.mjs   # cargo build --release → bin/<platform>-<arch>/rdm-kernel[.exe]
-node scripts/build.mjs          # esbuild → lib/index.js + lib/client.js
-node scripts/verify-kernels.mjs --host --run   # host kernel present, right format, starts
+bash scripts/dev-build.sh all   # sandbox-safe: host + client (use this from an agent sandbox)
+bash scripts/dev-build.sh kernel
+node scripts/build.mjs          # canonical esbuild build, outside a sandbox
+node scripts/build-kernel.mjs   # canonical cargo build + install, outside a sandbox
+node scripts/verify-kernels.mjs --host --run
+```
+
+The sandbox note matters for agent-driven development: inside the DSH agent
+sandbox a Node script cannot spawn child processes (EPERM), so
+`scripts/build.mjs` / `scripts/build-kernel.mjs` are canonical for humans/CI
+while `scripts/dev-build.sh` runs the same esbuild/cargo invocations from a
+shell and produces byte-identical artifacts (same esbuild version/options and
+wrapper text).
+
+Verification paths that work in that sandbox:
+
+```bash
+bash scripts/dev-build.sh all && bash scripts/dev-build.sh kernel
+python tests/verify_e2e.py            # protocol 2 against the real kernel binary
+python tests/verify_extra.py          # independent extra cases (verifier-owned)
+python tests/verify_claims.py         # redaction/preflight/flat-notification claims
+node tests/tools-receipts.test.mjs    # host receipt contract
+node scripts/verify-fixture.mjs       # fixture self-test
 ```
 
 The repository ships prebuilt kernels for `linux-x64`, `linux-arm64`,
-`win32-x64`, `darwin-x64` and `darwin-arm64` under
-`bin/<platform>-<arch>/`. They are produced natively by
-`.github/workflows/prebuilt-kernels.yml` (manual run commits them to `bin/`;
-a `v*` tag attaches the complete plugin tarball plus per-platform kernels to a
-GitHub release). `scripts/verify-kernels.mjs` validates the assembled set —
-existence, executable format (ELF/PE/Mach-O), POSIX exec bit, SHA-256, and a
-`--help` start on native hosts — and gates the release packaging job. Installing
-the plugin never compiles the kernel: `package.json` has no `prepare`/`install`/
-`postinstall` hook, so `dsh plugin add`/`plugin_manager install_bundle` only
-unpacks files and the host resolves the bundled binary lazily.
+`win32-x64`, `darwin-x64` and `darwin-arm64` under `bin/<platform>-<arch>/`.
+They are produced natively by `.github/workflows/prebuilt-kernels.yml` (manual
+run commits them to `bin/`; a `v*` tag attaches the complete plugin tarball plus
+per-platform kernels to a GitHub release). A **local checkout only has the
+current host's kernel rebuilt**; the other platform binaries are regenerated by
+that workflow before a release and are stale in a development tree (the host
+rejects a protocol-mismatched kernel with a clear error).
+`scripts/verify-kernels.mjs` validates the assembled set — existence, executable
+format (ELF/PE/Mach-O), POSIX exec bit, SHA-256, and a `--help` start on native
+hosts — and gates the release packaging job. Installing the plugin never
+compiles the kernel: `package.json` has no `prepare`/`install`/`postinstall`
+hook.
 
 Install into a profile from GitHub:
 
@@ -233,27 +273,33 @@ Or install a local checkout as a directory bundle:
 plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
-Then inspect `Tool.listTools` for `rdm_*` and `Slots.listSubTree root=main /
-root=sidebar.panellist` for the `rdm` occupants. A page refresh is not normally
-needed for a first install (HMR); if the client bundle was replaced, restart the
-page/plugin per plugin_manager output.
+Then inspect `Tool.listTools` for `rdm_*`, `Slots.listSubTree` for the `rdm`
+occupants (`sidebar.panellist`, `main`), and the right-sidebar guide for the
+"Downloads" capsule. A page refresh is not normally needed for a first install
+(HMR); if the client bundle was replaced, restart the page/plugin per
+plugin_manager output.
 
-## Acceptance criteria
+## Acceptance criteria (0.2.0)
 
-1. `node scripts/build-kernel.mjs` produces `bin/<platform>-<arch>/rdm-kernel[.exe]`;
-   `node scripts/build.mjs` produces `lib/index.js` + `lib/client.js`;
-   `node scripts/verify-kernels.mjs` passes for all five prebuilt targets;
-   kernel unit/integration tests pass.
-2. Kernel supports, against a local fixture server: ranged multi-connection
-   download, no-range single-stream fallback, pause→resume (same kernel) and
-   resume across kernel restart, cancel, retry, SHA-256 mismatch/success,
-   speed limit, redirects, probe metadata, filename derivation/sanitization.
-3. Plugin installed: `rdm_*` tools are visible to agents; calling `rdm_download`
-   downloads a fixture and `rdm_wait` reports `completed`; `rdm_tasks` reflects
-   live progress; `rdm_control` pauses/resumes.
-4. Live slots show `rdm` in `sidebar.panellist` and `main`; no client slot crash.
-5. Kernel idle resident cost, binary size and source line count are measured and
-   documented.
-6. README + verification report document build/install/usage/limits honestly
-   (which hosts run the full e2e suite vs. CI smoke tests; visual UI verification
-   limits).
+1. `bash scripts/dev-build.sh all` / `node scripts/build.mjs` produce
+   `lib/index.js` + `lib/client.js`; the kernel builds and installs to
+   `bin/<host>/`; `node scripts/verify-kernels.mjs` passes for all five
+   prebuilt targets; kernel unit/integration tests pass.
+2. Kernel protocol 2: `ServerFacts` complete against the fixture (redirects,
+   ranges, validators, signed URL, checksum/rate-limit headers), telemetry
+   windows/peak/avg/stall/trend/ETA confidence correct, session id round-trips,
+   0.1.x task records load, notification stays flat.
+3. Tools: receipts line-oriented and bounded; preflight facts available within
+   2 s; signed-URL expiry and resume safety reported; policy stated once.
+4. Session scoping: tool-started tasks carry the calling session id; browser
+   `list` filters by it; unattributed tasks stay global.
+5. Client: global page and session right tab show live + historical tasks with
+   evidence drawer; light/dark, 1440/768/390, empty/loading/error states
+   verified from screenshots; contrast and reduced-motion checks pass; no
+   composer.
+6. Independent verifier PASS with recorded evidence.
+7. Docs: PROTOCOL v2, this file, design contract, research note, README 0.2.0,
+   verification report; performance changes measured and documented.
+8. Live check: plugin installed from this workspace into a DSH profile; tools
+   visible; a fixture download completes and appears in both review surfaces
+   (screenshot evidence), or the limitation documented honestly.

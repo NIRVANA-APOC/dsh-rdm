@@ -4,7 +4,7 @@ use crate::error::{EngineError, EngineResult};
 use crate::filename;
 use crate::http;
 use crate::probe;
-use crate::protocol::{ErrorInfo, Spec};
+use crate::protocol::{ErrorInfo, OriginFacts, Spec};
 use crate::state;
 use crate::task::{Control, StopKind, Task};
 use std::path::Path;
@@ -15,7 +15,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout, MissedTickBehavior};
-pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Largest per-worker write buffer. Writes are dispatched to the blocking pool
 /// one at a time, so a 256 KiB buffer spends a measurable share of a transfer
@@ -114,6 +114,9 @@ pub struct Reporter {
     handle: JoinHandle<()>,
 }
 impl Reporter {
+    /// Reused reporter tick (≤ 100 ms): samples cumulative bytes into the
+    /// task's bounded speed ring and updates EWMA/peak/telemetry. No extra
+    /// timers are created and idle tasks have no reporter running.
     pub fn start(task: Arc<Task>, counters: Arc<Counters>, total: Option<u64>) -> Self {
         let stop = Arc::new(Notify::new());
         let wait = Arc::clone(&stop);
@@ -121,22 +124,12 @@ impl Reporter {
             let mut ticker = interval(PROGRESS_INTERVAL);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             ticker.tick().await;
-            let mut ewma = 0.0f64;
-            let mut last_bytes = counters.downloaded();
-            let mut last_at = Instant::now();
             loop {
                 tokio::select! {
                     _ = wait.notified() => break,
                     _ = ticker.tick() => {}
                 }
-                let now = Instant::now();
-                let downloaded = counters.downloaded();
-                let dt = now.duration_since(last_at).as_secs_f64().max(1e-6);
-                let instant = downloaded.saturating_sub(last_bytes) as f64 / dt;
-                ewma = if ewma <= 0.0 { instant } else { 0.3 * instant + 0.7 * ewma };
-                task.progress(downloaded, total, ewma.max(0.0) as u64, counters.active(), counters.peak());
-                last_bytes = downloaded;
-                last_at = now;
+                task.report(counters.downloaded(), total, counters.active(), counters.peak());
             }
         });
         Self { stop, handle }
@@ -153,25 +146,28 @@ pub fn control_error(control: &Control) -> Option<EngineError> {
         None => None,
     }
 }
-pub async fn run(task: Arc<Task>) -> EngineOutcome {
+pub async fn run(task: Arc<Task>, origin: Option<OriginFacts>) -> EngineOutcome {
     let spec = task.spec();
-    match run_inner(&task, &spec).await {
+    match run_inner(&task, &spec, origin).await {
         Ok(sha256) => EngineOutcome::Completed { sha256 },
         Err(EngineError::Paused) => EngineOutcome::Paused,
         Err(EngineError::Cancelled) => EngineOutcome::Cancelled,
         Err(EngineError::Failed(info)) => EngineOutcome::Failed(info),
     }
 }
-async fn run_inner(task: &Arc<Task>, spec: &Spec) -> EngineResult<Option<String>> {
+async fn run_inner(task: &Arc<Task>, spec: &Spec, origin: Option<OriginFacts>) -> EngineResult<Option<String>> {
     let control = task.control();
     let client = http::client_for_spec(spec)?;
+    let probe_client = http::probe_client_for_spec(spec)?;
     task.set_status(crate::protocol::Status::Probing);
     task.add_event("probe", Some(format!("probing {}", spec.url)), None, None, None);
     if let Some(error) = control_error(&control) {
         return Err(error);
     }
-    let meta = probe::probe_spec(&client, spec).await?;
-    task.set_meta(&meta);
+    let outcome = probe::probe_spec(&probe_client, spec, origin).await?;
+    let meta = outcome.meta;
+    task.set_probe_ms(outcome.facts.timing.probe_ms);
+    task.set_server(&outcome.facts);
     task.add_event(
         "probe",
         Some(format!("{} bytes, ranges={}, type={}", meta.total_bytes.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()), meta.supports_ranges, meta.content_type.as_deref().unwrap_or("unknown"),)),
@@ -194,6 +190,7 @@ async fn run_inner(task: &Arc<Task>, spec: &Spec) -> EngineResult<Option<String>
     }
 }
 pub async fn finalize(task: &Arc<Task>, spec: &Spec, part: &Path, state_path: &Path, target: &Path, total: Option<u64>) -> EngineResult<Option<String>> {
+    task.begin_finalize();
     let metadata = tokio::fs::metadata(part).await.map_err(|error| EngineError::io(format!("{}: {error}", part.display())))?;
     if let Some(total) = total {
         if metadata.len() != total {
@@ -218,6 +215,7 @@ pub async fn finalize(task: &Arc<Task>, spec: &Spec, part: &Path, state_path: &P
     };
     tokio::fs::rename(part, target).await.map_err(|error| EngineError::io(format!("could not finalize target: {error}")))?;
     let _ = tokio::fs::remove_file(state_path).await;
+    task.end_finalize();
     Ok(sha256)
 }
 pub async fn prepare_part(part: &Path, total: u64) -> EngineResult<()> {

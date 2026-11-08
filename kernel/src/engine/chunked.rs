@@ -26,7 +26,7 @@ struct Shared {
     total: u64,
     client: Client,
     url: String,
-    etag: Option<String>,
+    if_range: Option<String>,
     part: PathBuf,
     state_path: PathBuf,
     spec_url: String,
@@ -109,10 +109,13 @@ impl Shared {
     }
     async fn save_state(&self, durable: bool) {
         let _guard = self.save_lock.lock().await;
-        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, self.scheduler.completed_ranges(), self.counters.downloaded());
+        let ranges = self.scheduler.completed_ranges();
+        let downloaded = self.counters.downloaded();
+        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, ranges.clone(), downloaded);
         if let Err(error) = state::save_atomic(&self.state_path, &state, durable).await {
             klog!(warn, "could not save resume state: {error}");
         }
+        self.task.set_resume_stats(ranges.len() as u64, downloaded);
         *self.last_save.lock().expect("save mutex poisoned") = Instant::now();
         self.dirty.store(false, Ordering::SeqCst);
     }
@@ -156,9 +159,11 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
                 if let Some(ranges) = saved.completed_ranges() {
                     resumed_chunks = plan::covered_chunks(&plan, &ranges);
                     done = ranges;
+                    task.set_validators_matched(true);
                     task.add_event("info", Some(format!("resuming with {resumed_chunks} completed chunks")), None, None, None);
                 }
             } else {
+                task.set_validators_matched(false);
                 klog!(info, "resume validators changed; restarting from zero");
             }
         }
@@ -173,7 +178,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let counters = Arc::new(Counters::default());
     counters.downloaded.store(resumed_bytes, Ordering::Relaxed);
     let workers = spec.connections.min(plan.total_chunks.max(1) as usize).max(1);
-    task.set_plan(workers, Some(plan.chunk_size), resumed_chunks);
+    task.set_plan(workers, Some(plan.chunk_size), resumed_chunks, resumed_bytes);
     task.add_event("plan", Some(format!("{} bytes, {} chunks of {} bytes, {} workers, {} resumed bytes", total, plan.total_chunks, plan.chunk_size, workers, resumed_bytes)), None, None, None);
     if let Some(error) = control_error(&control) {
         return Err(error);
@@ -188,7 +193,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         total,
         client: client.clone(),
         url: meta.final_url.clone(),
-        etag: meta.etag.clone(),
+        if_range: crate::facts::if_range_etag(meta.etag.as_deref()).map(str::to_string),
         part: part.to_path_buf(),
         state_path: state_path.to_path_buf(),
         spec_url: spec.url.clone(),
@@ -252,7 +257,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     reporter.stop().await;
     if let Some(outcome) = control.stop_kind() {
         shared.save_state(true).await;
-        task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
+        task.report(counters.downloaded(), Some(total), 0, counters.peak());
         return Err(match outcome {
             StopKind::Paused => EngineError::Paused,
             StopKind::Cancelled => EngineError::Cancelled,
@@ -265,16 +270,16 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     if let Some(error) = shared.take_failure() {
         shared.save_state(true).await;
-        task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
+        task.report(counters.downloaded(), Some(total), 0, counters.peak());
         return Err(error);
     }
     if !scheduler.is_finished() {
         shared.save_state(true).await;
-        task.progress(counters.downloaded(), Some(total), 0, 0, counters.peak());
+        task.report(counters.downloaded(), Some(total), 0, counters.peak());
         return Err(EngineError::internal("transfer ended before every byte range completed"));
     }
     counters.downloaded.store(total, Ordering::Relaxed);
-    task.progress(total, Some(total), 0, 0, counters.peak());
+    task.report(total, Some(total), 0, counters.peak());
     task.add_event("info", Some(format!("finished in {} ms", shared.started.elapsed().as_millis())), None, None, None);
     finalize(task, spec, part, state_path, target, Some(total)).await
 }
@@ -392,10 +397,10 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         let start = claim.start + written;
         let end_inclusive = claim.end - 1;
         let mut request = shared.client.get(&shared.url).header(RANGE, format!("bytes={start}-{end_inclusive}"));
-        if let Some(etag) = shared.etag.as_deref() {
-            if etag.starts_with('"') && etag.ends_with('"') {
-                request = request.header(IF_RANGE, etag);
-            }
+        // If-Range is only valid with a strong validator (RFC 9110 §13.1.5);
+        // weak ETags and Last-Modified must not be used for conditional ranges.
+        if let Some(etag) = shared.if_range.as_deref() {
+            request = request.header(IF_RANGE, etag);
         }
         let response = tokio::select! {
             result = request.send() => result,
@@ -480,6 +485,7 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         }
         let retry_after = http::retry_after(response.headers());
         if matches!(status.as_u16(), 429 | 503) {
+            shared.task.note_throttled();
             shared.note_pushback(retry_after.unwrap_or_else(|| http::backoff(attempt)));
         }
         if let Some(delay) = retry_schedule(shared, &claim, attempt, written, format!("server returned HTTP {}", status.as_u16()), Some(status.as_u16())) {

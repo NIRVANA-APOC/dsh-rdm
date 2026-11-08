@@ -1,277 +1,150 @@
-# dsh-rdm — verification report
+# dsh-rdm 0.2.0 — verification report
 
-Measured verification of the `dsh-rdm` plugin: the resident Rust download
-kernel (`bin/win32-x64/rdm-kernel.exe`) driven over its documented NDJSON
-protocol ([PROTOCOL.md](../PROTOCOL.md)), the live plugin path through the
-installed DSH plugin, measured size/resource/throughput numbers, and static
-sanity of the built plugin bundles.
+Status: **PASS** on the release contract
+([`docs/design/0.2.0-agent-native.md`](design/0.2.0-agent-native.md) §8), with one
+documented environment limitation: the live in-profile install check could not be
+driven from the development sandbox (see §6). This report summarises the
+independent verification run; the full evidence bundle (commands, logs, contrast
+matrices, captured screenshots, hashes) lives in the verifier workspace
+`.design/reports-02/` and is intentionally not shipped with the package.
 
-* Host: Windows x64 only for the 0.1.0 run below. **2026-11-05 refresh:** the
-  0.1.1 prebuilt kernel set covers `linux-x64`, `linux-arm64`, `win32-x64`,
-  `darwin-x64` and `darwin-arm64`, built on native CI runners and committed
-  under `bin/`; Linux x64 is e2e-verified and the others are smoke-tested by
-  their build runner. See §7.
-* Status legend: `PASS` = observed and asserted by the harness; `FAIL` =
-  observed and not meeting the stated criterion; `NOT VERIFIED` = explicitly out
-  of scope / no evidence, never claimed as success.
+* Contract: `docs/design/0.2.0-agent-native.md` §8
+* Protocol: [`PROTOCOL.md`](../PROTOCOL.md) (protocol 2, kernel 1.1.0)
+* Verifier: independent teammate, not an implementer; no product code edited.
 
-**Final verdict (2026-11-03, shipped build): `verify: PASS`** — 14/14 kernel e2e
-scenarios, 241/241 assertions, 7/7 measurements, fixture self-test 64/64; kernel
-binary sha256
-`5ad09db39c3f8075eb5eaa1f22f69e25167ca55e484d9dcdf85d28de697b3d2d`; live
-`rdm_*` agent-tool path independently exercised through the installed plugin.
-Items **not** verified are listed explicitly in §5.
+## 1. Verified artifacts (final closure)
 
-## 1. How to reproduce
+| artifact | sha256 | bytes |
+|---|---|---|
+| `lib/index.js` | `58ff667940295279d48145c924115d9b1750788ac879ee24f2a93e823a6fafe3` | 161,528 |
+| `lib/client.js` | `418da48a4155ef2b30fbfe103b283a4718ad0291ea8214f73beaebd07dae92e5` | 140,121 (esbuild body 139,801) |
+| `bin/win32-x64/rdm-kernel.exe` | `068319182e4a5cd1f6f81db8d0b5b5c2dc3838824f6dd991eb90bd8de4ca5406` | 4,974,080 |
+| `kernel/target/release/rdm-kernel.exe` | same as `bin/win32-x64/rdm-kernel.exe` | 4,974,080 |
 
-Run everything from the package directory:
+Environment: Windows x64 (MSYS bash), Node v24.19.0, Python 3.14.7, cargo/rustc
+1.99.1, Chromium 157.0.8103.38 (REA browser provider). Kernel ready frame:
+`{"event":"ready","protocol":2,"kernel":{"version":"1.1.0",...}}`.
 
-```powershell
-cd dsh-rdm
+An independent rebuild (`bash scripts/dev-build.sh host|client`) is
+**byte-identical** to both published JS bundles, including the closure pass after
+the UI contrast fix.
 
-# 0) fixture self-test (no kernel binary needed): 64 checks
+## 2. Verdict table (contract §8)
+
+| # | Acceptance criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Release builds: kernel → `bin/<host>/`, host + client bundles | **PASS** (sandbox-substituted) | independent byte-identical rebuilds; `bin` == `target/release`; kernel reports protocol 2. The canonical `node scripts/build.mjs` cannot spawn children in the DSH sandbox, so the shell-equivalent `scripts/dev-build.sh` was used. |
+| 2 | Protocol 2: complete `ServerFacts`, telemetry windows, session round-trip, 0.1.x records load, flat notifications | **PASS** | 55/55 shipped e2e, 56/56 independent extra harness, 15/15 claim probes, 80/80 cargo tests, `cargo fmt` clean, flat-notification probe |
+| 3 | Tools: schema cost ≤ 0.1.2; preflight ≤ 2 s; signed-URL/resume safety; bounded receipts; policy once | **PASS** | first-turn schema cost 7241 → **4966 chars (−31.4 %)**; preflight facts at **21.1 ms**; 31/31 receipt contract; policy sentence count = 1; 18/18 host-API checks |
+| 4 | Session scoping: calling session on tool tasks; browser `list` filtered; unattributed tasks global | **PASS** (HTTP route static-only in sandbox) | kernel `list` isolation dynamic (56/56 extra); `exec.agent.session.id` propagation via mock execution; route code path in the built bundle |
+| 5 | UI: both surfaces, evidence drawer, states, light/dark 1440/768/390, contrast, no literal colors, no composer, native right tab + guide | **PASS** | 21 real renders audited (12 global / 9 session; 6 dark; error states on both surfaces), plus 2 independent headless-Chromium captures; contrast **56/56 pairs pass** (light non-text marks ≥ 3:1 after ink-mix fix; dark restores host hues); 0 literal colours; no composer; `main` key `rdm` + `sidebar.right.pane.tab` key `dsh-rdm/downloads` (kind `rdm`, guide order 40) |
+| 6 | Independent verifier PASS on kernel, host, client | **PASS** | this report + hashed evidence bundle |
+| 7 | Docs: PROTOCOL v2, ARCHITECTURE, design contract, research note, README 0.2.0, this report | **PASS** | protocol-doc audit 13/13; design contract matches implementation; research note; English + Chinese README 0.2.0; this report replaces the 0.1.x QA report |
+| 8 | Live check: installed in a DSH profile, `rdm_*` visible, fixture download in both review surfaces | **UNVERIFIED (documented)** | plugin installation/profile UI cannot be driven from the sandbox (Node child spawn EPERM, no profile control). Substitute evidence: real kernel fixture downloads through every harness and both review surfaces rendered from the rebuilt client in independent headless Chrome. |
+
+Counts: **239 one-off checks passed** (55 e2e + 56 extra + 15 claims + 18 host-API
++ 31 receipts + 64 fixture) plus **80 cargo tests**; closure client checks:
+rebuild byte-identical, `node --check` OK, `tsc --noEmit` clean, contrast 56/56,
+protocol audit 13/13, 21/21 screenshots real and dimension-correct.
+
+## 3. Method
+
+Three independent evidence tiers:
+
+1. **Re-derive from the contract.** Verifier-owned harnesses
+   (`tests/verify_extra.py`, `tests/verify_claims.py`, host-API and
+   contrast/protocol-audit scripts) assert the contract text rather than
+   re-running implementer tests.
+2. **Drive the real artifact.** Wire-level claims run against
+   `bin/win32-x64/rdm-kernel.exe` over NDJSON (Python spawns it; Node cannot in
+   this sandbox). Receipt/API claims run against the built `lib/index.js` through
+   its exported helpers and a mock `KernelService`.
+3. **Independent visual reproduction.** The preview harness is rebuilt from
+   source, served locally, and captured in a fresh headless Chromium 157 (two
+   captures) plus an audited 21-shot matrix (Pillow: dimensions, colour census,
+   light/dark luminance, SHA-256); WCAG contrast is recomputed from the generated
+   host palette and the product CSS token expressions.
+
+Independent extra coverage worth naming:
+
+* no-range origin → probe reports unsupported ranges and the download completes
+  as a single stream, byte-identically;
+* pause → **kill kernel process** → new kernel on the same data dir → resume
+  completes the original bytes (partial `.part` and progress survive restart);
+* session-scoped `list` excludes other sessions; session-less tasks stay global
+  with `sessionId: null`;
+* raw `initialize` frame with `protocol: 1` is rejected with
+  `code: protocol_mismatch`;
+* canonical credential redaction: every planted secret is absent from all
+  protocol views; preflight facts available at 21.1 ms; notifications flat;
+  shutdown replies and exits in milliseconds.
+
+## 4. Findings resolved during verification
+
+| id | severity | finding | resolution |
+|---|---|---|---|
+| F1 | LOW | light-mode non-text status marks below the design's 3:1 glyph floor (success 2.28:1, warn 2.15:1) | ink-mixed `--rdm2-graphic-ok/-warn` tokens; light success 4.14:1, warn 3.51:1; dark restored to host hues; independently re-measured 56/56 contrast pairs |
+| F2 | LOW | evidence matrix missing 768 px dark shots and a session-surface error state | 21-shot matrix: light+dark 1440/768/390 on both surfaces, drawer/empty/loading/EN, error state on both surfaces |
+| F3 | LOW | README task-list receipt example drifted from the renderer | example now matches actual output (`kernel` / `scope=` / `aggregate` / task line) |
+| F4 | LOW | `README.zh-CN.md` still the 0.1.x page | rewritten as the 0.2.0 counterpart, structural parity verified |
+| F5 | LOW | this file was still the 0.1.x QA report while the README pointed at it | replaced by this 0.2.0 report |
+| F6 | LOW | design contract said credentials were redacted "in UI only" | contract now states canonical redaction; implementation was already safer |
+| F7 | INFO | design example `valid(19m)` vs single-unit rule; PROTOCOL shutdown result wording | example corrected to `valid(19m40s)`; shutdown result documented as `{}` |
+
+## 5. Performance (agent-facing layer vs 0.1.2)
+
+Native range-origin A/B (pristine 0.1.2 vs 0.2.0 kernel, medians, two runs;
+host load varies): 1 MiB 6.1 → 6.5 ms / 12.1 → 12.7 ms; 10 MiB 16.0 → 12.2 ms /
+19.8 → 13.3 ms; 64 MiB/8 55.4 → 53.0 ms / 55.2 → 58.3 ms; 64 MiB/1 134.0 →
+131.6 ms / 143.9 → 144.6 ms. Every difference is inside loopback variance; the
+conclusion is parity. A real regression was found and fixed during the pass (the
+origin-ledger disk save gated the terminal transition for small downloads; it now
+runs on a coalescing background writer). Details and the reproduction harness:
+[`OPTIMIZATION.md`](OPTIMIZATION.md) §9.
+
+## 6. Limitations (honest)
+
+1. **Live in-profile install / real DSH browser route / native sidebar shell**
+   (§8.8) — not executable from the sandbox: Node cannot spawn children,
+   plugin installation and profile UI control are unavailable. The preview
+   renders the real client components against the same protocol-v2 route shape,
+   and the kernel wire path is exercised for real, but the host-route HTTP layer
+   and the native right-sidebar shell are verified statically rather than live
+   by this report.
+2. **Foreign prebuilt kernels** (linux/darwin) — presence and container format
+   only in this checkout; they are regenerated by the release CI on native
+   runners. A development checkout only has the current host's kernel rebuilt.
+3. **Release packaging** (npm tarball file modes, five-platform CI) — not
+   verifiable from a Windows checkout.
+4. **Performance** — two of the four A/B cases were independently re-run with a
+   different harness; loopback variance is large (see §5).
+5. The design's "no literal colours" rule is enforced for `src/client`; the
+   generated preview theme intentionally contains host hex tokens and is not
+   product code.
+
+## 7. Reproduce
+
+```bash
+# builds (sandbox-safe equivalents of scripts/build.mjs / build-kernel.mjs)
+bash scripts/dev-build.sh all
+bash scripts/dev-build.sh kernel
+node --check lib/client.js
+./node_modules/.bin/tsc --noEmit
+
+# kernel
+cd kernel && cargo test --all-targets && cargo fmt --check && cd ..
+python tests/verify_e2e.py --kernel bin/win32-x64/rdm-kernel.exe
+python tests/verify_extra.py            # independent cases (verifier-authored)
+python tests/verify_claims.py           # redaction/preflight/flat-notification
 node scripts/verify-fixture.mjs
 
-# 1) full verification: 14 kernel e2e scenarios + measurements
-#    exit 0 = pass, 1 = failures, 2 = kernel binary missing
-node scripts/verify-kernel.mjs
+# host / client
+node tests/tools-receipts.test.mjs
+node .design/preview-02/verify-contrast.mjs
+bash .design/preview-02/build.sh        # preview harness; screenshots in .design/preview-02/shots
 
-# machine-readable report + log
-node scripts/verify-kernel.mjs --json="%TEMP%\dsh-rdm-verify-report.json"
-
-# useful partial runs
-node scripts/verify-kernel.mjs --list
-node scripts/verify-kernel.mjs --only=pause --no-measure
-node scripts/verify-kernel.mjs --allow-missing-artifacts   # e2e only, bundles optional
+# perf study (needs rustc for the native origin)
+rustc -O -o tests/.tmp-e2e/perf-origin.exe tests/perf-origin.rs
+python tests/bench_native.py --old <pristine-0.1.2-kernel> \
+  --new kernel/target/release/rdm-kernel.exe --origin tests/.tmp-e2e/perf-origin.exe
 ```
-
-`npm run verify` in `package.json` invokes `node scripts/verify-kernel.mjs`.
-
-Harness files: [`tests/fixture-server.mjs`](../tests/fixture-server.mjs),
-[`tests/kernel-client.mjs`](../tests/kernel-client.mjs),
-[`tests/kernel-e2e.mjs`](../tests/kernel-e2e.mjs),
-[`tests/measure.mjs`](../tests/measure.mjs),
-[`scripts/verify-fixture.mjs`](../scripts/verify-fixture.mjs),
-[`scripts/verify-kernel.mjs`](../scripts/verify-kernel.mjs).
-
-## 2. Environment
-
-| item | value |
-|---|---|
-| OS | Windows (`win32` 10.0.26300), x64 |
-| Node.js | v24.19.0 |
-| npm | 11.17.0 |
-| Rust | rustc 1.99.1 (58cf8f9c3 2026-10-13), cargo 1.99.1 |
-| package | `dsh-rdm` 0.1.0 (`kernel` crate 1.0.0) |
-| kernel binary | `bin/win32-x64/rdm-kernel.exe`, 4,600,320 bytes (4.39 MiB), sha256 `5ad09db39c3f8075eb5eaa1f22f69e25167ca55e484d9dcdf85d28de697b3d2d` |
-| DSH version exercised | 0.2.1-rc.5 |
-| network under test | loopback HTTP fixture server on a random `127.0.0.1` port (no real internet) |
-
-### Sandboxed hosts and the data directory
-
-On hosts that confine child-process writes, the kernel process can be denied
-creation of `<data-dir>/tasks` (`ACCESS_DENIED`, `os error 5`) outside the
-session workspace. This is an environment write policy, not a kernel defect: the
-same binary succeeds with a workspace-owned data dir, and a trivial Rust
-`std::fs::create_dir_all` probe shows the same location-dependent behaviour.
-
-The test harness therefore keeps all kernel data dirs and download dirs under a
-workspace-owned root, `tests/.tmp-e2e/` (override with
-`DSH_RDM_TEST_TMP_ROOT`), and removes it after each run. The installed plugin has
-the same protection: when no `dataDir` is configured and the kernel fails on a
-data-dir I/O error, the host side retries once with
-`<plugin packageRoot>/.rdm-data` and defaults download destinations to
-`<dataDir>/downloads`.
-
-## 3. E2E results
-
-Final acceptance run against the shipped binary above: **14/14 scenarios passed,
-241/241 assertions passed, e2e time 103.6 s; measurements 7/7 passed;
-`verify: PASS` (exit code 0).**
-
-Fixture server self-test: **64/64 checks passed** (`node scripts/verify-fixture.mjs`).
-
-| # | scenario | what the assertions prove | checks | time |
-|---|---|---|---|---|
-| 1 | lifecycle: ready / initialize / stats | one valid `ready` notification with `protocol:1`, version, pid, dataDir; stdout is protocol-only JSON; `initialize` echoes clamped config; later `initialize` updates new-task defaults; `stats` shape/counts/totals/config | 30/30 | 18 ms |
-| 2 | probe: ranged / no-range / redirect / chunked metadata | `probe` returns file name, `totalBytes`, `supportsRanges`, `contentType`, `finalUrl`; ranged probe issues **no GET** (HEAD only); no-range reports `supportsRanges:false`; 2-hop redirect `finalUrl` differs from requested and is the final ranged URL; chunked origin reports `totalBytes:null`; a full download through the redirect chain completes byte-exact | 29/29 | 87 ms |
-| 3 | download: full ranged transfer | `completed`; `downloaded == total == 2 MiB`; file sha256 equals fixture digest; target path in requested dir; no `.part`/`.part.json` leftovers; task notifications observed incl. `completed`; `get` returns events (bounded, monotonic, known kinds); `list` includes task and honours `status`/`limit` | 30/30 | 79 ms |
-| 4 | multi-connection: 12 MiB, connections=8 + singleStream | fixture recorded 32 range GETs with **max overlap 8**; kernel `peakWorkers > 1` (observed 8); byte-exact; `singleStream:true` issues **exactly one rangeless GET** (200, no `Range` header) with `chunkSize:null` | 27/27 | 254 ms |
-| 5 | no-range fallback | `rangeSupported:false`; completes byte-exact through a single rangeless stream (exactly one rangeless GET, no 206) | 14/14 | 74 ms |
-| 6 | retry: 429 + Retry-After | first two range GETs answered `429` + `Retry-After: 1`; task completes with `retries:2` and elapsed ≈ 2.0 s (Retry-After honoured), bytes exact | 11/11 | 2.1 s |
-| 7 | pause → resume (same kernel) | pause mid-transfer → `paused`; `.part` + `.part.json` retained with data; `.part` is `<target>.part`; resume → `completed`, exact bytes, no leftovers; observed `resumedChunks:4` | 15/15 | 18.1 s |
-| 8 | resume across kernel restart | kill kernel child after ≥1 MiB with persisted resume state; new kernel on same `--data-dir` reloads the task as `interrupted`; `control resume` → `completed`, byte-exact, no leftovers | 16/16 | 36.7 s |
-| 9 | cancel → retry → remove | cancel → `cancelled`, `.part` retained; `retry` restarts and completes byte-exact; `remove` deletes the record (`get` → `not_found`, gone from list) and **never deletes the completed target file** | 15/15 | 18.5 s |
-| 10 | sha256 success + mismatch | `expectedSha256` success sets `task.sha256`, exact bytes; corrupt origin → `failed` with `error.code: "checksum_mismatch"`, `.part` is **not** renamed to the target path | 13/13 | 144 ms |
-| 11 | speed limit: 256 KiB/s | completes byte-exact; measured average **234 KiB/s** over 8.76 s (< 2× cap; ≈0.92× cap), i.e. the global cap is enforced | 10/10 | 8.8 s |
-| 12 | error codes + stdin EOF | unknown id → `not_found`; `control pause` on completed task → `conflict`; invalid action rejected (`invalid_request`/`conflict`); stdin EOF → kernel exits in **1 ms** (exit code 0) | 10/10 | 91 ms |
-| 13 | resume after remote change (ETag flip) | pause mid-transfer, flip origin ETag+bytes, resume: kernel detected the validator change and **transparently restarted**, completing with the new content's sha256 (no stale-byte mix). Accepted outcome: `failed(remote_changed)` or verified restart; observed restart | 9/9 | 18.5 s |
-| 14 | unknown-length chunked origin | no `Content-Length`/no ranges → single-stream until EOF; `rangeSupported:false`; `downloaded` = 256 KiB; `total:null`; bytes exact; no 206 | 12/12 | 80 ms |
-
-Total: **241/241 assertions**. The suite runs in ~104 s, well inside the 5-minute
-budget.
-
-### Live plugin / agent-tool verification
-
-This part runs through the **installed plugin**, not the direct-kernel harness.
-After installing the bundle into a profile, the live surfaces were checked:
-`rdm_*` tools + system-prompt section live; `sidebar.panellist` occupant
-`{registrant: dsh-rdm, id: rdm, order: 30, active: true}`; `main` occupant
-`{dsh-rdm, key rdm, active: true}`; Config schema registered; browser route
-envelope set (`list/start/get/control/stats` + bad-request, `no-store`)
-exercised in a built-bundle harness.
-
-Live tool pass against a loopback fixture serving a 256 KiB ranged file with
-sha256 `618fb5f028437d2b62a19845c0687ae48101a04e465cd0c42c8702668fb6b7f4`:
-
-| step | observed |
-|---|---|
-| `rdm_probe` | `live-agent-tool.bin · 256 KiB · application/octet-stream · ranges supported` |
-| `rdm_download` (`expectedSha256`, `connections:8`, `waitSec:60`) | task `t_f50297955d9829c8` **completed**, `100%`, `256 KiB / 256 KiB`, result rendered `Completed and SHA-256 verified.` |
-| `rdm_tasks` (task detail) | kernel `running · v1.0.0`; task completed; events `probe 262144 bytes, ranges=true`, `plan 1 chunks/1 worker/0 resumed`, `started`, `finished in 1 ms`, `verify: hashing file for sha256` |
-| independent file hash | sha256 of the downloaded file = `618fb5f0…b6b7f4` (equals fixture digest) |
-| live kernel memory | `WorkingSet64` 7.29 MiB / `PeakWorkingSet64` 7.32 MiB with existing tasks |
-| `rdm_control remove` (`deletePart:true`) | task removed; gone from `rdm_tasks` and the data dir |
-
-Not verified by QA: browser-route authentication from a shell (the action
-envelopes were verified in a built-bundle harness), and visual panel rendering in
-a real browser (no browser control in that session).
-
-### PROTOCOL guarantee coverage
-
-| PROTOCOL.md guarantee | evidence in this run |
-|---|---|
-| NDJSON only on stdout; responses may be out of order; notifications interleave | all stdout lines parsed as JSON objects across the run, 0 malformed lines; request/notification interleaving exercised by every scenario |
-| `ready` fields `{protocol,kernel:{version,pid,dataDir}}` | scenario 1 |
-| `initialize` defaults + config echo | scenario 1 |
-| `probe` never downloads body; range-support proof only for non-ranged origins | scenario 2 (ranged probe: 0 GETs; no-range probe issues only the documented `0-0` proof) |
-| `start` returns TaskView immediately, transfer runs in background | scenarios 3–14 |
-| Multi-connection: fixed chunks, dynamic worker pool, adaptive concurrency | scenario 4 (32 range GETs, max wire overlap 8, `peakWorkers:8`) |
-| Single-stream fallback when ranges unsupported / unknown total | scenarios 5, 14; `singleStream` forced path in scenario 4 |
-| Retry/backoff honouring `429` + `Retry-After` | scenario 6 |
-| Pause is cooperative; `.part` + `.part.json` persisted; resume continues | scenario 7 |
-| Resume survives kernel restart (persisted task records; interrupted → resume) | scenario 8 |
-| Validator checks on resume (ETag/Last-Modified/total) | scenario 13 |
-| Cancel keeps `.part`; retry restarts; remove deletes record not completed file | scenario 9 |
-| `expectedSha256` verified before rename; mismatch → `checksum_mismatch` | scenario 10 |
-| Per-task bandwidth cap (`speedLimitBps`) | scenario 11 |
-| Error codes `not_found`, `conflict`, `invalid_request` | scenario 12 |
-| stdin EOF exits (parent gone) | scenario 12 (1 ms) |
-| `control.remove` never deletes completed target | scenario 9 |
-| Chunked/unknown-length single-stream completion at EOF | scenario 14 |
-
-## 4. Measurements
-
-Numbers from the final run (single run, machine-specific).
-
-| measurement | value | verdict | method |
-|---|---|---|---|
-| kernel source LOC | **3224** raw lines in 18 files; 3171 non-blank lines outside `#[cfg(test)]` items | PASS | recursive raw-line count over `kernel/src/**/*.rs`; unit tests live in `kernel/tests/` |
-| kernel binary size | 4,600,320 bytes (4.39 MiB), sha256 `5ad09db39c3f8075eb5eaa1f22f69e25167ca55e484d9dcdf85d28de697b3d2d` | PASS | `fs.stat` + SHA-256 of `bin/win32-x64/rdm-kernel.exe` |
-| kernel idle resident memory | WorkingSet64 **5.67–6.73 MiB** across runs after `initialize` + 3 s idle (this run 5.67 MiB; earlier run 6.73 MiB; a dev measurement of the same binary reports 5.71 MiB) — single-run variance, all sub-10 MiB | PASS | spawn the real kernel, `powershell -NoProfile -Command "(Get-Process -Id <pid>).WorkingSet64"` / `.PeakWorkingSet64` |
-| kernel memory during transfer | WorkingSet after 12 MiB download **8.10–8.13 MiB**; **peak WorkingSet 13.81–14.06 MiB** during the run | PASS (documented) | same PowerShell query right after completion, before shutdown |
-| loopback throughput (multi-connection) | **109.1–144.6 MiB/s** for 12 MiB with `connections=8` across runs (this run 144.58 MiB/s, 32 range GETs, max overlap 8, sha256 verified) | PASS | full e2e download from fixture, `elapsedMs` → MiB/s |
-| `curl.exe` single-stream reference | **426.85–536.03 MiB/s** (12 MiB full-body GET, no ranges) | PASS (reference) | async `curl.exe -sS -o NUL -w "%{speed_download}" --noproxy '*' -4 <url>`; 12 MiB is too small to isolate Rust/reqwest startup overhead, so curl's single-stream number is higher — the kernel's value is segmented/resumable transfer, not raw single-stream peak |
-| plugin host bundle `lib/index.js` | 120,053 bytes; ESM export surface (`export … apply`), **no `require(` calls**, generated banner, `node --check` OK, delimiter counts balanced | PASS | static checks in `tests/measure.mjs` |
-| plugin client bundle `lib/client.js` | 87,331 bytes; starts with `window.__ModuleLoader__.load(` wrapper and `id: 'dsh-rdm'`, `node --check` OK, delimiter counts balanced | PASS | static checks in `tests/measure.mjs` |
-
-## 5. What could NOT be verified
-
-* **Visual client UI in a real browser by the kernel harness.** Rendering,
-  click-through, locale switching and theme tokens are covered by separate
-  browser-capture and DOM-contract work, not by this kernel suite; static bundle
-  sanity of `lib/client.js` is reported above.
-* **Full Linux/macOS e2e coverage** — the 0.1.0 run documented here was Windows
-  x64 only. For 0.1.1, Linux x64 ran the full 14-scenario suite (§7); the macOS
-  x64/arm64 and Linux arm64 binaries are only smoke-tested (`--help`) on native
-  CI runners, and the Windows binary was rebuilt with MSVC and smoke-tested
-  there too. The suite has not been executed on macOS or on any arm64 host.
-* **HTTPS/TLS** (valid, invalid/`insecure`, SNI), **HTTP proxy** (`proxy`), custom
-  **headers/cookie/referer/userAgent**, HTTP redirect auth semantics, HTTP/2,
-  mirrors, and per-origin budget learning are not covered by this suite (the
-  fixture is plain HTTP/1.1 loopback).
-* **Adversarial origin behaviour**: multipart `Range` responses are rejected by
-  the fixture for the ranged route, but an origin returning `200` to a `Range`
-  request mid-download, mismatched `Content-Range`, truncated bodies and
-  connection-reset storms are not fuzzed; only the covered modes are asserted.
-* **Local I/O failure paths** (disk full, permission errors, path length,
-  file-name sanitization edge cases, unicode names) are not covered.
-* **Network failure paths** (DNS failure, connect timeout, TLS error, body
-  timeout) are not exercised; fixture failures are limited to `429`/`Retry-After`
-  and an ETag change.
-* **Pause during real network jitter / mid-chunk abort semantics** are
-  approximated by a trickling fixture; timing-sensitive race windows (pause
-  exactly at chunk boundary, kill exactly during `.part.json` write) are sampled,
-  not exhaustively tested.
-* **Speed-limit measurement is an average** over a 2 MiB transfer; burst
-  behaviour and many-concurrent-worker fairness are not characterised.
-* **Memory/throughput numbers are single-run and machine-specific**; Windows
-  WorkingSet64 includes shared pages and varies between runs.
-* **Kernel unit/integration tests** (`cargo test` in `kernel/`) report
-  `cargo test --release --no-fail-fast` = 27 passed / 0 failed and
-  `cargo fmt --all --check` passing; this harness does not run cargo itself.
-
-## 6. Notes
-
-* The kernel surfaces the documented `remote_changed` error code for some
-  validator changes, but on the ETag-flip scenario it transparently restarted and
-  completed with the new content (verified byte-exact). Both outcomes are safe for
-  users; the harness accepts either and records which happened.
-* Sandboxed-host data-dir behaviour is described in §2; it is a host environment
-  limitation, not kernel behaviour.
-
-## 7. Prebuilt kernel refresh (2026-11-05, dsh-rdm 0.1.1 / kernel 1.0.1)
-
-A Linux x64 e2e run of the 0.1.1 kernel surfaced one real defect that the
-Windows 0.1.0 run had not caught, and it was fixed before this refresh:
-
-* **Defect:** `tokio::fs::File` buffers up to 2 MiB of writes internally and
-  only spawns the blocking write; dropping the handle does not wait for it. The
-  single-stream path could therefore reach `finalize()` while the `.part` inode
-  was still short, failing a healthy download with `remote_changed: file size
-  425984 does not match advertised 524288` (reproduced deterministically as
-  scenario 4 of the suite; a retry could also truncate over a stale write).
-* **Fix:** `kernel/src/engine/single.rs` flushes the response file before
-  returning and propagates write errors; `kernel/src/engine/chunked.rs` flushes
-  when its workers exit (commit `109e7d8`).
-* **Verification after the fix:** full suite on the local Linux x64 build —
-  14/14 scenarios, 241/241 checks, run twice; full suite on the CI-built
-  `linux-x64` binary — 14/14 scenarios, 241/241 checks; `cargo test --release`
-  27 passed / 0 failed across the crate; `cargo fmt --all --check` passing.
-
-Prebuilt kernels were produced by GitHub Actions workflow run
-[41987197780](https://github.com/NIRVANA-APOC/dsh-rdm/actions/runs/41987197780)
-(all `Build *` jobs, `Assemble plugin package` and `Commit kernels into bin/`
-succeeded; the release job is tag-only and was skipped on this manual run),
-built from commit `d1cbed7` on native runners and committed by CI as `9109739`:
-
-| target | built on | size (bytes) | sha256 |
-|---|---|---|---|
-| `bin/linux-x64/rdm-kernel` | `ubuntu-24.04` | 4,863,920 | `321a9d446396e88aaad5c3cd4976677c9ffe9c1571ff07a587290e155ffed091` |
-| `bin/linux-arm64/rdm-kernel` | `ubuntu-24.04-arm` | 4,404,112 | `76432ed43a6ee2aaa404d42f8b149da1ee7130abe8f879c0af21375a26c9d2bd` |
-| `bin/win32-x64/rdm-kernel.exe` | `windows-latest` (MSVC) | 5,328,384 | `40d750d4b154b2ee1ad3793092545e8e90baac8d7297e637fb4880c22fdd11f9` |
-| `bin/darwin-x64/rdm-kernel` | `macos-15-intel` | 4,498,496 | `3dc3ac8fac05e0d20d7bc228117a7a802487714039bc1558a3f2744c1281c0df` |
-| `bin/darwin-arm64/rdm-kernel` | `macos-15` (arm64) | 4,227,600 | `3661c6d54a27f056e99fde359d78e4b6262a5e36048941928de772f74689577c` |
-
-`node scripts/verify-kernels.mjs` passes 5/5 on the committed tree: every file
-exists, matches its target executable format (ELF / PE / Mach-O), keeps the
-POSIX executable bit, and reports the SHA-256 above; each CI build also starts
-its own binary (`--help`) natively. `npm pack` of the committed tree produces
-`dsh-rdm-0.1.1.tgz` (~11.1 MB) containing `lib/` plus all five kernel
-directories, with `755` modes preserved for the Unix binaries.
-
-The published release asset is `dsh-rdm-0.1.1.tgz` (11,434,873 bytes; same 59
-entries and identical per-file sizes as the committed tree — the byte
-difference is npm/gzip packaging metadata, not content). Its per-platform
-kernel hashes are listed in the release's `rdm-kernels.sha256`; Linux x64/arm64
-and macOS x64/arm64 rebuilds are byte-identical to the committed copies above.
-The Windows MSVC binary is not byte-identical between the commit run and the tag
-release run: the PE header embeds the linker timestamp, so two builds of the
-same source differ in 24 metadata bytes (same size, same code sections). Treat
-the release's `sha256` asset as the hash of the release files and the table
-above as the hash of the committed `bin/` copies.
-
-**Not verified on the other hosts:** the macOS x64/arm64 and Linux arm64
-binaries only receive the native `--help` smoke test (no e2e suite there), and
-the Windows 0.1.1 MSVC binary replaces the 0.1.0 MinGW binary that passed the
-Windows 14/14 run; both are the same crate source, but the toolchains differ.

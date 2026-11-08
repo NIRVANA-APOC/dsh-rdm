@@ -1,9 +1,12 @@
+pub mod diagnosis;
 pub mod engine;
 pub mod error;
+pub mod facts;
 pub mod filename;
 pub mod http;
 pub mod kernel;
 pub mod log;
+pub mod origins;
 pub mod plan;
 pub mod probe;
 pub mod protocol;
@@ -12,3 +15,5 @@ pub mod rpc;
 pub mod scheduler;
 pub mod state;
 pub mod task;
+pub mod telemetry;
+pub mod tls;

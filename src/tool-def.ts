@@ -45,9 +45,18 @@ export interface AuthorSchemaNode {
 /** Raw JSON Schema node emitted for the registry. */
 export type JsonSchemaNode = Record<string, unknown>
 
+/** The calling agent/session reference, when the tool runs inside one. */
+export interface ToolAgentRef {
+  session?: { id?: string } | null
+  [key: string]: unknown
+}
+
 /** Execution context passed to a tool body (same fields the plugin uses). */
 export interface ToolRunContext {
   readonly signal: AbortSignal
+  /** Calling agent (session attribution source: `agent.session.id`). */
+  readonly agent?: ToolAgentRef
+  readonly toolCallId?: string
   readonly [key: string]: unknown
 }
 

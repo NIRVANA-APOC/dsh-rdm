@@ -18,7 +18,7 @@ enum AttemptError {
 pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, total: Option<u64>, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
     let control = task.control();
     let _ = tokio::fs::remove_file(state_path).await;
-    task.set_plan(1, None, 0);
+    task.set_plan(1, None, 0, 0);
     task.set_status(Status::Running);
     task.add_event("plan", Some("single-stream transfer (no range support)".to_string()), None, None, None);
     task.add_event("started", Some("transfer started".to_string()), None, None, None);
@@ -64,11 +64,11 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     reporter.stop().await;
     let final_bytes = counters.downloaded();
-    task.progress(final_bytes, total, 0, 0, counters.peak());
+    task.report(final_bytes, total, 0, counters.peak());
     result?;
     let sha = finalize(task, spec, part, state_path, target, total).await?;
     if let Some(total) = total {
-        task.progress(total, Some(total), 0, 0, counters.peak());
+        task.report(total, Some(total), 0, counters.peak());
     }
     Ok(sha)
 }
@@ -85,6 +85,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
     let status = response.status();
     if !status.is_success() {
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            task.note_throttled();
             return Err(AttemptError::Retry { reason: format!("server returned HTTP {}", status.as_u16()), retry_after: http::retry_after(response.headers()) });
         }
         if http::is_retryable_status(status.as_u16()) {

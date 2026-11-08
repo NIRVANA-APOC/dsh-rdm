@@ -1,101 +1,221 @@
 {
   "meta": {
-    "title": "RDM 下载器",
-    "description": "常驻 RDM 下载内核，提供 rdm_* 智能体工具与实时下载面板。"
+    "title": "下载",
+    "description": "智能体发起的下载的审阅界面：请求了什么、服务器声明了什么、内核测量了什么、校验结果是什么。"
   },
-  "panel": {
-    "title": "RDM 下载器",
-    "intro": "代理与你共用的常驻下载队列。粘贴链接即可开始，任务会在后台继续。"
+  "page": {
+    "title": "下载",
+    "pid": "pid {pid}",
+    "recorderLabel": "最近 120 秒的总吞吐",
+    "recorderNow": "现在",
+    "recorderAria": "最近 120 秒的下载总吞吐，当前速率 {rate}",
+    "footnote": "这里的每个下载都由智能体发起。请审阅记录，而不是操作。",
+    "recorderNote": "本页自行采样绘制。内核上报的时间窗口在各条记录的证据抽屉里。"
+  },
+  "rates": {
+    "now": "现在",
+    "w5": "5 秒",
+    "w30": "30 秒",
+    "idle": "空闲"
+  },
+  "counts": {
+    "active": "{n} 个进行中",
+    "done": "{n} 个已完成",
+    "failed": "{n} 个失败",
+    "paused": "{n} 个已暂停"
   },
   "kernel": {
     "running": "内核运行中",
     "starting": "内核启动中",
     "stopped": "内核未运行",
-    "error": "内核错误",
-    "unreachable": "下载器不可用",
-    "connecting": "正在连接内核"
+    "error": "内核错误"
   },
   "route": {
-    "errorTitle": "下载面板暂时连不上 Host 端",
-    "errorHint": "插件的 Host 半边可能仍在启动；页面会每秒自动重试。",
-    "retry": "立即重试",
-    "retrying": "重试中…"
-  },
-  "form": {
-    "title": "开始一个下载",
-    "url": "下载链接",
-    "urlPlaceholder": "粘贴下载链接",
-    "start": "开始下载",
-    "starting": "开始中…",
-    "options": "选项",
-    "optionsHide": "收起选项",
-    "directory": "保存到",
-    "directoryPlaceholder": "默认目录",
-    "connections": "连接数",
-    "connectionsPlaceholder": "默认",
-    "urlRequired": "先粘贴一个链接。",
-    "urlInvalid": "只支持 http(s) 链接。",
-    "connectionsInvalid": "连接数需为 1 到 32 的整数。",
-    "startFailed": "下载没能开始。"
-  },
-  "tasks": {
-    "title": "下载",
-    "runningCount": "{n} 个下载中",
-    "idle": "空闲",
-    "failedCount": "{n} 个失败",
-    "filterLabel": "筛选下载",
-    "filterAll": "全部",
-    "filterActive": "未完成",
-    "filterFinished": "历史",
-    "filterEmpty": "这个筛选下没有下载。"
+    "hint": "插件的 Host 半边可能仍在启动；此页面每秒自动重试。"
   },
   "empty": {
-    "title": "队列是空的",
-    "desc": "代理用 rdm_download 开始的任务会出现在这里；也可以在上方粘贴链接。"
+    "global": "还没有下载记录。智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
+    "session": "这个会话还没有下载。"
   },
-  "row": {
-    "pause": "暂停",
-    "resume": "继续",
-    "cancel": "取消下载",
-    "retry": "重新下载",
-    "remove": "从列表移除",
-    "more": "更多操作",
+  "group": {
+    "unattributed": "未归属会话",
+    "session": "会话 {id}",
+    "records": "{n} 条记录"
+  },
+  "session": {
+    "title": "下载",
+    "verifiedCount": "{n} 个已校验",
+    "riskCount": "{n} 个有风险",
+    "unknownScope": "此标签页尚未绑定到会话。"
+  },
+  "guide": {
+    "description": "查看本会话的下载"
+  },
+  "record": {
+    "etaLabel": "剩余",
+    "etaConfidence": "剩余时间置信度：{level}",
+    "toggle": "{name}，{status}。展开证据记录。",
+    "pulse": "{name} 的吞吐曲线",
+    "sizeUnknown": "大小未知",
+    "reveal": "在侧栏打开",
     "copyPath": "复制路径",
-    "copyUrl": "复制链接",
+    "copyHash": "复制哈希",
     "copiedPath": "已复制路径",
-    "copiedUrl": "已复制链接",
-    "details": "详情",
-    "hideDetails": "收起详情",
+    "copiedHash": "已复制哈希",
+    "stop": "停止",
+    "confirmStop": "确认停止",
+    "stopRequested": "正在停止 {name}"
+  },
+  "common": {
+    "copyFailed": "复制失败"
+  },
+  "drawer": {
+    "regionLabel": "{name} 的证据记录",
+    "loading": "正在加载记录…",
+    "retry": "重试",
+    "request": "请求",
+    "server": "服务器",
+    "timing": "耗时",
+    "telemetry": "遥测",
+    "verification": "校验",
+    "destination": "保存位置",
+    "resume": "续传状态",
+    "risk": "风险",
+    "diagnosis": "诊断",
+    "events": "事件",
+    "notRecorded": "这个下载没有记录该项。",
+    "none": "无",
+    "notCompared": "未比较",
+    "noWarnings": "服务器没有给出警告。",
+    "noDiagnosis": "这个下载没有诊断信息。",
+    "noMessage": "无详情",
+    "eventsLoading": "正在加载事件…",
+    "eventsEmpty": "没有记录到事件。",
+    "sampledNote": "曲线由本审阅页采样（每秒一个点）；上面的四个速率是内核上报的时间窗口。"
+  },
+  "facts": {
+    "url": "请求地址",
+    "finalUrl": "最终地址",
+    "redirects": "重定向",
+    "session": "会话",
+    "status": "HTTP 状态",
+    "http": "HTTP 版本",
+    "host": "主机",
+    "contentType": "内容类型",
+    "contentEncoding": "内容编码",
+    "fileNameSource": "文件名来源",
+    "signedUrl": "签名链接",
+    "tls": "TLS",
+    "rateLimit": "速率限制",
+    "elapsed": "用时",
+    "probeMs": "探测耗时",
+    "ttfbMs": "首字节耗时",
+    "queuedMs": "排队",
+    "transferMs": "传输",
+    "finalizeMs": "收尾",
+    "started": "开始",
+    "finished": "结束",
+    "window1": "1 秒速率",
+    "window5": "5 秒速率",
+    "window30": "30 秒速率",
+    "window300": "300 秒速率",
+    "peak": "峰值速率",
+    "average": "平均速率",
+    "stalled": "停滞时长",
+    "trend": "趋势",
+    "etaConfidence": "剩余时间置信度",
+    "samples": "样本数",
+    "expectedSha256": "预期 SHA-256",
+    "actualSha256": "实际 SHA-256",
+    "verdict": "结论",
+    "verified": "已校验",
+    "mismatch": "不匹配",
+    "serverChecksum": "服务器校验和",
+    "dir": "目录",
+    "path": "保存文件",
+    "part": "临时文件",
+    "resumeStateFile": "续传状态文件",
     "size": "大小",
     "downloaded": "已下载",
-    "speed": "速度",
-    "eta": "剩余",
-    "connections": "连接",
-    "target": "保存到",
-    "savedTo": "已保存到",
-    "progressUnknown": "正在传输，大小未知",
-    "events": "事件",
-    "eventsLoading": "正在加载事件…",
-    "eventsEmpty": "暂无事件。",
-    "eventsFailed": "事件加载失败。",
-    "errorTitle": "操作失败"
-  },
-  "details": {
-    "title": "任务详情",
-    "url": "来源",
-    "path": "保存位置",
-    "size": "大小",
-    "peakConnections": "峰值连接",
-    "chunkSize": "分块大小",
-    "chunkSingle": "单流",
+    "resumeSafety": "续传安全性",
+    "rangeSupported": "字节范围",
+    "yes": "是",
+    "no": "否",
+    "chunksDone": "完成分块",
+    "bytesDone": "完成字节",
     "resumedChunks": "续传分块",
-    "checksum": "SHA-256",
-    "expectedChecksum": "预期 SHA-256",
-    "startedAt": "开始",
-    "elapsed": "用时",
+    "resumedBytes": "续传字节",
+    "validatorsMatched": "校验器匹配",
+    "workers": "当前工作连接",
+    "peakWorkers": "峰值工作连接",
+    "chunkSize": "分块大小",
     "retries": "重试次数",
-    "unknown": "未知",
-    "error": "错误详情"
+    "signedState": "签名链接状态",
+    "signedExpires": "签名链接剩余",
+    "tlsState": "TLS 状态",
+    "tlsNotAfter": "TLS 有效期至",
+    "tlsIssuer": "TLS 签发者",
+    "recommendation": "建议",
+    "origin": "来源历史",
+    "originUnknown": "这个主机还没有历史记录。",
+    "originAttempts": "{n} 次尝试",
+    "originCompleted": "{n} 次完成",
+    "originMedian": "中位",
+    "originBest": "最佳",
+    "originLastError": "最近错误",
+    "remaining": "剩余 {n}",
+    "limit": "上限 {n}",
+    "retryAfter": "{n} 秒后重试"
+  },
+  "chips": {
+    "range": "支持范围",
+    "noRange": "不支持范围",
+    "resumeStrong": "续传可靠",
+    "resumeWeak": "续传较弱",
+    "resumeNone": "不可续传",
+    "signed": "签名 {time}",
+    "signedExpired": "签名已过期",
+    "tls": "TLS {time}",
+    "tlsExpired": "TLS 已过期",
+    "verify": "SHA-256"
+  },
+  "seal": {
+    "verified": "已校验，SHA-256 {hash}",
+    "mismatch": "校验不匹配，SHA-256 {hash}"
+  },
+  "risk": {
+    "summary": "{n} 条记录需要查看",
+    "more": "另有 {n} 条",
+    "warnLabel": "需要查看",
+    "errorLabel": "失败",
+    "failedCause": "下载失败",
+    "mismatchCause": "校验和不匹配",
+    "signedExpiringReason": "签名链接将在 {time} 后过期。",
+    "signedExpiredReason": "签名链接已过期。",
+    "tlsExpiringReason": "TLS 证书将在 {time} 后过期。",
+    "tlsExpiredReason": "TLS 证书已过期。",
+    "noRangeReason": "服务器不支持字节范围，此传输无法续传。",
+    "regionLabel": "待查看记录"
+  },
+  "confidence": {
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "unknown": "未知"
+  },
+  "trend": {
+    "rising": "上升",
+    "steady": "平稳",
+    "falling": "下降",
+    "stalled": "已停滞",
+    "unknown": "未知"
+  },
+  "resume": {
+    "safety": {
+      "strong": "可靠",
+      "weak": "较弱",
+      "none": "不可用"
+    }
   },
   "status": {
     "queued": "排队中",
@@ -107,13 +227,24 @@
     "cancelled": "已取消",
     "interrupted": "已中断"
   },
-  "common": {
-    "loading": "连接中…",
-    "copyFailed": "复制失败"
+  "warning": {
+    "no-range-support": "服务器不支持字节范围。",
+    "no-validators": "服务器没有提供校验器。",
+    "weak-validators": "只有弱校验器可用。",
+    "unknown-size": "总大小未知。",
+    "signed-url-expiring": "签名链接即将过期。",
+    "signed-url-expired": "签名链接已过期。",
+    "tls-expiring": "TLS 证书即将过期。",
+    "tls-expired": "TLS 证书已过期。",
+    "rate-limited": "服务器正在限制此客户端的速率。",
+    "head-failed": "HEAD 探测失败；事实来自分段 GET。",
+    "redirected": "请求发生了重定向。",
+    "content-encoding": "响应使用了内容编码。"
   },
   "error": {
     "code": {
       "invalid_request": "请求无效",
+      "bad_request": "请求无效",
       "not_found": "任务不存在",
       "conflict": "当前状态不允许该操作",
       "http_status": "服务器返回 HTTP 错误",
@@ -130,6 +261,7 @@
       "kernel_not_running": "内核尚未运行",
       "kernel_exited": "内核已退出",
       "kernel_missing": "内核可执行文件缺失",
+      "protocol_mismatch": "内核协议不匹配",
       "unknown": "未知错误"
     }
   }

@@ -2,262 +2,160 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-面向 **DeepSeek Harness** 的常驻多连接下载引擎。
+**面向 DeepSeek Harness 的智能体原生下载器。** 一个常驻 Rust 内核、五个面向模型且返回决策级事实的工具，以及两个面向人类的审阅界面：左侧边栏的全局下载台账，以及右侧边栏的会话级审阅标签页。
 
-`dsh-rdm` 在五个面向模型的工具和一个侧边栏下载面板背后，维持一个长期驻留的
-Rust `rdm-kernel` 进程。下载支持分段、断点续传、校验与限速，并且能跨暂停、崩溃、
-内核重启和 DSH 重启继续——不需要为每个文件启动一个进程，也不需要让 agent 去
-shell 调用 `curl`。
+智能体负责操作，人类负责审阅。
 
-![RDM 面板 — 浅色](assets/screenshots/panel-light.png)
+![全局下载审阅 — 浅色](assets/screenshots/review-light.png)
 
-## 特性
+## “智能体原生”在这里的含义
 
-* **常驻内核，惰性启动** —— 每个 DSH 宿主一个 `rdm-kernel` 子进程，在首次使用
-  工具/面板时启动并保持常驻。stdio 上跑 NDJSON，不监听端口。空闲时常驻内存约
-  5.7–6.7 MiB。
-* **分段多连接传输** —— 每个任务 1–32 条连接，动态分块队列支持运行中尾部窃取，
-  AIMD 并发控制器会对 429/503 回退。没有 `Content-Length` 的传输会读到 EOF。
-* **天生可续传** —— 每约 500 ms 将暂停状态持久化为 `<target>.part` +
-  `<target>.part.json`，因此暂停、被杀或中断的传输在内核或 DSH 重启后能按自己的
-  字节区间继续。校验器（ETag、Last-Modified、总大小）能发现暂停期间远端文件已变化，
-  避免把新旧字节拼在一起。
-* **完整性** —— 可选的 SHA-256 会在 `.part` 原子重命名为最终文件之前校验；不匹配
-  时任务失败，目标路径保持不变。
-* **带宽控制** —— 每个任务可用 `speedLimitBps` 限速，也可配置全局默认值。
-* **只探测不下载** —— `rdm_probe` 通过 HEAD（必要时回退到 range GET）返回最终
-  URL、文件名、大小、是否支持 range、内容类型和校验器。
-* **Agent 优先的工具** —— `rdm_download`、`rdm_probe`、`rdm_tasks`、`rdm_wait`
-  和 `rdm_control`，外加一段系统提示词，告诉每个 agent 把文件下载都走这些工具。
-* **侧边栏面板** —— 左侧边栏的下载图标打开传输台账：实时状态、百分比、速度、
-  ETA、每任务的连接通道仪表、过滤器、行内暂停/继续/重试/取消/移除/复制路径、
-  带内核事件日志的内联详情，以及新建下载的启动栏。
-* **有界且本地** —— 每个响应都是有界、结构稳定的 JSON；任务事件有上限；内核从不
-  缓冲完整响应体。浏览器侧通过带认证的 `POST /api/dsh-rdm/api` 路由与宿主通信。
-* **宿主侧自包含** —— 宿主 bundle 只导入 Node 内置模块；需要的 schema 库以
-  vendor 方式（MIT）打入产物。
-* **预编译内核，安装时不编译** —— `bin/<platform>-<arch>/rdm-kernel[.exe]` 随包
-  提供 Windows x64、Linux x64/arm64 和 macOS x64/arm64 版本，全部在原生 CI runner
-  上构建。安装插件从不会运行 cargo；常驻内核从随包二进制惰性启动
-  （见[预编译内核](#预编译内核)）。
+被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.2.0 就是围绕这些问题构建的。
+
+* **决策级探测。** `rdm_probe` 返回完整的服务器事实记录——经证实的字节范围支持、校验器与 RFC 9110 续传安全性、签名链接过期、TLS 证书有效期、重定向链、校验和可用性、速率限制响应头、耗时、稳定的警告码，以及具体建议。而不是一句“200 OK，48 MB”。
+* **启动时预检。** `rdm_download` 会把同一份服务器事实附着到任务上（有界等待，默认 2 秒），这样智能体无需第二次调用就能决定暂停、校验还是继续等待。
+* **诚实的实时遥测。** 四个实测吞吐窗口（1 s / 5 s / 30 s / 300 s）、峰值、平均、停滞时长、趋势，以及一个在数据不足时会降级为 `unknown` 的 `etaConfidence`，而不是伪造精度。
+* **长轮询，而非高频轮询。** `rdm_wait` 阻塞到任务全部进入终态或超时，并返回类型化的 `timedOut`；状态结果扁平且有界。
+* **结构化回执、有界的规范 JSON。** 模型读取字段顺序稳定的行式 `key=value` 回执；程序调用方拿到规范 JSON。可恢复失败是值（`error code=…` 加 `next …`），而不是会丢失结构的抛出字符串。
+* **会话归属。** 智能体发起的每个下载都携带其所属的会话 id，因此人类可以精确审阅*这个*智能体下载了什么。
+* **一条策略，只声明一次。** 一段简短的系统提示词段告诉每个智能体把下载交给 `rdm_*`；工具定义保持精简（首轮 schema 成本 7241 → 4966 字符，比 0.1.2 减少 31%）。
+
+## 两个审阅界面
+
+人类在这里从不组合下载：没有 URL 输入框，也没有连接数滑块。
+
+* **全局审阅**（左侧边栏入口 → 页面）：一条覆盖整个内核的吞吐记录条、按会话分组的下载台账、风险标记，以及每条记录都可展开的证据抽屉（请求链、服务器事实、耗时、续传状态、校验、有界事件日志）。只有进行中的记录使用高饱和颜色；记录不会声称执行过它没有执行的校验。
+* **会话审阅**（右侧边栏标签页，“下载”）：同一套证据语言，但只筛选当前会话。没有下载的会话为空；它从不抢焦点。
+* **证据语言**：一条**吞吐脉冲**（客户端采样、如实标注）和一个**校验印记**（预期与实际哈希，仅在确实比较过哈希时出现）。未知值渲染为 `—`。
+
+![会话下载审阅 — 深色](assets/screenshots/review-session-dark.png)
 
 ## 工具
 
-所有工具都返回有界、结构稳定的 JSON。长时间下载在后台运行，用 `rdm_wait` /
-`rdm_tasks` 监控。
+五个工具。所有输出都有界；模型看到回执，调用方看到规范 JSON。
 
-| 工具 | 用途 |
-|---|---|
-| `rdm_download` | 开始下载（`url`、`dir`、`fileName`、`connections`、`headers`、`cookie`、`referer`、`userAgent`、`expectedSha256`、`speedLimitBps`、`resume`、`singleStream`、`proxy`、`insecure`）。立即返回任务；`waitSec` 可选等待最多 300 s。 |
-| `rdm_probe` | 只取元数据：最终 URL、文件名、总大小、range 支持、内容类型。 |
-| `rdm_tasks` | 内核状态 + 任务列表（可按状态过滤），或单个任务的详情与最近内核事件。 |
-| `rdm_wait` | 等待最多 20 个任务 id 进入终态（超时 ≤ 300 s）。 |
-| `rdm_control` | 对任务执行 `pause` / `resume` / `cancel` / `retry` / `remove`。 |
+| 工具 | 作用 | 返回 |
+|---|---|---|
+| `rdm_probe` | 检查 HTTP(S) 源而不下载文件本体 | `ServerFacts`：字节范围、校验器、续传安全性、签名链接/TLS 过期、重定向、校验和、速率限制、耗时、警告、建议 |
+| `rdm_download` | 在常驻内核中启动传输 | 任务视图 + 预检 `ServerFacts`（≤2 s）+ 下一步提示；`waitSec` 可选阻塞 |
+| `rdm_tasks` | 列出本会话的下载，或深入查看单个下载 | 扁平任务视图 + 聚合；带 `taskId` 时返回遥测、服务器事实、校验、诊断、有界事件 |
+| `rdm_wait` | 长轮询直到终态或超时 | 已结算的任务视图 + `timedOut` |
+| `rdm_control` | 暂停、继续、取消、重试、移除 | 更新后的任务视图（或已移除的 id） |
 
-Agent 调用示例：
+一次探测回执：
 
 ```text
-rdm_download { url: "https://example.com/img.iso", dir: "C:\\Downloads\\iso", expectedSha256: "…" }
-→ { id: "t_9f3a…", status: "running", … }
-rdm_wait     { taskIds: ["t_9f3a…"], timeoutSec: 120 }
-→ { tasks: [{ status: "completed", path: "C:\\Downloads\\iso\\img.iso", sha256: "…" }], timedOut: false }
+probe host=cdn.example.com status=200 http=HTTP/2.0
+url https://cdn.example.com/app.zip?sig=<redacted>
+file name=app.zip source=content-disposition size=48.1MiB type=application/zip encoding=-
+range=bytes resume=strong signed=valid(19m40s) tls=valid(40d) checksum=none
+plan start=now connections=8 chunk=1.5MiB singleStream=false verify=recommended reason=ranges+strong-etag
+headers server=nginx cache=max-age=3600 vary=Accept-Encoding
+warnings=- redirects=0
+timing probe=84ms ttfb=61ms sample=- origin=known attempts=3 completed=2 median=14MiB/s best=22MiB/s lastError=-
+next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 ```
+
+一次任务列表回执：
+
+```text
+kernel state=running version=1.1.0 pid=4212
+scope=session count=1
+aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
+t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
+```
+
+## 内核智能
+
+Rust 内核（`rdm-kernel` 1.1.0，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
+
+* **服务器事实** —— 手动跟随的重定向链（最多 8 跳）、经证实的字节范围支持（带已验证 `Content-Range` 的 206，而不是只看 `Accept-Ranges` 响应头）、按 RFC 9110 对校验器做强/弱分类、从最终 URL 推导的各类签名链接过期时间（AWS SigV4/SigV2、GCS SigV4、Azure SAS、通用 `Expires`）、TLS 叶子证书 `notAfter`、校验和可用性（`Content-Digest`/`Content-MD5`/S3 SHA-256/CRC32C）、`Retry-After`、探测/TTFB 耗时，以及有界警告码。
+* **保持诚实的续传** —— `.part` + 续传状态、校验器兼容性检查，以及显式的 `resumeSafety`：`strong`/`weak`/`none`。内核只为强 ETag 发送 `If-Range`；弱校验器续传会重新探测并校验 `Content-Range`/长度，若源站忽略字节范围则回退为完整响应体。进行中的下载在签名链接过期后仍会继续；过期后再续传则不会——诊断会给出“不要暂停”。
+* **实测遥测** —— 以 100 ms 节奏采样的有界 3000 样本环驱动四个窗口、峰值/平均、停滞和趋势，不额外增加定时器。
+* **来源台账** —— 有界 256 台主机的记忆：尝试/完成/中位/最佳吞吐/最近错误，由 `rdm_probe`（`origin=…`）和 `stats` 报告。
+* **分段传输** —— 每个任务 1–32 条连接，带尾部窃取的动态分块队列，带 429/503 回退的 AIMD 并发，指数退避重试，每任务带宽上限，以及原子重命名前可选的 SHA-256 校验。
+* **有界** —— 每个任务 ≤200 条事件、≤3000 个遥测样本、≤256 个来源，不缓冲完整响应体，stdout 专供协议使用。
+
+性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)。
 
 ## 安装
 
-直接从 GitHub 装进某个 profile：
+包内附带 Windows x64、Linux x64/arm64 与 macOS x64/arm64 的预编译内核；安装过程从不编译 Rust。
 
-```powershell
+从 GitHub 安装到某个 DSH profile：
+
+```bash
 dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
 ```
 
-或安装已发布的 npm 包：
+从 release tarball 安装：
 
-```powershell
-dsh plugin --profile web add dsh-rdm
-```
-
-或在 DSH 会话里把本地检出作为目录 bundle 安装：
-
-```text
-plugin_manager install_bundle target=<dsh-rdm 的绝对路径>
-```
-
-首次安装后刷新 Web 页面。插件行由 `cordis.patch.yml` 插入；内核二进制从包内的
-`bin/<platform>-<arch>/rdm-kernel[.exe]` 解析。
-
-npm 安装、GitHub 安装或 release tarball 安装都不需要构建步骤：包里已经带有构建好的
-`lib/` bundle 以及所有支持平台的预编译内核（见[预编译内核](#预编译内核)）。GitHub
-release 还会发布完整的插件 tarball，这是最可复现的安装方式：
-
-```powershell
+```bash
 dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
 ```
 
-## 预编译内核
+把本地检出作为目录 bundle 安装（DSH UI → Plugins → Install from folder，或 `plugin_manager` 工具）：
 
-`rdm-kernel` 是 Rust 二进制，但它在打包**之前**、在具备对应工具链的机器上编译，
-从不在安装插件的宿主上编译。`package.json` 里没有 `prepare`/`install`/`postinstall`
-钩子；宿主在运行时解析随包文件，并在首次使用时惰性启动。
-
-| 目标目录 | 平台 | 构建环境 |
-|---|---|---|
-| `bin/linux-x64/rdm-kernel` | Linux x64 | `ubuntu-24.04` |
-| `bin/linux-arm64/rdm-kernel` | Linux arm64 | `ubuntu-24.04-arm` |
-| `bin/win32-x64/rdm-kernel.exe` | Windows x64 | `windows-latest` |
-| `bin/darwin-x64/rdm-kernel` | macOS x64 | `macos-15-intel` |
-| `bin/darwin-arm64/rdm-kernel` | macOS arm64 | `macos-15` |
-
-[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
-在原生 runner 上构建全部五个目标，并在每个 runner 上运行
-`node scripts/verify-kernels.mjs --host --run`。两个任务消费这些产物：
-
-* **`v*` 标签** —— 用 `lib/` 加全部五个 bin 目录打包 `dsh-rdm-<version>.tgz`，
-  连同各平台内核和一份 `sha256` 清单一起附到 GitHub release。上面的 release 安装
-  命令使用的就是该 tarball。
-* **手动运行（`workflow_dispatch`）** —— 构建后默认把刷新过的内核提交回默认分支的
-  `bin/`，这样直接用 `github:…` 安装也能跨平台。取消勾选 `commit_binaries` 则只
-  产出 artifact。该任务要求仓库的 workflow token 具备写权限
-  （Settings → Actions → General → Workflow permissions），分支保护也要允许 bot
-  推送到默认分支。
-
-本地检查（无需网络；二进制已存在时也无需 Rust）：
-
-```bash
-node scripts/verify-kernels.mjs            # 全部五个目标：格式 magic + 可执行位 + sha256
-node scripts/verify-kernels.mjs --host --run   # 仅当前宿主，并实际启动一次
+```text
+plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
-同一个脚本也在打包任务里运行，因此缺失或标错平台的内核不可能随 release 发布。
-release 资产里还带有 `rdm-kernels.sha256` 文件。
+安装后，智能体可以看到 `rdm_*`；左侧边栏出现下载入口，右侧边栏指南新增一个“下载”标签页。通常无需重启，刷新一次页面也是安全的。
 
-## 界面
-
-下载器位于**左侧边栏入口**（`sidebar.panellist`，id 为 `rdm`，order 30）；选中它
-会打开对应的**主面板**（`main`，key 为 `rdm`）。面板是一张传输台账，而不是表单
-加卡片的组合：
-
-* 头部：页面标题和一行纯引擎状态（版本与 pid 在 tooltip 里），没有刷新按钮——
-  页面每秒轮询一次，文档隐藏时暂停；
-* 启动栏：一个 URL 输入框加一个主 Start 按钮。目录和连接数收在
-  **选项 / Options** 后面；回车即开始，非法输入就地说明，成功启动后焦点回到输入框；
-* 所有下载共用一张台账：状态点与状态词、文件名、百分比和一条细字节轨。未知长度
-  传输用扫动表示，而不是伪造百分比；暂停、完成和失败会改变轨道颜色并停止动画；
-* 每行 meta 行里的**连接通道仪表**：每条计划连接一个刻度，已就位的连接点亮，且
-  只有传输进行中时它们才呼吸；
-* 按状态显示的遥测——大小、速度、ETA 和连接使用情况只在有意义时出现；完成行显示
-  保存路径和复制操作；失败行显示内核错误；
-* 过滤器（全部 / 未完成 / 历史）带计数，另有运行数、总速度和失败数的实时汇总；
-* 每行图标操作：暂停/继续/重试/复制路径、详情，以及一个更多操作菜单（取消下载、
-  从列表移除、复制链接）。宽度 ≤520 px 时图标操作折进该菜单，给文件名留出空间。
-  行级错误通过 `role="alert"` 播报；
-* 内联详情：源 URL 与最终 URL、保存路径、分块大小、已续传块数、SHA-256 校验、
-  计时、重试次数，以及有界的内核事件日志；
-* 复制操作会弹一个短 toast；中英文文案都来自 `locale/*.json`。
-
-![RDM 面板 — 深色](assets/screenshots/panel-dark.png)
-
-样式只使用宿主主题 token（`--dsw-alias-*`、`--dsw-specific-*`、`--ds-*`），因此
-浅色/深色模式、字体和圆角都来自宿主。通道轨是面板唯一的动画元素；
-`prefers-reduced-motion` 会关闭它以及骨架、菜单、详情的动效；每个控件都有可见的
-焦点环。
-
-## 配置
-
-在插件行的 `config` 里设置字段（profile patch 层或插件设置）；默认值见
-`cordis.patch.yml`。
+### 配置
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
-| `defaultDir` | `""` | 默认下载目录；空 = `<当前 dataDir>/downloads` |
-| `connections` | `8` | 每任务连接数上限（1–32） |
-| `chunkSizeMiB` | `0` | 固定请求分块大小（0.25–64 MiB）；`0` = 自动（每连接 4 块，0.25–8 MiB） |
-| `speedLimitBps` | `0` | 默认每任务带宽上限（0 = 不限） |
+| `defaultDir` | `<data-dir>/downloads`（`defaultDir` 未设置时） | 未指定 `dir` 时启动的下载所用目录 |
+| `connections` | `8` | 每个任务默认并行连接数（1–32） |
+| `chunkSizeMiB` | `0`（自动） | 固定分块大小；0 = 每连接四块，256 KiB–8 MiB |
+| `speedLimitBps` | `0` | profile 级默认带宽上限；0 = 不限速 |
 | `maxAttempts` | `6` | 每块重试预算 |
-| `autoResume` | `true` | 内核重启后自动续传被中断的任务 |
-| `dataDir` | `""` | 内核数据目录（默认 `$DSH_HOME/dsh-rdm`，带沙箱回退） |
-| `kernelPath` | `""` | 显式指定内核二进制路径 |
-| `logLevel` | `warn` | 内核 stderr 日志级别 |
+| `autoResume` | `true` | 内核启动时续传被中断的任务 |
+| `dataDir` | `$DSH_HOME/dsh-rdm` | 内核数据（任务记录、来源台账） |
+| `kernelPath` | 随包的 `bin/<platform>-<arch>/rdm-kernel` | 覆盖内核二进制路径 |
 | `startOnDemand` | `true` | 首次使用时启动内核，而不是插件加载时启动 |
-| `fsyncOnComplete` | `false` | 重命名前把完成文件刷到稳定存储（更慢，但可扛断电） |
-
-内核状态存放在 `<dataDir>/tasks/*.json`；未完成的下载使用最终文件旁边的
-`<target>.part` + `<target>.part.json`，并在暂停或内核/DSH 重启后从这里续传。
-
-### 数据目录回退
-
-某些 DSH 宿主会把子进程的写入限制在会话工作区内。如果未配置 `dataDir`，且内核
-无法创建 `$DSH_HOME/dsh-rdm/tasks`，插件会用 `<packageRoot>/.rdm-data` 重试一次，
-并把下载目标默认改为 `<dataDir>/downloads`。配置 `dataDir` 可以固定位置。
-
-## 工作原理
-
-```
-src/            宿主侧（TypeScript → lib/index.js）：工具、KernelService、浏览器路由
-src/client/     浏览器侧（侧边栏入口 + 面板 → lib/client.js）
-kernel/         独立的 Rust rdm-kernel crate：NDJSON 任务 API、传输引擎
-bin/<platform>/ 随插件发布的已构建内核二进制
-```
-
-引擎流程：`probe（HEAD → range GET 回退）→ plan（分块大小、目标文件名、续传扫描）
-→ 带动态分块队列和 AIMD 并发的分块 worker 池 → 重试/退避/Retry-After → SHA-256
-校验 → 原子重命名`。暂停/取消是协作式且事件驱动的（没有定时轮询）；内核崩溃后会
-带退避重启，任务记录与续传状态跨重启保留。
-
-[PROTOCOL.md](PROTOCOL.md) 记录了精确的内核协议；
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 描述了设计。
-
-## 构建
-
-本地构建要求：Node ≥ 20（插件 bundle）和支持平台 C 工具链的 Rust stable（内核）。
-`scripts/build-kernel.mjs` 会识别平台：它运行 `cargo build --release`，把结果复制到
-`bin/${process.platform}-${process.arch}/rdm-kernel[.exe]`，这正是运行时解析器查找
-的位置。Windows CI 任务使用 MSVC 工具链；开发者本地构建使用机器上安装的任意 Rust
-宿主工具链。
-
-```bash
-cd dsh-rdm
-npm install                    # esbuild + typescript（仅开发依赖）
-node scripts/build-kernel.mjs  # cargo build --release → bin/<platform>-<arch>/rdm-kernel[.exe]
-node scripts/build.mjs         # esbuild → lib/index.js + lib/client.js
-node scripts/verify-kernels.mjs --host --run   # 宿主二进制：存在、格式正确、能启动
-npm run verify                 # fixture 自测 + 内核 e2e 套件 + 测量
-```
-
-本地构建只产出当前宿主的内核。CI 工作流
-[`.github/workflows/prebuilt-kernels.yml`](.github/workflows/prebuilt-kernels.yml)
-在原生 runner 上构建所有支持的目标；随后二进制会提交到 `bin/`（手动运行）并附加到
-release（标签推送）。见[预编译内核](#预编译内核)。
+| `logLevel` | `warn` | 内核 stderr 日志级别 |
 
 ## 验证
 
-独立的 QA 覆盖见 [docs/verification.md](docs/verification.md)：
-**14/14 个内核 e2e 场景、241/241 条断言**（多连接、无 range 回退、重定向、
-429/Retry-After、暂停 → 继续、跨内核重启续传、取消/重试/移除、SHA-256 成功/不匹配、
-限速、ETag 变化下的续传安全、未知长度的 chunked 传输、协议错误、stdin EOF 退出），
-另有测量：4.39 MiB 二进制、空闲常驻内存约 5.7–6.7 MiB、loopback 多连接吞吐
-109–145 MiB/s（单次运行，依机器而异）。套件通过 `npm run verify` 运行。0.1.1 的
-预编译内核集还额外在 Linux x64 上跑过 e2e（14/14、241/241），并在其他原生 CI runner
-上做过启动冒烟；见[验证报告 §7](docs/verification.md#7-prebuilt-kernel-refresh-2026-11-05-dsh-rdm-011--kernel-101)。
-预编译内核另由 `npm run verify:kernels` 检查（五个目标齐全、可执行格式正确、可执行位
-完整、报告 SHA-256）；同一检查把关每次发布。
+* `node scripts/verify-kernel.mjs` —— 针对本地 fixture 的内核 e2e（这是规范套件；它会启动内核，因此需要允许创建子进程的宿主）。
+* `python tests/verify_e2e.py` —— 进程外协议 2 驱动，用于 Node 无法创建子进程的宿主（见下文）：探测事实、签名链接、重定向、会话范围、遥测、暂停/继续、统计、聚合。
+* `node tests/tools-receipts.test.mjs` —— 回执契约、策略只声明一次、schema 成本守卫、可恢复错误回执。
+* `node scripts/verify-fixture.mjs` —— fixture 自测。
+* `node scripts/verify-kernels.mjs --host --run` —— 当前宿主的随包内核存在、格式正确且能启动。
 
-## 限制
+本版本实测的 QA 报告见 [docs/verification.md](docs/verification.md)。
 
-* 完整的内核 e2e 验证只在 Windows x64 和 Linux x64 上跑过。macOS 与 Linux arm64
-  二进制在原生 CI runner 上构建并做了 `--help` 冒烟，但 14 场景 e2e 套件未在那些
-  宿主上执行。
-* 下载要求源站支持 HTTP/1.1；镜像、HTTP/2 多路复用偏好和按源站的预算学习不在本
-  插件范围内。
-* 某些 DSH 宿主会把子进程写入限制在会话工作区；`dataDir` 回退覆盖了这种情况，
-  部署方也可以用 `dataDir` 固定存储位置。
-* 视觉呈现已用真实 bundle 的浏览器截图验证，但行为依赖宿主的主题 token 与 locale。
-* 内核二进制由 CI 预编译：npm 包和每次 GitHub 安装都携带全部五个，安装时从不在
-  宿主上编译 Rust。
+## 安全与隐私
+
+* 携带凭据的查询参数值会在**规范层脱敏**，而不只是在 UI 里：`ServerFacts`/任务视图会把 `X-Amz-Signature`、`Signature`、`sig`、`token`、访问密钥及类似的值替换为 `<redacted>`。请求头和 cookie 从不出现在任何协议视图、回执或 UI 中。
+* 磁盘上的任务记录可能保留请求凭据，以便内核重启后续传时能够认证。它们只存放在内核数据目录下；请将该目录视为所有者敏感（owner-sensitive）。
+* 浏览器路由由 Harness 的 connection 服务认证；内核不开放任何网络监听，只通过 stdio 使用 NDJSON。
+* `insecure: true` 会为单个任务禁用 TLS 验证（仅限调试）；探测仍会报告它能读取到的证书事实。
+
+## 限制（如实说明）
+
+* 镜像、多源调度、下载审批门禁、按源站强制执行的并发预算，以及 MCP 暴露，都是 0.2.0 有意的非目标。
+* 远端变化导致的续传问题通过校验器发现；只有弱校验器的源站仍可能返回在同一秒内发生变化过的字节——此时 `weak` 安全性标签就是如实的信号。
+* ETA 置信度是对实测窗口的启发式判断；数据不足时它是 `unknown`，而不是猜出来的数字。
+* 五个平台的预编译内核由 release 工作流在原生 runner 上构建；在工作流刷新 `bin/` 之前，本地检出只包含当前宿主最新构建的内核。
+* 沙箱化的智能体宿主可能拒绝 Node 创建子进程；这种环境下请用 `bash scripts/dev-build.sh` 构建，用 `python tests/verify_e2e.py` 运行内核套件（两者都记录在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）。
+
+## 开发
+
+```bash
+npm install
+bash scripts/dev-build.sh all      # 宿主 + 客户端，沙箱安全
+bash scripts/dev-build.sh kernel   # cargo release 构建并安装到 bin/
+node scripts/build.mjs             # 沙箱外的规范构建
+node scripts/build-kernel.mjs      # 沙箱外的规范内核构建
+python tests/verify_e2e.py         # 协议 2 内核套件（沙箱安全）
+node tests/tools-receipts.test.mjs # 宿主回执契约
+```
+
+宿主半边只导入 Node 内置模块（schema 库以 vendor 方式内置）；客户端半边注册到 `sidebar.panellist`、带 key 的 `main` 槽位和原生右侧边栏标签座位，并且只使用宿主主题 token。
 
 ## 许可
 
-MIT OR Apache-2.0。vendor 进来的 `schemastery` 与 `cosmokit` 为 MIT；其许可文件位于
-`vendor/`。
-
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+MIT OR Apache-2.0。

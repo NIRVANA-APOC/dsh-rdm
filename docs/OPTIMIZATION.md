@@ -311,3 +311,84 @@ the curl/disk baselines when only the kernel is being compared.
 The plugin loads `bin/<platform>-<arch>/rdm-kernel[.exe]`, which CI regenerates
 with `.github/workflows/prebuilt-kernels.yml`; run `node scripts/build-kernel.mjs`
 for a local host build before trying these changes through the installed plugin.
+
+## 9. 0.2.0 pass — agent-facing information without a transfer regression
+
+0.2.0 adds per-task server facts, four telemetry windows, session attribution,
+credential redaction and a richer probe. The measured question for this pass:
+**does the extra information cost transfer throughput?**
+
+### Method
+
+* Native range origin (`tests/perf-origin.rs`, keep-alive, no artificial delay),
+  started per payload size with `--size` and a fresh kernel data dir per run.
+* **Old** = pristine 0.1.2 kernel binary built from `HEAD`
+  (`git show HEAD:bin/<host>/rdm-kernel[.exe]`), **New** = 0.2.0 kernel.
+* `tests/bench_native.py` drives both kernels over NDJSON and alternates the
+  order per round; reported value is the median of `start` request → terminal
+  `wait` return, plus the kernel's own event phase marks (`probe`→`plan`→
+  `started`→`completed`).
+* Windows 11 x64, loopback, 10/8/5/3 rounds for 1/10/64/64-single MiB. Loopback
+  variance is ±15-25 %; differences below ~20 % are treated as "no change".
+
+### Results (medians of two runs, host load varies)
+
+Two full runs on the same host at different system load; each value is
+`old / new` wall time with the transfer phase in parentheses. The second run ran
+while other verification work was active, which is why both sides rise together.
+
+| payload · connections | run A wall (transfer) | run B wall (transfer) | probe phase (old/new) |
+|---|---|---|---|
+| 1 MiB · 8 | 6.1 / 6.5 ms (2.0 / 2.5) | 12.1 / 12.7 ms (7.5 / 8.5) | ~2 / 3 ms |
+| 10 MiB · 8 | 16.0 / 12.2 ms (12 / 8) | 19.8 / 13.3 ms (16 / 8.5) | 3 / 3 ms |
+| 64 MiB · 8 | 55.4 / 53.0 ms (51 / 49) | 55.2 / 58.3 ms (51 / 53) | 3 / 3 ms |
+| 64 MiB · 1 | 134.0 / 131.6 ms (130 / 127) | 143.9 / 144.6 ms (116 / 140) | ~3 ms (one 26 ms old outlier) |
+
+Read this as **parity**: every difference is inside the ±15–25 % loopback
+variance, and both sides move together with host load. The 10 MiB case was
+faster in both runs but is not claimed as a speed-up. The agent-facing layer
+costs no measurable transfer throughput at these sizes.
+
+### What the richer probe costs
+
+0.2.0 proves range support with one 64-byte ranged `GET` after the `HEAD`
+(a `HEAD` cannot prove ranges: origins advertise `Accept-Ranges: bytes` and still
+answer `200` to a range request), so the probe phase gains ~1 ms on the native
+origin. The sample is deliberately 64 bytes; `timing.sampleBps` is suppressed
+below 64 KiB because a 64-byte sample cannot measure throughput. On the Node
+fixture the same proof appears ~14 ms slower, but that fixture injects its own
+ranged response delay and Node scheduling — a fixture artifact, not kernel cost.
+
+### Regression found and fixed in this pass
+
+The first A/B run showed 1 MiB wall 6.6 → 12.3 ms. Phase data localised it to
+`finish()`: the terminal transition awaited the origin-ledger write+rename
+before setting the terminal status. The ledger is advisory history, so the save
+now runs on a spawned, coalescing writer (`AtomicBool` gate + `save_lock`) while
+the in-memory record is still updated before the status transition and shutdown
+still flushes. After the change the same case measured 6.1 → 6.5 ms. This is the
+kind of cost the window/phase decomposition exists to catch.
+
+### Coverage added alongside
+
+* Kernel: 80 `cargo test --all-targets` checks (protocol shapes, telemetry
+  windows/trend/ETA confidence, TLS DER validity, signed URLs, resume safety,
+  origin coalescing, redaction, 0.1.x record compatibility).
+* Protocol: `python tests/verify_e2e.py` — 55 checks against the real binary
+  (probe facts, redirects, signed-URL expiry, session filters, telemetry,
+  pause/resume, aggregate/stats, checksums).
+* Host: `node tests/tools-receipts.test.mjs` — 31 checks (receipt contract,
+  policy-once, schema cost, recoverable failures, auth-input leakage).
+
+Reproduce the A/B numbers:
+
+```
+rustc -O -o tests/.tmp-e2e/perf-origin.exe tests/perf-origin.rs
+git show HEAD:bin/<host>/rdm-kernel[.exe] > tests/.tmp-e2e/old-kernel[.exe]
+cargo build --release --manifest-path kernel/Cargo.toml
+python tests/bench_native.py \
+  --old tests/.tmp-e2e/old-kernel.exe \
+  --new kernel/target/release/rdm-kernel.exe \
+  --origin tests/.tmp-e2e/perf-origin.exe \
+  --out tests/.bench/native-0.2.0.json
+```

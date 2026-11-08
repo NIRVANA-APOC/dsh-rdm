@@ -17,6 +17,9 @@ pub struct ClientOptions<'a> {
     pub insecure: bool,
     pub connections: usize,
     pub http1_only: bool,
+    /// Probe follows redirects manually so the chain can be reported; the
+    /// transfer client lets reqwest follow them.
+    pub follow_redirects: bool,
 }
 pub fn build_client(options: ClientOptions<'_>) -> EngineResult<Client> {
     let mut headers = HeaderMap::new();
@@ -33,7 +36,15 @@ pub fn build_client(options: ClientOptions<'_>) -> EngineResult<Client> {
         headers.insert(COOKIE, HeaderValue::from_str(cookie).map_err(|_| EngineError::invalid("invalid cookie header value"))?);
     }
     headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-    let mut builder = Client::builder().default_headers(headers).connect_timeout(CONNECT_TIMEOUT).read_timeout(READ_TIMEOUT).pool_max_idle_per_host(options.connections.clamp(1, 32)).redirect(reqwest::redirect::Policy::limited(10));
+    let redirect = if options.follow_redirects { reqwest::redirect::Policy::limited(10) } else { reqwest::redirect::Policy::none() };
+    let mut builder = Client::builder()
+        .default_headers(headers)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .pool_max_idle_per_host(options.connections.clamp(1, 32))
+        .redirect(redirect)
+        // Needed by probe to read the leaf certificate for `tls.notAfter`.
+        .tls_info(true);
     if options.http1_only {
         builder = builder.http1_only();
     }
@@ -63,7 +74,7 @@ pub fn parse_content_range(value: &str) -> Option<ContentRange> {
     Some(ContentRange { start: start.trim().parse().ok()?, end: end.trim().parse().ok()?, total: if total == "*" { None } else { Some(total.parse().ok()?) } })
 }
 pub fn header_string(headers: &HeaderMap, name: reqwest::header::HeaderName) -> Option<String> {
-    headers.get(name).and_then(|value| value.to_str().ok()).map(|value| value.trim().to_string())
+    headers.get(name).and_then(|value| value.to_str().ok()).map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 }
 pub fn content_length(headers: &HeaderMap) -> Option<u64> {
     header_string(headers, reqwest::header::CONTENT_LENGTH)?.parse().ok()
@@ -89,6 +100,16 @@ pub fn is_retryable_status(status: u16) -> bool {
 }
 
 pub fn client_for_spec(spec: &crate::protocol::Spec) -> EngineResult<Client> {
+    client_for_spec_with(spec, true)
+}
+
+/// Probe client: redirects are followed by `probe` itself so the chain (≤ 8)
+/// can be reported in `ServerFacts.redirects`.
+pub fn probe_client_for_spec(spec: &crate::protocol::Spec) -> EngineResult<Client> {
+    client_for_spec_with(spec, false)
+}
+
+pub fn client_for_spec_with(spec: &crate::protocol::Spec, follow_redirects: bool) -> EngineResult<Client> {
     build_client(ClientOptions {
         headers: &spec.headers,
         cookie: spec.cookie.as_deref(),
@@ -98,5 +119,6 @@ pub fn client_for_spec(spec: &crate::protocol::Spec) -> EngineResult<Client> {
         insecure: spec.insecure,
         connections: spec.connections,
         http1_only: !spec.single_stream,
+        follow_redirects,
     })
 }

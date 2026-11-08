@@ -38,6 +38,7 @@ pub struct Shared {
     pub range_requests: AtomicUsize,
     pub active: AtomicUsize,
     pub max_active: AtomicUsize,
+    pub extra_headers: Mutex<Vec<(String, String)>>,
 }
 
 pub struct Fixture {
@@ -64,6 +65,7 @@ impl Fixture {
             range_requests: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
+            extra_headers: Mutex::new(Vec::new()),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let accept_shared = Arc::clone(&shared);
@@ -120,6 +122,12 @@ impl Fixture {
 
     pub fn max_active(&self) -> usize {
         self.shared.max_active.load(Ordering::SeqCst)
+    }
+
+    /// Add a static response header to every 200/206 response (checksum,
+    /// rate-limit and header-allowlist tests).
+    pub fn set_header(&self, name: &str, value: &str) {
+        self.shared.extra_headers.lock().unwrap().push((name.to_string(), value.to_string()));
     }
 }
 
@@ -195,6 +203,10 @@ fn handle(stream: &mut TcpStream, shared: &Arc<Shared>) -> std::io::Result<()> {
         let location = format!("http://{}/file", stream.local_addr()?);
         return write_response(stream, "302 Found", &[("Location".to_string(), location)], &[]);
     }
+    if path == "/chain" {
+        let location = format!("http://{}/redirect", stream.local_addr()?);
+        return write_response(stream, "302 Found", &[("Location".to_string(), location)], &[]);
+    }
     if path != "/file" && path != "/redirect" {
         return write_response(stream, "404 Not Found", &[], b"not found");
     }
@@ -211,6 +223,9 @@ fn handle(stream: &mut TcpStream, shared: &Arc<Shared>) -> std::io::Result<()> {
     ];
     if let Some(value) = dispositions {
         headers.push(("Content-Disposition".to_string(), value));
+    }
+    for (name, value) in shared.extra_headers.lock().unwrap().iter() {
+        headers.push((name.clone(), value.clone()));
     }
 
     if request.method == "HEAD" {

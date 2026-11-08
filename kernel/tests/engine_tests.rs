@@ -243,7 +243,7 @@ async fn resume_across_kernel_restart() {
     assert_eq!(loaded.status, Status::Interrupted);
     let config = Config::default();
     assert!(config.auto_resume);
-    second.initialize(config).await;
+    let _ = second.initialize(config, None).await;
     let view = wait_task(&second, &view.id, 60_000).await;
     assert_eq!(view.status, Status::Completed, "{:?}", view.error);
     assert!(view.resumed_chunks > 0);
@@ -316,29 +316,49 @@ async fn cancel_then_retry_discards_part_and_restarts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn probe_reports_metadata_and_range_support() {
+async fn probe_returns_complete_server_facts() {
     let bytes = payload(4096);
     let fixture = Fixture::start(bytes.clone());
     fixture.set_content_disposition("attachment; filename=\"probe.bin\"");
+    fixture.set_header("x-amz-checksum-sha256", "Z29vZA==");
+    fixture.set_header("x-ratelimit-limit", "100");
     let dir = TempDir::new("probe");
     let kernel = kernel(&dir);
-    let params: ProbeParams = serde_json::from_value(json!({
-        "url": fixture.url("/file"),
-    }))
-    .unwrap();
+    let params: ProbeParams = serde_json::from_value(json!({"url": fixture.url("/file")})).unwrap();
     let value = kernel.probe(params).await.expect("probe");
-    let meta: rdm_kernel::protocol::Meta = serde_json::from_value(value["meta"].clone()).unwrap();
-    assert_eq!(meta.file_name, "probe.bin");
-    assert_eq!(meta.total_bytes, Some(bytes.len() as u64));
-    assert!(meta.supports_ranges);
-    assert!(meta.etag.is_some());
+    assert!(value.get("meta").is_none(), "probe result is {{server}} only: {value}");
+    let server: rdm_kernel::protocol::ServerFacts = serde_json::from_value(value["server"].clone()).expect("server facts");
+    assert_eq!(server.status, 200);
+    assert_eq!(server.file_name, "probe.bin");
+    assert_eq!(server.file_name_source, rdm_kernel::protocol::FileNameSource::ContentDisposition);
+    assert_eq!(server.total_bytes, Some(bytes.len() as u64));
+    assert!(server.range.supported);
+    assert_eq!(server.range.accept_ranges, rdm_kernel::protocol::AcceptRanges::Bytes);
+    assert_eq!(server.range.probed_by, rdm_kernel::protocol::ProbedBy::RangeGet);
+    assert_eq!(server.range.probe_status, Some(206));
+    assert_eq!(server.range.probe_bytes, 64);
+    assert!(server.range.if_range, "strong ETag + ranges allows If-Range");
+    assert!(server.validators.strong_etag);
+    assert_eq!(server.resume.safety, rdm_kernel::protocol::ResumeSafety::Strong);
+    assert_eq!(server.resume.reason, rdm_kernel::protocol::ResumeReason::StrongEtag);
+    assert_eq!(server.checksum.sha256.as_deref(), Some("Z29vZA=="));
+    assert_eq!(server.rate_limit.limit, Some(100));
+    assert_eq!(server.recommendation.verify, rdm_kernel::protocol::VerifyAdvice::Recommended);
+    assert!(server.tls.is_none(), "plain http has no TLS block");
+    assert!(server.timing.probe_ms < 60_000);
+    assert!(server.timing.sample_bps.is_none(), "a 64-byte range proof is not a throughput sample");
 
+    // No ranges: degrade to single stream and no If-Range.
     fixture.set_supports_ranges(false);
     let params: ProbeParams = serde_json::from_value(json!({"url": fixture.url("/file")})).unwrap();
     let value = kernel.probe(params).await.expect("probe");
-    let meta: rdm_kernel::protocol::Meta = serde_json::from_value(value["meta"].clone()).unwrap();
-    assert!(!meta.supports_ranges);
-    assert_eq!(meta.total_bytes, Some(bytes.len() as u64));
+    let server: rdm_kernel::protocol::ServerFacts = serde_json::from_value(value["server"].clone()).unwrap();
+    assert!(!server.range.supported);
+    assert_eq!(server.resume.safety, rdm_kernel::protocol::ResumeSafety::None);
+    assert_eq!(server.resume.reason, rdm_kernel::protocol::ResumeReason::NoRangeSupport);
+    assert!(server.recommendation.single_stream);
+    assert!(server.warnings.iter().any(|warning| warning == "no-range-support"));
+    assert_eq!(server.total_bytes, Some(bytes.len() as u64));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -360,4 +380,109 @@ async fn unknown_task_and_invalid_control_are_rejected() {
         Err(error) => assert_eq!(error.code, "conflict"),
         Ok(_) => panic!("expected conflict"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn telemetry_windows_and_detail_while_running() {
+    let bytes = payload(3 * 1024 * 1024);
+    let fixture = Fixture::start(bytes.clone());
+    fixture.set_chunk_delay(Duration::from_millis(20));
+    let dir = TempDir::new("telemetry-detail");
+    let kernel = kernel(&dir);
+    let view = start_task(&kernel, download_params(&fixture, &dir, json!({"connections": 2, "chunkSizeBytes": 262144}))).await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut detail = None;
+    while Instant::now() < deadline {
+        let value = kernel.get(&view.id, 20).expect("get");
+        let candidate = value["detail"].clone();
+        let samples = candidate["telemetry"]["samples"].as_u64().unwrap_or(0);
+        let window_1s = candidate["telemetry"]["windows"]["1s"].as_u64();
+        if samples >= 2 && window_1s.is_some() && candidate["telemetry"]["peakBps"].as_u64().unwrap_or(0) > 0 {
+            detail = Some(candidate);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let detail = detail.expect("telemetry detail while running");
+    for window in ["1s", "5s", "30s", "300s"] {
+        assert!(detail["telemetry"]["windows"].get(window).is_some(), "{detail}");
+    }
+    assert!(detail["telemetry"]["samples"].as_u64().unwrap() >= 2);
+    assert!(detail["telemetry"]["peakBps"].as_u64().unwrap() > 0);
+    assert!(detail["telemetry"]["avgBps"].as_u64().unwrap() > 0);
+    assert!(detail["telemetry"]["lastSampleAt"].as_u64().is_some());
+    assert!(["rising", "steady", "falling", "stalled", "unknown"].contains(&detail["telemetry"]["trend"].as_str().unwrap_or("?")));
+    assert!(["high", "medium", "low", "unknown"].contains(&detail["telemetry"]["etaConfidence"].as_str().unwrap_or("?")));
+    assert!(detail["timing"]["transferMs"].as_u64().unwrap() > 0);
+    assert!(detail["server"]["range"]["supported"].as_bool().unwrap_or(false));
+
+    let final_view = wait_task(&kernel, &view.id, 120_000).await;
+    assert_eq!(final_view.status, Status::Completed, "{:?}", final_view.error);
+    assert_eq!(final_view.percent, Some(100));
+    assert_eq!(final_view.speed_bps, 0, "idle tasks report 0 live rate");
+    assert!(final_view.peak_bps > 0);
+    assert_eq!(std::fs::read(final_view.path.clone().expect("path")).unwrap(), bytes);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_id_roundtrip_and_list_filter() {
+    let bytes = payload(64 * 1024);
+    let fixture = Fixture::start(bytes.clone());
+    let dir = TempDir::new("session");
+    let kernel = kernel(&dir);
+    let mut params = download_params(&fixture, &dir, json!({"sessionId": "sess_abc", "fileName": "sess.bin"}));
+    params["sessionId"] = json!("sess_abc");
+    let view = start_task(&kernel, params).await;
+    assert_eq!(view.session_id.as_deref(), Some("sess_abc"));
+    let view = wait_task(&kernel, &view.id, 60_000).await;
+    assert_eq!(view.status, Status::Completed);
+    assert_eq!(view.session_id.as_deref(), Some("sess_abc"));
+
+    let unattributed = start_task(&kernel, download_params(&fixture, &dir, json!({"fileName": "plain.bin"}))).await;
+    assert!(unattributed.session_id.is_none());
+    let unattributed = wait_task(&kernel, &unattributed.id, 60_000).await;
+    assert_eq!(unattributed.status, Status::Completed);
+
+    let scoped = kernel.list(None, Some("sess_abc"), 50);
+    let tasks = scoped["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1, "{scoped}");
+    assert_eq!(tasks[0]["id"], view.id);
+    assert_eq!(scoped["aggregate"]["completed"], 1);
+    let global = kernel.list(None, None, 50);
+    assert_eq!(global["tasks"].as_array().unwrap().len(), 2);
+    assert!(kernel.list(None, Some("sess_other"), 50)["tasks"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn origin_ledger_records_terminal_state_and_probe_reads_it() {
+    let bytes = payload(256 * 1024);
+    let fixture = Fixture::start(bytes.clone());
+    let dir = TempDir::new("origins");
+    let kernel = kernel(&dir);
+    let view = start_task(&kernel, download_params(&fixture, &dir, json!({}))).await;
+    let view = wait_task(&kernel, &view.id, 60_000).await;
+    assert_eq!(view.status, Status::Completed);
+    let host = view.host.clone();
+    assert_eq!(host, "127.0.0.1");
+    // Terminal transition persisted the ledger; probe reads it back.
+    let params: ProbeParams = serde_json::from_value(json!({"url": fixture.url("/file")})).unwrap();
+    let value = kernel.probe(params).await.expect("probe");
+    let server: rdm_kernel::protocol::ServerFacts = serde_json::from_value(value["server"].clone()).unwrap();
+    let origin = server.origin.expect("origin facts for a known host");
+    assert!(origin.known);
+    assert_eq!(origin.attempts, 1);
+    assert_eq!(origin.completed, 1);
+    assert!(origin.median_bps.unwrap_or(0) > 0);
+    assert!(origin.last_at.is_some());
+    let stats = kernel.stats();
+    assert_eq!(stats["origins"], 1, "in-memory ledger is current when `wait` returns");
+    // The file write is a coalesced background task: wait for it.
+    let ledger_path = dir.path().join("origins.json");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ledger_path.is_file() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(ledger_path.is_file(), "background origin ledger save did not run");
+    let ledger: Value = serde_json::from_slice(&std::fs::read(&ledger_path).unwrap()).unwrap();
+    assert!(ledger["hosts"].get(&host).is_some(), "{ledger}");
 }

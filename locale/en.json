@@ -1,101 +1,221 @@
 {
   "meta": {
-    "title": "RDM Downloader",
-    "description": "Resident RDM downloader kernel with rdm_* agent tools and a live download panel."
+    "title": "Downloads",
+    "description": "Review surface for agent-requested downloads: what was asked, what the server claimed, what the kernel measured and what was verified."
   },
-  "panel": {
-    "title": "RDM Downloader",
-    "intro": "A resident download queue shared with your agents. Paste a link to start one; transfers keep running in the background."
+  "page": {
+    "title": "Downloads",
+    "pid": "pid {pid}",
+    "recorderLabel": "Aggregate throughput, last 120 seconds",
+    "recorderNow": "now",
+    "recorderAria": "Aggregate download throughput over the last 120 seconds; current rate {rate}",
+    "footnote": "Every download here was requested by an agent. Review the record, not the controls.",
+    "recorderNote": "Sampled by this review page. Kernel-reported windows are in each record's evidence drawer."
+  },
+  "rates": {
+    "now": "now",
+    "w5": "5s",
+    "w30": "30s",
+    "idle": "Idle"
+  },
+  "counts": {
+    "active": "{n} active",
+    "done": "{n} done",
+    "failed": "{n} failed",
+    "paused": "{n} paused"
   },
   "kernel": {
     "running": "Engine running",
     "starting": "Engine starting",
     "stopped": "Engine not running",
-    "error": "Engine error",
-    "unreachable": "Downloader unavailable",
-    "connecting": "Connecting to engine"
+    "error": "Engine error"
   },
   "route": {
-    "errorTitle": "The downloader panel can't reach its host",
-    "errorHint": "The plugin's host half may still be starting. This page retries every second.",
-    "retry": "Retry now",
-    "retrying": "Retrying…"
-  },
-  "form": {
-    "title": "Start a download",
-    "url": "Download link",
-    "urlPlaceholder": "Paste a download link",
-    "start": "Start download",
-    "starting": "Starting…",
-    "options": "Options",
-    "optionsHide": "Hide options",
-    "directory": "Save to",
-    "directoryPlaceholder": "Default folder",
-    "connections": "Connections",
-    "connectionsPlaceholder": "Default",
-    "urlRequired": "Paste a link first.",
-    "urlInvalid": "Only http(s) links work.",
-    "connectionsInvalid": "Connections must be a whole number from 1 to 32.",
-    "startFailed": "The download could not start."
-  },
-  "tasks": {
-    "title": "Downloads",
-    "runningCount": "{n} downloading",
-    "idle": "Idle",
-    "failedCount": "{n} failed",
-    "filterLabel": "Filter downloads",
-    "filterAll": "All",
-    "filterActive": "Unfinished",
-    "filterFinished": "History",
-    "filterEmpty": "No downloads match this filter."
+    "hint": "The plugin's host half may still be starting; this page retries every second."
   },
   "empty": {
-    "title": "The queue is empty",
-    "desc": "Downloads your agents start with rdm_download appear here. You can also paste a link above."
+    "global": "No downloads recorded yet. Anything an agent fetches with rdm_download appears here, with its evidence.",
+    "session": "No downloads in this session yet."
   },
-  "row": {
-    "pause": "Pause",
-    "resume": "Resume",
-    "cancel": "Cancel download",
-    "retry": "Download again",
-    "remove": "Remove from list",
-    "more": "More actions",
+  "group": {
+    "unattributed": "Unattributed",
+    "session": "Session {id}",
+    "records": "{n} records"
+  },
+  "session": {
+    "title": "Downloads",
+    "verifiedCount": "{n} verified",
+    "riskCount": "{n} at risk",
+    "unknownScope": "This tab is not attached to a session yet."
+  },
+  "guide": {
+    "description": "Reviews this session's downloads"
+  },
+  "record": {
+    "etaLabel": "ETA",
+    "etaConfidence": "ETA confidence: {level}",
+    "toggle": "{name}, {status}. Show the evidence record.",
+    "pulse": "Throughput pulse for {name}",
+    "sizeUnknown": "size unknown",
+    "reveal": "Reveal file",
     "copyPath": "Copy path",
-    "copyUrl": "Copy link",
+    "copyHash": "Copy hash",
     "copiedPath": "Path copied",
-    "copiedUrl": "Link copied",
-    "details": "Details",
-    "hideDetails": "Hide details",
+    "copiedHash": "Hash copied",
+    "stop": "Stop",
+    "confirmStop": "Confirm stop",
+    "stopRequested": "Stopping {name}"
+  },
+  "common": {
+    "copyFailed": "Could not copy"
+  },
+  "drawer": {
+    "regionLabel": "Evidence record for {name}",
+    "loading": "Loading the record…",
+    "retry": "Retry",
+    "request": "Request",
+    "server": "Server",
+    "timing": "Timing",
+    "telemetry": "Telemetry",
+    "verification": "Verification",
+    "destination": "Destination",
+    "resume": "Resume state",
+    "risk": "Risk",
+    "diagnosis": "Diagnosis",
+    "events": "Events",
+    "notRecorded": "Not recorded for this download.",
+    "none": "None",
+    "notCompared": "Not compared",
+    "noWarnings": "The server raised no warnings.",
+    "noDiagnosis": "No diagnosis for this download.",
+    "noMessage": "No detail",
+    "eventsLoading": "Loading events…",
+    "eventsEmpty": "No events recorded.",
+    "sampledNote": "The waveform is sampled by this review page (one point per second). The four rates above are kernel-reported windows."
+  },
+  "facts": {
+    "url": "Requested URL",
+    "finalUrl": "Final URL",
+    "redirects": "Redirects",
+    "session": "Session",
+    "status": "HTTP status",
+    "http": "HTTP version",
+    "host": "Host",
+    "contentType": "Content type",
+    "contentEncoding": "Content encoding",
+    "fileNameSource": "File name from",
+    "signedUrl": "Signed URL",
+    "tls": "TLS",
+    "rateLimit": "Rate limit",
+    "elapsed": "Elapsed",
+    "probeMs": "Probe time",
+    "ttfbMs": "Time to first byte",
+    "queuedMs": "Queued",
+    "transferMs": "Transfer",
+    "finalizeMs": "Finalize",
+    "started": "Started",
+    "finished": "Finished",
+    "window1": "1s rate",
+    "window5": "5s rate",
+    "window30": "30s rate",
+    "window300": "300s rate",
+    "peak": "Peak rate",
+    "average": "Average rate",
+    "stalled": "Stalled for",
+    "trend": "Trend",
+    "etaConfidence": "ETA confidence",
+    "samples": "Samples",
+    "expectedSha256": "Expected SHA-256",
+    "actualSha256": "Actual SHA-256",
+    "verdict": "Verdict",
+    "verified": "Verified",
+    "mismatch": "Mismatch",
+    "serverChecksum": "Server checksums",
+    "dir": "Directory",
+    "path": "Saved file",
+    "part": "Partial file",
+    "resumeStateFile": "Resume state file",
     "size": "Size",
     "downloaded": "Downloaded",
-    "speed": "Speed",
-    "eta": "ETA",
-    "connections": "Connections",
-    "target": "Target",
-    "savedTo": "Saved to",
-    "progressUnknown": "Transferring; size unknown",
-    "events": "Events",
-    "eventsLoading": "Loading events…",
-    "eventsEmpty": "No events yet.",
-    "eventsFailed": "Could not load events.",
-    "errorTitle": "Action failed"
-  },
-  "details": {
-    "title": "Task details",
-    "url": "Source",
-    "path": "Saved file",
-    "size": "Size",
-    "peakConnections": "Peak connections",
-    "chunkSize": "Chunk size",
-    "chunkSingle": "Single stream",
+    "resumeSafety": "Resume safety",
+    "rangeSupported": "Byte ranges",
+    "yes": "Yes",
+    "no": "No",
+    "chunksDone": "Chunks done",
+    "bytesDone": "Bytes done",
     "resumedChunks": "Resumed chunks",
-    "checksum": "SHA-256",
-    "expectedChecksum": "Expected SHA-256",
-    "startedAt": "Started",
-    "elapsed": "Elapsed",
+    "resumedBytes": "Resumed bytes",
+    "validatorsMatched": "Validators matched",
+    "workers": "Workers now",
+    "peakWorkers": "Peak workers",
+    "chunkSize": "Chunk size",
     "retries": "Retries",
-    "unknown": "Unknown",
-    "error": "Error detail"
+    "signedState": "Signed URL state",
+    "signedExpires": "Signed URL expires in",
+    "tlsState": "TLS state",
+    "tlsNotAfter": "TLS valid until",
+    "tlsIssuer": "TLS issuer",
+    "recommendation": "Recommendation",
+    "origin": "Origin history",
+    "originUnknown": "No history for this host yet.",
+    "originAttempts": "{n} attempts",
+    "originCompleted": "{n} completed",
+    "originMedian": "median",
+    "originBest": "best",
+    "originLastError": "last error",
+    "remaining": "{n} remaining",
+    "limit": "{n} limit",
+    "retryAfter": "retry after {n}s"
+  },
+  "chips": {
+    "range": "range",
+    "noRange": "no range",
+    "resumeStrong": "resume strong",
+    "resumeWeak": "resume weak",
+    "resumeNone": "resume unsafe",
+    "signed": "signed {time}",
+    "signedExpired": "signed expired",
+    "tls": "tls {time}",
+    "tlsExpired": "tls expired",
+    "verify": "sha256"
+  },
+  "seal": {
+    "verified": "Verified, SHA-256 {hash}",
+    "mismatch": "Mismatch, SHA-256 {hash}"
+  },
+  "risk": {
+    "summary": "{n} records need review",
+    "more": "+{n} more",
+    "warnLabel": "needs review",
+    "errorLabel": "failed",
+    "failedCause": "the download failed",
+    "mismatchCause": "the checksum did not match",
+    "signedExpiringReason": "the signed URL expires in {time}.",
+    "signedExpiredReason": "the signed URL has expired.",
+    "tlsExpiringReason": "the TLS certificate expires in {time}.",
+    "tlsExpiredReason": "the TLS certificate has expired.",
+    "noRangeReason": "the server does not support byte ranges, so this transfer cannot resume.",
+    "regionLabel": "Review queue"
+  },
+  "confidence": {
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "unknown": "unknown"
+  },
+  "trend": {
+    "rising": "rising",
+    "steady": "steady",
+    "falling": "falling",
+    "stalled": "stalled",
+    "unknown": "unknown"
+  },
+  "resume": {
+    "safety": {
+      "strong": "strong",
+      "weak": "weak",
+      "none": "unsafe"
+    }
   },
   "status": {
     "queued": "Queued",
@@ -107,13 +227,24 @@
     "cancelled": "Cancelled",
     "interrupted": "Interrupted"
   },
-  "common": {
-    "loading": "Connecting…",
-    "copyFailed": "Could not copy"
+  "warning": {
+    "no-range-support": "The server does not support byte ranges.",
+    "no-validators": "The server sent no validators.",
+    "weak-validators": "Only weak validators are available.",
+    "unknown-size": "The total size is unknown.",
+    "signed-url-expiring": "The signed URL is about to expire.",
+    "signed-url-expired": "The signed URL has expired.",
+    "tls-expiring": "The TLS certificate is about to expire.",
+    "tls-expired": "The TLS certificate has expired.",
+    "rate-limited": "The server is rate-limiting this client.",
+    "head-failed": "The HEAD probe failed; facts come from a ranged GET.",
+    "redirected": "The request was redirected.",
+    "content-encoding": "The response is content-encoded."
   },
   "error": {
     "code": {
       "invalid_request": "Invalid request",
+      "bad_request": "Invalid request",
       "not_found": "Task not found",
       "conflict": "Action not allowed in the current state",
       "http_status": "The server returned an HTTP error",
@@ -130,6 +261,7 @@
       "kernel_not_running": "The kernel is not running yet",
       "kernel_exited": "The kernel exited",
       "kernel_missing": "The kernel binary is missing",
+      "protocol_mismatch": "Kernel protocol mismatch",
       "unknown": "Unknown error"
     }
   }

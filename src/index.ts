@@ -3,7 +3,7 @@
  *
  * Wires the resident RDM kernel service to the three host surfaces:
  *  - five model-facing `rdm_*` tools ({@link registerRdmTools});
- *  - the sidebar panel's JSON route ({@link registerRdmHostApi});
+ *  - the review panels' JSON route ({@link registerRdmHostApi});
  *  - one system-prompt section that routes every download through RDM.
  *
  * The kernel starts lazily on first tool/panel use and is stopped when the
@@ -30,20 +30,44 @@ export { Config }
 export const PROMPT_SECTION_NAME = 'dsh-rdm:downloads'
 
 /**
- * System-prompt section: make RDM the default download path for the model.
- * Kept short (prompt space is shared) but explicit about the fallback rule.
+ * System-prompt section: download policy, stated once (design §3.1, ~90 words).
+ *
+ * Tool behavior, return shapes and parameter rules live on the tools
+ * themselves; nothing here repeats them.
  */
 export const PROMPT_SECTION_TEXT = `## File downloads — use the rdm_* tools
 
-Use the \`rdm_*\` tools for every file download (assets, release binaries, archives, datasets, media). They drive the resident RDM download kernel: it stays warm between calls (no per-download CLI start-up) and provides multi-connection segmented transfers, resume/pause/cancel/retry, retries with backoff, bandwidth limits, and optional SHA-256 verification.
+Use the rdm_* tools for every HTTP(S) file download instead of shell downloaders (curl/wget/PowerShell). When the source is unknown, rdm_probe first; rdm_download returns a live task id, rdm_control pauses/resumes/cancels/removes it, and rdm_wait long-polls instead of a tight loop. Their receipts are structured key=value lines — quote them and do not parse human prose; "-" means unknown. Downloads persist across turns, so check rdm_tasks before re-downloading. Use a shell downloader only when the user explicitly demands one.`
 
-- \`rdm_download\` — start an HTTP(S) download and return its task id (pass \`waitSec\` to block up to 300 s).
-- \`rdm_probe\` — inspect a URL first: redirects, final file name, size, content type, range/ resume support.
-- \`rdm_tasks\` — kernel status, task list, or one task with recent diagnostic events.
-- \`rdm_wait\` — block until tasks settle (≤ 300 s) instead of polling in a shell loop.
-- \`rdm_control\` — pause, resume, cancel, retry (restart from zero) or remove a task.
-
-Downloads persist across turns. Use \`bash\` with \`curl\`/\`wget\`/PowerShell only when the user explicitly demands a shell download; use ordinary shell commands for non-download work and non-HTTP(S) sources.`
+// Re-export the tool surface, protocol pin and pure receipt helpers so tests
+// and docs can inspect them from the built host bundle (`lib/index.js`).
+export { createRdmTools, registerRdmTools } from './tools'
+export {
+  formatBytes,
+  formatClock,
+  formatDurationMs,
+  formatDurationSecs,
+  formatPercent,
+  formatProgressPair,
+  formatRate,
+  renderControlReceipt,
+  renderDownloadReceipt,
+  renderProbeReceipt,
+  renderTaskDetailReceipt,
+  renderTaskEventLine,
+  renderTaskRecord,
+  renderTasksListReceipt,
+  renderWaitReceipt,
+  sessionIdFromExec,
+} from './tools'
+export {
+  normalizeAggregate,
+  normalizeServerFacts,
+  normalizeTaskDetail,
+  normalizeTaskView,
+  protocolMismatchMessage,
+} from './kernel-client'
+export { PROTOCOL_VERSION } from './protocol'
 
 /**
  * Register the plugin's prompt section. The `systemPrompt` service is declared

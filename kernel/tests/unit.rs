@@ -236,3 +236,192 @@ fn _path(_: &Path) {}
 
 #[allow(dead_code)]
 fn _claim(_: &Claim) {}
+
+// ---------------------------------------------------------------------------
+// Protocol v2 JSON shapes (§2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn task_view_v2_serde_roundtrip() {
+    use rdm_kernel::protocol::{EtaConfidence, ResumeSafety, TaskView};
+    let mut view = TaskView::default();
+    view.id = "t_9f3a1c2d5e6b7a80".into();
+    view.session_id = Some("sess_abc".into());
+    view.url = "https://cdn.example.com/app.zip".into();
+    view.host = "cdn.example.com".into();
+    view.file_name = "app.zip".into();
+    view.status = rdm_kernel::protocol::Status::Running;
+    view.downloaded = 21_184_000;
+    view.total = Some(50_406_400);
+    view.percent = Some(42);
+    view.speed1s_bps = Some(1_625_292);
+    view.avg_bps = 1_200_000;
+    view.peak_bps = 2_306_867;
+    view.eta_confidence = EtaConfidence::High;
+    view.resume_safety = ResumeSafety::Strong;
+    view.verified = Some(true);
+    let value = serde_json::to_value(&view).expect("serialize");
+    for key in [
+        "id",
+        "sessionId",
+        "url",
+        "host",
+        "finalUrl",
+        "fileName",
+        "dir",
+        "path",
+        "status",
+        "downloaded",
+        "total",
+        "percent",
+        "speedBps",
+        "speed1sBps",
+        "speed5sBps",
+        "speed30sBps",
+        "speed300sBps",
+        "avgBps",
+        "peakBps",
+        "etaSecs",
+        "etaConfidence",
+        "stalledMs",
+        "activeWorkers",
+        "peakWorkers",
+        "connections",
+        "chunkSize",
+        "resumedChunks",
+        "rangeSupported",
+        "resumable",
+        "resumeSafety",
+        "expectedSha256",
+        "sha256",
+        "verified",
+        "error",
+        "retries",
+        "createdAt",
+        "startedAt",
+        "finishedAt",
+        "elapsedMs",
+        "signedUrlExpiresAt",
+        "tlsNotAfter",
+    ] {
+        assert!(value.get(key).is_some(), "TaskView JSON missing {key}: {value}");
+    }
+    assert_eq!(value["sessionId"], "sess_abc");
+    assert_eq!(value["percent"], 42);
+    assert!(value["speed5sBps"].is_null(), "unknown numerics serialize as null");
+    let back: TaskView = serde_json::from_value(value).expect("deserialize");
+    assert_eq!(back.id, view.id);
+    assert_eq!(back.verified, Some(true));
+    assert_eq!(back.eta_confidence, EtaConfidence::High);
+}
+
+#[test]
+fn server_facts_parses_and_serializes_the_spec_example() {
+    use rdm_kernel::protocol::{ServerFacts, SignedUrlSource, ValidityState};
+    let raw = r#"{
+      "url":"https://cdn.example.com/app.zip?sig=<redacted>",
+      "finalUrl":"https://cdn.example.com/app.zip?sig=<redacted>",
+      "host":"cdn.example.com","httpVersion":"HTTP/2.0","status":200,
+      "fileName":"app.zip","fileNameSource":"content-disposition","totalBytes":50406400,
+      "contentType":"application/zip","contentEncoding":null,"contentDisposition":"attachment; filename=\"app.zip\"",
+      "range":{"supported":true,"acceptRanges":"bytes","ifRange":true,"probedBy":"head","probeStatus":206,"probeBytes":64},
+      "validators":{"etag":"\"9b2cf5\"","strongEtag":true,"lastModified":"Wed, 21 Oct 2026 07:28:00 GMT"},
+      "resume":{"possible":true,"safety":"strong","reason":"strong-etag"},
+      "signedUrl":{"signed":true,"expiresAt":1763000123000,"expiresInSecs":1180,"source":"aws-sigv4","state":"valid"},
+      "tls":{"https":true,"notAfter":1767000000000,"expiresInSecs":3456000,"issuer":"R11","subject":"cdn.example.com","state":"valid"},
+      "redirects":[{"status":301,"url":"https://cdn2.example.com/app.zip"}],
+      "headers":{"server":"nginx","date":"Wed, 21 Oct 2026 07:28:00 GMT","cacheControl":"max-age=3600","expires":null,"vary":"Accept-Encoding"},
+      "rateLimit":{"retryAfterSecs":null,"limit":null,"remaining":null},
+      "timing":{"probeMs":84,"ttfbMs":61,"sampleBps":12345678},
+      "checksum":{"contentDigest":null,"contentMd5":null,"sha256":null,"crc32c":null},
+      "warnings":["weak-validators","signed-url-expiring"],
+      "recommendation":{"start":"now","connections":8,"chunkSizeBytes":1572864,"singleStream":false,"reason":"ranges+strong-etag","verify":"recommended"},
+      "origin":{"known":true,"attempts":3,"completed":2,"medianBps":14680064,"bestBps":23068672,"lastError":"network","lastAt":1762990000000}
+    }"#;
+    let facts: ServerFacts = serde_json::from_str(raw).expect("ServerFacts parse");
+    assert_eq!(facts.signed_url.source, SignedUrlSource::AwsSigV4);
+    assert_eq!(facts.signed_url.state, ValidityState::Valid);
+    assert_eq!(facts.range.probe_status, Some(206));
+    let origin = facts.origin.clone().expect("origin facts");
+    assert_eq!(origin.median_bps, Some(14_680_064));
+    let value = serde_json::to_value(&facts).expect("serialize");
+    for key in [
+        "url",
+        "finalUrl",
+        "host",
+        "httpVersion",
+        "status",
+        "fileName",
+        "fileNameSource",
+        "totalBytes",
+        "contentType",
+        "contentEncoding",
+        "contentDisposition",
+        "range",
+        "validators",
+        "resume",
+        "signedUrl",
+        "tls",
+        "redirects",
+        "headers",
+        "rateLimit",
+        "timing",
+        "checksum",
+        "warnings",
+        "recommendation",
+        "origin",
+    ] {
+        assert!(value.get(key).is_some(), "ServerFacts JSON missing {key}");
+    }
+    for key in ["contentDigest", "contentMd5", "sha256", "crc32c"] {
+        assert!(value["checksum"].get(key).is_some(), "checksum JSON missing {key}");
+    }
+    assert!(value["checksum"].get("digest").is_none(), "stale `digest` field must not exist");
+}
+
+#[test]
+fn task_detail_serializes_protocol_v2_shape() {
+    use rdm_kernel::protocol::{ChecksumFacts, TaskDetail, Telemetry, WindowRates};
+    let mut detail = TaskDetail::default();
+    detail.telemetry = Telemetry { windows: WindowRates { w1s: Some(10), w5s: Some(9), w30s: Some(8), w300s: None }, ..Telemetry::default() };
+    detail.verification.server_checksums = ChecksumFacts { content_digest: Some("sha-256=:AA==:".into()), ..ChecksumFacts::default() };
+    let value = serde_json::to_value(&detail).expect("serialize");
+    for key in ["telemetry", "server", "target", "verification", "resumeState", "timing", "diagnosis"] {
+        assert!(value.get(key).is_some(), "TaskDetail missing {key}");
+    }
+    let windows = &value["telemetry"]["windows"];
+    assert_eq!(windows["1s"], 10);
+    assert!(windows["300s"].is_null());
+    assert_eq!(value["verification"]["serverChecksums"]["contentDigest"], "sha-256=:AA==:");
+}
+
+#[test]
+fn legacy_0_1_x_task_record_json_loads() {
+    use rdm_kernel::protocol::{Status, TaskRecord};
+    let raw = r#"{
+      "spec":{"url":"https://example.com/file.bin","dir":"C:\\tmp","fileName":null,"connections":8,
+        "chunkSizeBytes":0,"headers":{},"cookie":null,"referer":null,"userAgent":null,
+        "expectedSha256":null,"speedLimitBps":0,"resume":true,"singleStream":false,"proxy":null,
+        "insecure":false,"maxAttempts":6,"fsyncOnComplete":false},
+      "id":"t_legacy","url":"https://example.com/file.bin","finalUrl":null,"fileName":"file.bin",
+      "dir":"C:\\tmp","path":null,"status":"completed","downloaded":10,"total":10,"speedBps":0,
+      "etaSecs":null,"activeWorkers":0,"peakWorkers":1,"connections":8,"chunkSize":null,
+      "resumedChunks":0,"rangeSupported":true,"expectedSha256":null,"sha256":null,"error":null,
+      "retries":0,"createdAt":1,"startedAt":2,"finishedAt":3,"elapsedMs":4,"resumable":false
+    }"#;
+    let record: TaskRecord = serde_json::from_str(raw).expect("0.1.x record loads");
+    assert_eq!(record.view.id, "t_legacy");
+    assert_eq!(record.view.status, Status::Completed);
+    assert!(record.view.session_id.is_none(), "0.1.x record has no session");
+    assert!(record.view.peak_bps == 0);
+    assert!(record.view.verified.is_none());
+    assert_eq!(record.view.percent, None, "new fields default");
+    assert!(record.server.is_none());
+    assert!(record.spec.session_id.is_none());
+    // The flattened view plus the sibling `server` field must both round-trip.
+    let value = serde_json::to_value(&record).expect("serialize record");
+    assert!(value.get("server").is_some());
+    assert_eq!(value["id"], "t_legacy");
+    let back: TaskRecord = serde_json::from_value(value).expect("round-trip");
+    assert_eq!(back.view.id, "t_legacy");
+}

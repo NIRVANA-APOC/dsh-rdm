@@ -109,7 +109,7 @@ async fn run(data_dir: PathBuf, outbox: std::sync::mpsc::Sender<String>, log_lev
         if envelope.method == "shutdown" {
             kernel.shutdown().await;
             shutdown_done = true;
-            let _ = outbox.send(rpc::success_line(&envelope.id, serde_json::json!({"ok": true})));
+            let _ = outbox.send(rpc::success_line(&envelope.id, serde_json::json!({})));
             break;
         }
         let kernel = Arc::clone(&kernel);

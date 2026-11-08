@@ -36,19 +36,33 @@ import {
   MAX_CONNECTIONS,
   MAX_EVENTS,
   MAX_LIST_LIMIT,
+  MAX_SESSION_ID_LENGTH,
   MAX_TASK_IDS,
   MAX_WAIT_MS,
+  MAX_WAIT_PROBE_MS,
   MIB,
   MIN_CHUNK_BYTES,
   MIN_CONNECTIONS,
   MIN_WAIT_MS,
   PROTOCOL_VERSION,
+  SESSION_ID_PATTERN,
   TASK_EVENT_KINDS,
   TASK_STATUSES,
+  TERMINAL_STATUSES,
+  type AcceptRanges,
+  type Aggregate,
+  type ChecksumFacts,
   type ControlAction,
   type ControlParams,
   type ControlResult,
+  type DetailTiming,
+  type Diagnosis,
+  type DiagnosisCode,
+  type EtaConfidence,
+  type ExpiryState,
+  type FileNameSource,
   type GetResult,
+  type HeaderFacts,
   type InitializeConfig,
   type InitializeParams,
   type InitializeResult,
@@ -57,17 +71,42 @@ import {
   type KernelStatusView,
   type ListParams,
   type ListResult,
-  type Meta,
+  type OriginFacts,
+  type ProbeMethod,
   type ProbeParams,
   type ProbeResult,
+  type ProbeTimingFacts,
+  type RangeFacts,
+  type RateLimitFacts,
+  type Recommendation,
+  type RedirectHop,
   type RequestSpec,
+  type ResumeFacts,
+  type ResumeReason,
+  type ResumeSafety,
+  type ResumeStateDetail,
+  type ServerFacts,
+  type ServerWarningCode,
+  type SignedUrlFacts,
+  type SignedUrlSource,
+  type StartAdvice,
   type StartResult,
   type StatsResult,
+  type StatsThroughput,
   type TaskCounts,
+  type TaskDetail,
   type TaskEvent,
   type TaskEventKind,
   type TaskStatus,
+  type TaskTargetDetail,
+  type TaskTrend,
   type TaskView,
+  type TelemetryDetail,
+  type TelemetryWindows,
+  type TlsFacts,
+  type ValidatorFacts,
+  type VerificationDetail,
+  type VerifyRecommendation,
   type WaitParams,
   type WaitResult,
 } from './protocol'
@@ -301,6 +340,89 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+// ── Protocol v2 vocabulary (validation tables) ──────────────────────────────
+
+const DIAGNOSIS_CODES: readonly DiagnosisCode[] = [
+  'on-track',
+  'stalled',
+  'throttled',
+  'origin-slow',
+  'no-range',
+  'weak-validators',
+  'checksum-available',
+  'signed-url-expiring',
+  'disk-slow',
+  'retrying',
+  'almost-done',
+]
+const SERVER_WARNING_CODES: readonly ServerWarningCode[] = [
+  'no-range-support',
+  'no-validators',
+  'weak-validators',
+  'unknown-size',
+  'signed-url-expiring',
+  'signed-url-expired',
+  'tls-expiring',
+  'tls-expired',
+  'rate-limited',
+  'head-failed',
+  'redirected',
+  'content-encoding',
+]
+const RESUME_REASONS: readonly ResumeReason[] = [
+  'strong-etag',
+  'last-modified-only',
+  'no-validators',
+  'no-range-support',
+]
+const SIGNED_URL_SOURCES: readonly SignedUrlSource[] = [
+  'aws-sigv4',
+  'aws-sigv2',
+  'gcs-sigv4',
+  'azure-sas',
+  'generic-expires',
+  'unknown',
+]
+const EXPIRY_STATES: readonly ExpiryState[] = ['valid', 'expiring', 'expired', 'unknown']
+const RESUME_SAFETIES: readonly ResumeSafety[] = ['strong', 'weak', 'none']
+const ETA_CONFIDENCES: readonly EtaConfidence[] = ['high', 'medium', 'low', 'unknown']
+const TASK_TRENDS: readonly TaskTrend[] = ['rising', 'steady', 'falling', 'stalled', 'unknown']
+const START_ADVICES: readonly StartAdvice[] = ['now', 'later', 'avoid']
+const VERIFY_RECOMMENDATIONS: readonly VerifyRecommendation[] = ['recommended', 'required', 'unavailable']
+const FILE_NAME_SOURCES: readonly FileNameSource[] = ['content-disposition', 'url']
+const ACCEPT_RANGES: readonly AcceptRanges[] = ['bytes', 'none', 'unknown']
+
+/** Pick one value from a known vocabulary (first match wins), else fallback. */
+function pick<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
+}
+
+/** Pick one value from a known vocabulary, or `null`. */
+function pickOrNull<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : null
+}
+
+/**
+ * The actionable error shown when a kernel reports a protocol this plugin does
+ * not speak. Protocol 1 binaries are not compatible with 0.2.0.
+ */
+export function protocolMismatchMessage(
+  reported: number,
+  binaryPath: string,
+  kernelVersion?: string | null,
+): string {
+  const seen = reported > 0 ? `protocol ${reported}` : 'no protocol version'
+  const version = kernelVersion !== null && kernelVersion !== undefined && kernelVersion !== ''
+    ? ` (kernel ${kernelVersion})`
+    : ''
+  return (
+    `The RDM kernel at "${binaryPath}" reported ${seen} in its ready frame${version}, ` +
+    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.2.0). ` +
+    'Rebuild the kernel for this plugin with "bash scripts/dev-build.sh kernel" ' +
+    '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a 0.2.0 kernel.'
+  )
+}
+
 // ── Logging adapter ─────────────────────────────────────────────────────────
 
 const CONSOLE_LOGGER: KernelLogger = {
@@ -398,6 +520,24 @@ export function normalizeTaskId(value: unknown, label = 'taskId'): string {
   const id = value.trim()
   if (id.length > 128) throw new KernelError('invalid_request', `${label} is too long to be a task id`)
   return id
+}
+
+/**
+ * Validate an optional owning-session id: ≤160 chars of `[A-Za-z0-9._:-]`.
+ * Returns `null` when absent/empty.
+ */
+export function normalizeSessionId(value: unknown, label = 'sessionId'): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new KernelError('invalid_request', `${label} must be a string`)
+  const sessionId = value.trim()
+  if (sessionId === '') return null
+  if (sessionId.length > MAX_SESSION_ID_LENGTH || !SESSION_ID_PATTERN.test(sessionId)) {
+    throw new KernelError(
+      'invalid_request',
+      `${label} must be at most ${MAX_SESSION_ID_LENGTH} characters of [A-Za-z0-9._:-] (got ${JSON.stringify(value)})`,
+    )
+  }
+  return sessionId
 }
 
 /** Validate a control verb. */
@@ -498,6 +638,10 @@ export function normalizeRequestSpec(input: unknown): RequestSpec {
   if (insecure !== undefined) spec.insecure = insecure
   const maxAttempts = optionalNumber(raw.maxAttempts, 'maxAttempts')
   if (maxAttempts !== undefined) spec.maxAttempts = clampInt(maxAttempts, 1, 100)
+  const sessionId = normalizeSessionId(raw.sessionId)
+  if (sessionId !== null) spec.sessionId = sessionId
+  const waitProbeMs = optionalNumber(raw.waitProbeMs, 'waitProbeMs')
+  if (waitProbeMs !== undefined) spec.waitProbeMs = clampInt(waitProbeMs, 0, MAX_WAIT_PROBE_MS)
   return spec
 }
 
@@ -561,7 +705,17 @@ export function normalizeStatusFilter(value: unknown): TaskStatus | TaskStatus[]
 
 // ── Normalizers (kernel JSON -> stable host shapes) ─────────────────────────
 
-/** Normalize one task view so every PROTOCOL.md field is present. */
+/** Extract the host portion of a URL, or `''`. */
+function hostFromUrl(url: string): string {
+  if (url === '') return ''
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
+}
+
+/** Normalize one task view so every protocol-v2 field is present. */
 export function normalizeTaskView(raw: unknown): TaskView | null {
   const record = asRecord(raw)
   if (record === null) return null
@@ -573,16 +727,30 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
   const rawError = asRecord(record.error)
   const total = maybeNum(record.total)
   let downloaded = uint(record.downloaded, 0)
-  // A completed task transferred every byte by definition. The current kernel
-  // build reports `downloaded: 0` after finalizing a task (kernel-dev
-  // notified); normalizing here keeps progress percentages and the panel's
-  // size column correct whichever way the kernel reports it.
+  // A completed task transferred every byte by definition. Some kernel builds
+  // report `downloaded: 0` after finalizing; normalizing here keeps receipts
+  // and the panel's size column correct whichever way the kernel reports it.
   if (status === 'completed' && total !== null && total > 0 && downloaded < total) {
     downloaded = total
   }
+  const rawPercent = maybeNum(record.percent)
+  const percent =
+    rawPercent !== null
+      ? clampInt(rawPercent, 0, 100)
+      : total !== null && total > 0
+        ? clampInt(Math.floor((downloaded / total) * 100), 0, 100)
+        : null
+  const url = str(record.url)
+  const rawSessionId = maybeStr(record.sessionId)
+  const sessionId =
+    rawSessionId !== null && rawSessionId !== '' && rawSessionId.length <= MAX_SESSION_ID_LENGTH
+      ? rawSessionId
+      : null
   return {
     id,
-    url: str(record.url),
+    sessionId,
+    url,
+    host: str(record.host) !== '' ? str(record.host) : hostFromUrl(url),
     finalUrl: maybeStr(record.finalUrl),
     fileName: str(record.fileName),
     dir: str(record.dir),
@@ -590,16 +758,28 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     status,
     downloaded,
     total,
+    percent,
     speedBps: num(record.speedBps, 0),
+    speed1sBps: maybeNum(record.speed1sBps),
+    speed5sBps: maybeNum(record.speed5sBps),
+    speed30sBps: maybeNum(record.speed30sBps),
+    speed300sBps: maybeNum(record.speed300sBps),
+    avgBps: maybeNum(record.avgBps),
+    peakBps: maybeNum(record.peakBps),
     etaSecs: maybeNum(record.etaSecs),
+    etaConfidence: pick(record.etaConfidence, ETA_CONFIDENCES, 'unknown'),
+    stalledMs: uint(record.stalledMs, 0),
     activeWorkers: uint(record.activeWorkers, 0),
     peakWorkers: uint(record.peakWorkers, 0),
     connections: uint(record.connections, 0),
     chunkSize: maybeNum(record.chunkSize),
     resumedChunks: uint(record.resumedChunks, 0),
     rangeSupported: maybeBool(record.rangeSupported),
+    resumable: bool(record.resumable, false),
+    resumeSafety: pickOrNull(record.resumeSafety, RESUME_SAFETIES),
     expectedSha256: maybeStr(record.expectedSha256),
     sha256: maybeStr(record.sha256),
+    verified: maybeBool(record.verified),
     error:
       rawError === null
         ? null
@@ -612,7 +792,8 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     startedAt: maybeNum(record.startedAt),
     finishedAt: maybeNum(record.finishedAt),
     elapsedMs: uint(record.elapsedMs, 0),
-    resumable: bool(record.resumable, false),
+    signedUrlExpiresAt: maybeNum(record.signedUrlExpiresAt),
+    tlsNotAfter: maybeNum(record.tlsNotAfter),
   }
 }
 
@@ -634,18 +815,310 @@ export function normalizeTaskEvent(raw: unknown): TaskEvent | null {
   }
 }
 
-/** Normalize probe metadata. */
-export function normalizeMeta(raw: unknown): Meta {
+/** Normalize range facts. */
+function normalizeRangeFacts(raw: unknown): RangeFacts {
+  const record = asRecord(raw) ?? {}
+  const probedBy: ProbeMethod = record.probedBy === 'range-get' ? 'range-get' : 'head'
+  return {
+    supported: bool(record.supported, false),
+    acceptRanges: pick(record.acceptRanges, ACCEPT_RANGES, 'unknown'),
+    ifRange: bool(record.ifRange, false),
+    probedBy,
+    probeStatus: maybeNum(record.probeStatus),
+    probeBytes: uint(record.probeBytes, 0),
+  }
+}
+
+/** Normalize validator facts. */
+function normalizeValidatorFacts(raw: unknown): ValidatorFacts {
   const record = asRecord(raw) ?? {}
   return {
-    finalUrl: str(record.finalUrl),
-    fileName: str(record.fileName),
-    totalBytes: maybeNum(record.totalBytes),
-    supportsRanges: bool(record.supportsRanges, false),
-    contentType: maybeStr(record.contentType),
     etag: maybeStr(record.etag),
+    strongEtag: bool(record.strongEtag, false),
     lastModified: maybeStr(record.lastModified),
+  }
+}
+
+/** Normalize the resume verdict. */
+function normalizeResumeFacts(raw: unknown): ResumeFacts {
+  const record = asRecord(raw) ?? {}
+  const safety = pickOrNull(record.safety, RESUME_SAFETIES) ?? 'none'
+  return {
+    possible: bool(record.possible, false),
+    safety,
+    reason: pick(record.reason, RESUME_REASONS, 'no-validators'),
+  }
+}
+
+/** Normalize signed-URL expiry facts. */
+function normalizeSignedUrlFacts(raw: unknown): SignedUrlFacts {
+  const record = asRecord(raw) ?? {}
+  return {
+    signed: bool(record.signed, false),
+    expiresAt: maybeNum(record.expiresAt),
+    expiresInSecs: maybeNum(record.expiresInSecs),
+    source: pick(record.source, SIGNED_URL_SOURCES, 'unknown'),
+    state: pick(record.state, EXPIRY_STATES, 'unknown'),
+  }
+}
+
+/** Normalize TLS facts; `null` for plain HTTP or an unreadable certificate. */
+function normalizeTlsFacts(raw: unknown): TlsFacts | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  return {
+    https: bool(record.https, false),
+    notAfter: maybeNum(record.notAfter),
+    expiresInSecs: maybeNum(record.expiresInSecs),
+    issuer: maybeStr(record.issuer),
+    subject: maybeStr(record.subject),
+    state: pick(record.state, EXPIRY_STATES, 'unknown'),
+  }
+}
+
+/** Normalize one redirect hop. */
+function normalizeRedirectHop(raw: unknown): RedirectHop | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  return { status: uint(record.status, 0), url: str(record.url) }
+}
+
+/** Normalize retained response headers. */
+function normalizeHeaderFacts(raw: unknown): HeaderFacts {
+  const record = asRecord(raw) ?? {}
+  return {
+    server: maybeStr(record.server),
+    date: maybeStr(record.date),
+    cacheControl: maybeStr(record.cacheControl),
+    expires: maybeStr(record.expires),
+    vary: maybeStr(record.vary),
+  }
+}
+
+/** Normalize rate-limit facts. */
+function normalizeRateLimitFacts(raw: unknown): RateLimitFacts {
+  const record = asRecord(raw) ?? {}
+  return {
+    retryAfterSecs: maybeNum(record.retryAfterSecs),
+    limit: maybeNum(record.limit),
+    remaining: maybeNum(record.remaining),
+  }
+}
+
+/** Normalize probe timing. */
+function normalizeProbeTiming(raw: unknown): ProbeTimingFacts {
+  const record = asRecord(raw) ?? {}
+  return {
+    probeMs: uint(record.probeMs, 0),
+    ttfbMs: maybeNum(record.ttfbMs),
+    sampleBps: maybeNum(record.sampleBps),
+  }
+}
+
+/** Normalize integrity-header facts (also used by `TaskDetail.verification`). */
+export function normalizeChecksumFacts(raw: unknown): ChecksumFacts {
+  const record = asRecord(raw) ?? {}
+  return {
+    contentDigest: maybeStr(record.contentDigest),
+    contentMd5: maybeStr(record.contentMd5),
+    sha256: maybeStr(record.sha256),
+    crc32c: maybeStr(record.crc32c),
+  }
+}
+
+/** Normalize the advisory recommendation, degrading toward safe defaults. */
+function normalizeRecommendation(raw: unknown): Recommendation {
+  const record = asRecord(raw) ?? {}
+  return {
+    start: pick(record.start, START_ADVICES, 'later'),
+    connections: clampInt(num(record.connections, 1), 1, MAX_CONNECTIONS),
+    chunkSizeBytes: maybeNum(record.chunkSizeBytes),
+    singleStream: bool(record.singleStream, true),
+    reason: str(record.reason),
+    verify: pick(record.verify, VERIFY_RECOMMENDATIONS, 'unavailable'),
+  }
+}
+
+/** Normalize learned origin facts; `null` when the host was never seen. */
+function normalizeOriginFacts(raw: unknown): OriginFacts | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  return {
+    known: bool(record.known, false),
+    attempts: uint(record.attempts, 0),
+    completed: uint(record.completed, 0),
+    medianBps: maybeNum(record.medianBps),
+    bestBps: maybeNum(record.bestBps),
+    lastError: maybeStr(record.lastError),
+    lastAt: maybeNum(record.lastAt),
+  }
+}
+
+/** Normalize a complete `ServerFacts` record; `null` when it is absent. */
+export function normalizeServerFacts(raw: unknown): ServerFacts | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  const rawRedirects = Array.isArray(record.redirects) ? record.redirects : []
+  const redirects = rawRedirects
+    .map((entry) => normalizeRedirectHop(entry))
+    .filter((entry): entry is RedirectHop => entry !== null)
+    .slice(0, 16)
+  const rawWarnings = Array.isArray(record.warnings) ? record.warnings : []
+  const warnings: ServerWarningCode[] = []
+  for (const entry of rawWarnings) {
+    if (typeof entry === 'string' && (SERVER_WARNING_CODES as readonly string[]).includes(entry)) {
+      warnings.push(entry as ServerWarningCode)
+    }
+  }
+  return {
+    url: str(record.url),
+    finalUrl: str(record.finalUrl),
+    host: str(record.host),
     httpVersion: maybeStr(record.httpVersion),
+    status: uint(record.status, 0),
+    fileName: str(record.fileName),
+    fileNameSource: pick(record.fileNameSource, FILE_NAME_SOURCES, 'url'),
+    totalBytes: maybeNum(record.totalBytes),
+    contentType: maybeStr(record.contentType),
+    contentEncoding: maybeStr(record.contentEncoding),
+    contentDisposition: maybeStr(record.contentDisposition),
+    range: normalizeRangeFacts(record.range),
+    validators: normalizeValidatorFacts(record.validators),
+    resume: normalizeResumeFacts(record.resume),
+    signedUrl: normalizeSignedUrlFacts(record.signedUrl),
+    tls: normalizeTlsFacts(record.tls),
+    redirects,
+    headers: normalizeHeaderFacts(record.headers),
+    rateLimit: normalizeRateLimitFacts(record.rateLimit),
+    timing: normalizeProbeTiming(record.timing),
+    checksum: normalizeChecksumFacts(record.checksum),
+    warnings,
+    recommendation: normalizeRecommendation(record.recommendation),
+    origin: normalizeOriginFacts(record.origin),
+  }
+}
+
+/** Normalize the telemetry block of a `TaskDetail`. */
+function normalizeTelemetryDetail(raw: unknown): TelemetryDetail {
+  const record = asRecord(raw) ?? {}
+  const windows = asRecord(record.windows) ?? {}
+  const normalizedWindows: TelemetryWindows = {
+    '1s': maybeNum(windows['1s']),
+    '5s': maybeNum(windows['5s']),
+    '30s': maybeNum(windows['30s']),
+    '300s': maybeNum(windows['300s']),
+  }
+  return {
+    windows: normalizedWindows,
+    peakBps: maybeNum(record.peakBps),
+    avgBps: maybeNum(record.avgBps),
+    stalledMs: uint(record.stalledMs, 0),
+    trend: pick(record.trend, TASK_TRENDS, 'unknown'),
+    etaConfidence: pick(record.etaConfidence, ETA_CONFIDENCES, 'unknown'),
+    samples: uint(record.samples, 0),
+    lastSampleAt: maybeNum(record.lastSampleAt),
+  }
+}
+
+/** Normalize the on-disk target block. */
+function normalizeTargetDetail(raw: unknown): TaskTargetDetail {
+  const record = asRecord(raw) ?? {}
+  return {
+    dir: str(record.dir),
+    path: maybeStr(record.path),
+    part: maybeStr(record.part),
+    resumeState: maybeStr(record.resumeState),
+  }
+}
+
+/** Normalize the verification block. */
+function normalizeVerificationDetail(raw: unknown): VerificationDetail {
+  const record = asRecord(raw) ?? {}
+  return {
+    expectedSha256: maybeStr(record.expectedSha256),
+    sha256: maybeStr(record.sha256),
+    verified: maybeBool(record.verified),
+    serverChecksums: normalizeChecksumFacts(record.serverChecksums),
+  }
+}
+
+/** Normalize the resume-state block. */
+function normalizeResumeStateDetail(raw: unknown): ResumeStateDetail {
+  const record = asRecord(raw) ?? {}
+  return {
+    chunksDone: uint(record.chunksDone, 0),
+    bytesDone: uint(record.bytesDone, 0),
+    resumedChunks: uint(record.resumedChunks, 0),
+    resumedBytes: uint(record.resumedBytes, 0),
+    validatorsMatched: maybeBool(record.validatorsMatched),
+  }
+}
+
+/** Normalize the timing decomposition. */
+function normalizeDetailTiming(raw: unknown): DetailTiming {
+  const record = asRecord(raw) ?? {}
+  return {
+    queuedMs: maybeNum(record.queuedMs),
+    probeMs: maybeNum(record.probeMs),
+    transferMs: maybeNum(record.transferMs),
+    finalizeMs: maybeNum(record.finalizeMs),
+  }
+}
+
+/** Normalize one diagnosis entry; unknown codes are dropped, never invented. */
+function normalizeDiagnosis(raw: unknown): Diagnosis | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  const code = pickOrNull(record.code, DIAGNOSIS_CODES)
+  if (code === null) return null
+  return { code, advice: str(record.advice), message: str(record.message) }
+}
+
+/** Normalize a whole `TaskDetail` (missing blocks become safe empty shapes). */
+export function normalizeTaskDetail(raw: unknown): TaskDetail {
+  const record = asRecord(raw) ?? {}
+  const rawDiagnosis = Array.isArray(record.diagnosis) ? record.diagnosis : []
+  const diagnosis = rawDiagnosis
+    .map((entry) => normalizeDiagnosis(entry))
+    .filter((entry): entry is Diagnosis => entry !== null)
+    .slice(0, 4)
+  return {
+    telemetry: normalizeTelemetryDetail(record.telemetry),
+    server: record.server === null || record.server === undefined ? null : normalizeServerFacts(record.server),
+    target: normalizeTargetDetail(record.target),
+    verification: normalizeVerificationDetail(record.verification),
+    resumeState: normalizeResumeStateDetail(record.resumeState),
+    timing: normalizeDetailTiming(record.timing),
+    diagnosis,
+  }
+}
+
+/** Normalize the `list` aggregate. */
+export function normalizeAggregate(raw: unknown): Aggregate {
+  const record = asRecord(raw) ?? {}
+  return {
+    total: uint(record.total, 0),
+    active: uint(record.active, 0),
+    paused: uint(record.paused, 0),
+    failed: uint(record.failed, 0),
+    completed: uint(record.completed, 0),
+    bytesDownloaded: uint(record.bytesDownloaded, 0),
+    nowBps: num(record.nowBps, 0),
+    w5Bps: num(record.w5Bps, 0),
+    w30Bps: num(record.w30Bps, 0),
+    w300Bps: maybeNum(record.w300Bps),
+    riskCount: uint(record.riskCount, 0),
+  }
+}
+
+/** Normalize the `stats` throughput block. */
+export function normalizeStatsThroughput(raw: unknown): StatsThroughput {
+  const record = asRecord(raw) ?? {}
+  return {
+    nowBps: num(record.nowBps, 0),
+    w5Bps: num(record.w5Bps, 0),
+    w30Bps: num(record.w30Bps, 0),
+    w300Bps: maybeNum(record.w300Bps),
   }
 }
 
@@ -702,7 +1175,7 @@ interface PendingRequest {
 // ── KernelService ───────────────────────────────────────────────────────────
 
 /**
- * Owns the resident kernel process and speaks protocol v1 with it.
+ * Owns the resident kernel process and speaks protocol v2 with it.
  *
  * The service is lazy: the child is spawned on the first tool/route call. It
  * is safe for concurrent use — spawns are serialized and every in-flight
@@ -981,14 +1454,31 @@ export class KernelService {
       this.initializeParams() as unknown as Record<string, unknown>,
       this.timings.requestTimeouts.initialize ?? 30_000,
     )
-    const normalized: InitializeResult = {
-      protocol: uint(asRecord(result)?.protocol, PROTOCOL_VERSION),
-      kernel: normalizeKernelInfo(asRecord(result)?.kernel),
-      config: normalizeInitializeConfig(asRecord(result)?.config),
-    }
+    const normalized = this.normalizeInitializeResult(result)
     this.kernelInfo = normalized.kernel.version === 'unknown' ? this.kernelInfo : normalized.kernel
     this.initializedResult = normalized
     this.initialized = true
+  }
+
+  /**
+   * Normalize an `initialize` result and pin the protocol. A kernel that
+   * answers with another protocol generation is rejected with the same
+   * actionable error as a bad ready frame.
+   */
+  private normalizeInitializeResult(result: unknown): InitializeResult {
+    const record = asRecord(result)
+    const protocol = uint(record?.protocol, 0)
+    const kernel = normalizeKernelInfo(record?.kernel)
+    if (protocol !== PROTOCOL_VERSION) {
+      const message = protocolMismatchMessage(protocol, this.binaryPath, kernel.version)
+      this.lastError = message
+      throw new KernelError('protocol_mismatch', message)
+    }
+    return {
+      protocol,
+      kernel,
+      config: normalizeInitializeConfig(record?.config),
+    }
   }
 
   private initializeParams(overrides?: Partial<InitializeParams>): InitializeParams {
@@ -1158,7 +1648,22 @@ export class KernelService {
   private onNotification(record: Record<string, unknown>): void {
     if (record.event === 'ready') {
       const kernel = normalizeKernelInfo(record.kernel)
+      const protocol = uint(record.protocol, 0)
       this.kernelInfo = kernel
+      if (protocol !== PROTOCOL_VERSION) {
+        // Refuse an incompatible kernel: protocol-1 task shapes would silently
+        // mis-read every value, so fail once with an actionable error instead
+        // of degrading the surface.
+        const message = protocolMismatchMessage(protocol, this.binaryPath, kernel.version)
+        this.lastError = message
+        this.logger.error(message)
+        const deferred = this.readyDeferred
+        this.readyDeferred = null
+        deferred?.reject(new KernelError('protocol_mismatch', message))
+        this.rejectAllPending(new KernelError('protocol_mismatch', message))
+        this.killChild('protocol mismatch')
+        return
+      }
       this.ready = true
       this.readyAt = Date.now()
       this.lastError = null
@@ -1351,18 +1856,14 @@ export class KernelService {
       this.timings.requestTimeouts.initialize ?? 30_000,
       signal,
     )
-    const normalized: InitializeResult = {
-      protocol: uint(asRecord(result)?.protocol, PROTOCOL_VERSION),
-      kernel: normalizeKernelInfo(asRecord(result)?.kernel),
-      config: normalizeInitializeConfig(asRecord(result)?.config),
-    }
+    const normalized = this.normalizeInitializeResult(result)
     this.initializedResult = normalized
     this.initialized = true
     return normalized
   }
 
-  /** Probe a URL for redirects, file name, size and range support (no body). */
-  async probe(url: string, options: ProbeOptions = {}, signal?: AbortSignal): Promise<Meta> {
+  /** Probe a URL and return the full server-fact record (no body download). */
+  async probe(url: string, options: ProbeOptions = {}, signal?: AbortSignal): Promise<ServerFacts> {
     const params: ProbeParams = { url: assertHttpUrl(url) }
     if (options.headers !== undefined) params.headers = normalizeHeaders(options.headers)
     if (options.cookie !== undefined) params.cookie = options.cookie
@@ -1376,15 +1877,26 @@ export class KernelService {
       params as unknown as Record<string, unknown>,
       signal,
     )
-    return normalizeMeta((result as ProbeResult | null)?.meta)
+    const server = normalizeServerFacts((result as ProbeResult | null)?.server)
+    if (server === null) {
+      throw new KernelError('internal', 'The RDM kernel returned an invalid "probe" result (no server facts).')
+    }
+    return server
   }
 
-  /** Start one download; the kernel returns immediately with the task view. */
+  /**
+   * Start one download; the kernel returns immediately with the task view.
+   *
+   * `sessionId` and `waitProbeMs` are host-side: the owning session is sent to
+   * the kernel (so list/session scoping can find it), while `waitProbeMs` only
+   * drives the host's preflight wait and is never sent.
+   */
   async start(spec: RequestSpec, signal?: AbortSignal): Promise<TaskView> {
     const normalized = normalizeRequestSpec(spec)
+    const { waitProbeMs: _hostOnlyWaitProbeMs, ...params } = normalized
     const result = await this.request<StartResult>(
       'start',
-      normalized as unknown as Record<string, unknown>,
+      params as unknown as Record<string, unknown>,
       signal,
     )
     const task = normalizeTaskView((result as StartResult | null)?.task)
@@ -1395,51 +1907,86 @@ export class KernelService {
     return task
   }
 
-  /** List tasks, newest first. */
-  async list(
-    status?: TaskStatus | TaskStatus[],
-    limit?: number,
-    signal?: AbortSignal,
-  ): Promise<TaskView[]> {
-    const params: ListParams = { limit: clampInt(limit ?? DEFAULT_LIST_LIMIT, 1, MAX_LIST_LIMIT) }
-    if (status !== undefined) params.status = status
+  /** List tasks (newest first) plus the aggregate for the same filter. */
+  async list(params: ListParams = {}, signal?: AbortSignal): Promise<ListResult> {
+    const request: ListParams = {
+      limit: clampInt(params.limit ?? DEFAULT_LIST_LIMIT, 1, MAX_LIST_LIMIT),
+    }
+    if (params.status !== undefined) request.status = params.status
+    const sessionId = normalizeSessionId(params.sessionId)
+    if (sessionId !== null) request.sessionId = sessionId
     const result = await this.request<ListResult>(
       'list',
-      params as unknown as Record<string, unknown>,
+      request as unknown as Record<string, unknown>,
       signal,
     )
-    const raw = (result as ListResult | null)?.tasks
+    const record = asRecord(result)
+    const raw = record?.tasks
     const tasks = Array.isArray(raw)
       ? raw.map((entry) => normalizeTaskView(entry)).filter((entry): entry is TaskView => entry !== null)
       : []
     for (const task of tasks) this.rememberTask(task)
-    return tasks
+    return { tasks, aggregate: normalizeAggregate(record?.aggregate) }
   }
 
-  /** Read one task plus up to `events` recent diagnostic events. */
-  async get(
-    id: string,
-    events?: number,
-    signal?: AbortSignal,
-  ): Promise<{ task: TaskView; events: TaskEvent[] }> {
+  /** Read one task, its heavy `TaskDetail`, and up to `events` recent events. */
+  async get(id: string, events?: number, signal?: AbortSignal): Promise<GetResult> {
     const taskId = normalizeTaskId(id)
     const params = {
       id: taskId,
       events: clampInt(events ?? DEFAULT_EVENTS, 0, MAX_EVENTS),
     }
     const result = await this.request<GetResult>('get', params, signal)
-    const task = normalizeTaskView((result as GetResult | null)?.task)
+    const record = asRecord(result)
+    const task = normalizeTaskView(record?.task)
     if (task === null) {
       throw new KernelError('not_found', `No RDM task with id "${taskId}" exists.`)
     }
     this.rememberTask(task)
-    const rawEvents = (result as GetResult | null)?.events
+    const rawEvents = record?.events
     const normalizedEvents = Array.isArray(rawEvents)
       ? rawEvents
           .map((entry) => normalizeTaskEvent(entry))
           .filter((entry): entry is TaskEvent => entry !== null)
       : []
-    return { task, events: normalizedEvents }
+    return {
+      task,
+      detail: normalizeTaskDetail(record?.detail),
+      events: normalizedEvents,
+    }
+  }
+
+  /**
+   * Wait (bounded) for the preflight `ServerFacts` of a task.
+   *
+   * The hot-path `TaskView` never carries server facts, so this polls `get` at
+   * a low rate. It resolves early when the task reaches a terminal status
+   * without facts (for example a probe that failed) instead of burning the
+   * whole budget.
+   */
+  async waitForServerFacts(
+    id: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ task: TaskView; server: ServerFacts | null; timedOut: boolean; waitedMs: number }> {
+    const taskId = normalizeTaskId(id)
+    const startedAt = Date.now()
+    const budget = Math.max(0, Math.min(timeoutMs, MAX_WAIT_PROBE_MS))
+    for (;;) {
+      if (signal?.aborted === true) throw new KernelError('cancelled', 'The preflight wait was cancelled.')
+      const { task, detail } = await this.get(taskId, 0, signal)
+      if (detail.server !== null) {
+        return { task, server: detail.server, timedOut: false, waitedMs: Date.now() - startedAt }
+      }
+      if (TERMINAL_STATUSES.includes(task.status)) {
+        return { task, server: null, timedOut: false, waitedMs: Date.now() - startedAt }
+      }
+      const remaining = budget - (Date.now() - startedAt)
+      if (remaining <= 0) {
+        return { task, server: null, timedOut: true, waitedMs: Date.now() - startedAt }
+      }
+      await delay(Math.min(125, remaining))
+    }
   }
 
   /** Wait until every id is terminal or the timeout expires. */
@@ -1500,8 +2047,12 @@ export class KernelService {
     if (record === null) {
       throw new KernelError('internal', 'The RDM kernel returned an invalid "stats" result.')
     }
+    const protocol = uint(record.protocol, 0)
+    if (protocol !== PROTOCOL_VERSION) {
+      throw new KernelError('protocol_mismatch', protocolMismatchMessage(protocol, this.binaryPath))
+    }
     return {
-      protocol: uint(record.protocol, PROTOCOL_VERSION),
+      protocol,
       kernel: normalizeKernelInfo(record.kernel),
       tasks: normalizeTaskCounts(record.tasks),
       totals: {
@@ -1509,6 +2060,8 @@ export class KernelService {
         downloadsCompleted: uint(asRecord(record.totals)?.downloadsCompleted, 0),
         downloadsFailed: uint(asRecord(record.totals)?.downloadsFailed, 0),
       },
+      throughput: normalizeStatsThroughput(record.throughput),
+      origins: uint(record.origins, 0),
       config: normalizeInitializeConfig(record.config),
     }
   }

@@ -1,7 +1,7 @@
 {
   "name": "dsh-rdm",
-  "version": "0.1.2",
-  "description": "Resident multi-connection download engine for DeepSeek Harness: rdm_* agent tools, a sidebar download panel, resumable and verifiable transfers.",
+  "version": "0.2.0",
+  "description": "Agent-native resident downloader for DeepSeek Harness: rdm_* tools with server intelligence and verified receipts, plus a review-first sidebar UI.",
   "type": "module",
   "main": "lib/index.js",
   "repository": {
@@ -67,7 +67,8 @@
       "immediately": true,
       "inject": [
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     },
     "manifestVersion": 1
@@ -75,8 +76,12 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:kernel": "node scripts/build-kernel.mjs",
+    "build:dev": "bash scripts/dev-build.sh all",
+    "build:dev:kernel": "bash scripts/dev-build.sh kernel",
     "verify": "node scripts/verify-kernel.mjs",
-    "verify:kernels": "node scripts/verify-kernels.mjs"
+    "verify:kernels": "node scripts/verify-kernels.mjs",
+    "verify:e2e:py": "python tests/verify_e2e.py",
+    "verify:fixture": "node scripts/verify-fixture.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

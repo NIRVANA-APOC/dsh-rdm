@@ -9,7 +9,9 @@
 
 declare module 'react' {
   export function createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): any
-  export const Fragment: unknown
+  // `any` so the classic JSX runtime accepts `<>…</>` fragments, whose element
+  // type resolves to this value.
+  export const Fragment: any
 
   export function useState<S>(initialState: S | (() => S)): [S, (value: S | ((previous: S) => S)) => void]
   export function useReducer<S>(reducer: (state: S) => S, initialState: S): [S, () => void]
