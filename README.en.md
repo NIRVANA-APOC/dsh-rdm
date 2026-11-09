@@ -251,6 +251,16 @@ builds = `1.2.0`).
 The package ships prebuilt kernels for Windows x64, Linux x64/arm64 and macOS
 x64/arm64; installing never compiles Rust.
 
+### Install from the DSH plugin page (recommended)
+
+This project is published to npm: open DSH's Plugins page, choose **Add plugin**,
+enter `dsh-rdm`, and click **Install**. The install source only affects download
+speed, not package contents; in mainland China you can pick the mainland mirror.
+
+![Install dsh-rdm from the DSH plugin page](assets/screenshots/install-dsh-rdm.png)
+
+### Other ways to install
+
 From GitHub into a DSH profile:
 
 ```bash

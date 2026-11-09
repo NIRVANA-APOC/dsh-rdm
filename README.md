@@ -116,6 +116,14 @@ Rust 内核（`rdm-kernel` 0.3.0-alpha.2，协议 2）是一个常驻子进程�
 
 包内附带 Windows x64、Linux x64/arm64 与 macOS x64/arm64 的预编译内核；安装过程从不编译 Rust。
 
+### 在 DSH 插件页安装（推荐）
+
+本项目同步发布到 npm：打开 DSH 的插件页，点击「添加插件」，输入 `dsh-rdm` 后点「安装」即可。安装源只影响下载速度，不会改变包内容；在中国大陆可以选择「中国大陆镜像源」。
+
+![在 DSH 插件页输入 dsh-rdm 安装](assets/screenshots/install-dsh-rdm.png)
+
+### 其他安装方式
+
 从 GitHub 安装到某个 DSH profile：
 
 ```bash
