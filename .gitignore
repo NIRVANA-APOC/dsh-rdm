@@ -6,6 +6,7 @@ tests/.bench/
 .tmp/
 .tmp-*/
 .design/
+session_logs/
 .cargo-home/
 dist/
 reports/
