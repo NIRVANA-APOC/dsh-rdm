@@ -164,3 +164,44 @@ selection, failover, unproven-identity refusal, two-source race, slow-source
 exclusion, hedged first range, Metalink/HTTP Link discovery, `.meta4` resolution
 and SHA-256). A real-network Alpine ISO run measured `select` at **11.4×** the
 single official CDN; see [session_logs/20261109-multisource/README.md](../session_logs/20261109-multisource/README.md).
+
+## Visual re-acceptance — merged UI (2026-11-10)
+
+Re-ran the real-component preview harness after the merge, adding multi-source
+drawer states (the previous matrix did not exercise `sources[]`).
+
+| Check | Result |
+|---|---|
+| `.design/preview-03/cdp.mjs` matrix | **29/29 shots** (24 existing + 5 new multi-source: 1440 light/dark/en, 768, 390) |
+| `cdp-verify.mjs` independent rendered checks | **53/53** (was 51/51; +2 multi-source 390 px checks) |
+| `contrast-audit.mjs` | **PASS** every audited pair, both themes |
+| `locale-parity.mjs` | **PASS** (zh/en keys + placeholders) |
+| `verify-host.mjs` | **36/36** |
+
+What the new states prove:
+
+- The drawer's **源 / Sources** section renders policy, selected host, switch
+  count, source count and one row per source with state (`active`/`standby`/
+  `bad`), role, selected marker, bytes, rate and error text.
+- The server section renders discovered **镜像 / Mirrors** hosts without raw URLs.
+- At **390 px** the drawer has 3 source rows, exactly one selected, no raw URL
+  leak, and no horizontal overflow (`pageScrollWidth=385` inside `innerWidth=390`).
+- Light and dark themes both keep the bad-source row readable (red error text).
+- English copy is complete and does not change layout.
+
+Findings and fixes during this pass:
+
+1. `contrast-audit.mjs` was checking the raw success token for the kernel OK dot
+   while the CSS paints that dot with the derived `--rdm2-ok-graphic`; the raw
+   token fails on white (2.28:1), the real dot passes (4.14:1 light, 6.89:1
+   dark). Audit corrected to the actual derived token.
+2. A `--window-size=390` Chrome screenshot clipped drawer text horizontally;
+   CDP mobile emulation (`Emulation.setDeviceMetricsOverride`, mobile=true) shows
+   the product CSS wraps correctly. The 390 source shot is captured through CDP.
+3. The source-error row wraps its error text below the host at 390 px rather than
+   widening the page.
+
+Screenshots: `.design/preview-03/shots/p-1440-{light,dark,en}-sources.png`,
+`p-768-light-sources.png`, `p-390-light-sources.png`,
+`.design/verify-03/shots/verify-sources-390.png`. `.design/` is ignored and not
+shipped.
