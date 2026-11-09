@@ -466,6 +466,23 @@ jobs:
           echo "publishing ./${tarball_spec} as dsh-rdm@${VERSION} with dist-tag ${dist_tag}; provenance is attached automatically for a trusted publish"
           npm publish "./${tarball_spec}" --access public --tag "$dist_tag"
 
+      - name: Wait for npm registry propagation
+        if: steps.registry.outputs.state == 'absent'
+        shell: bash
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            if npm view "dsh-rdm@${VERSION}" version >/dev/null 2>&1; then
+              echo "dsh-rdm@${VERSION} visible in npm registry after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::dsh-rdm@${VERSION} did not become visible in npm within 10 minutes"
+          exit 1
+
       - name: Verify the registry copy and its provenance
         shell: bash
         env:
