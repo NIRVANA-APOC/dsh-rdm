@@ -9,11 +9,36 @@ All notable changes to `dsh-rdm` are recorded here. The format follows
 or creates the tag. There is no release without a changelog entry; run\n`node scripts/check-release.mjs` to enforce it (checks package/kernel version\nequality and the matching `[X.Y.Z]` section).
 
 Starting with **0.2.2**, the resident kernel and the plugin package share one
-version number. The current merged tree is **0.3.0** (protocol 2):
+version number. The current merged tree is **0.3.1** (protocol 2):
 `package.json`, `kernel/Cargo.toml` and the kernel's ready/initialize/stats
-frames all report `0.3.0`. Historical recordings keep the strings their
+frames all report `0.3.1`. Historical recordings keep the strings their
 binaries actually wrote (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2`
 builds = `1.2.0`).
+
+## [0.3.1] — 2026-11-10
+
+### Fixed
+- **Critical: installing this plugin left the DSH web UI unable to load
+  (`Failed to load plugins`).** The 0.3.0 client half read `ctx.layout` inside
+  `apply` without declaring `layout` in `inject`. Cordis throws on any service
+  read outside `inject` (`cannot get property "layout" without inject`), so
+  `apply` threw synchronously, the client entry's fiber stayed `failed`, and the
+  shell's boot audit — which treats one non-`active` client entry as fatal —
+  replaced the whole page with `Failed to load plugins / dsh-rdm`. In practice:
+  any dsh that installed 0.3.0 could not open its browser UI (reproduced and
+  verified fixed with a headless Chromium boot).
+  Fix: optional services are read through `ctx.get(name)` (Cordis's reflection
+  read, exempt from the `inject` guard) via the new
+  `src/client/services.ts`; `apply` gained a last-resort frame so a failed
+  optional surface logs one warning instead of failing the fiber; the native
+  right-sidebar reads of `sidebarRightTabs`/`sidebarRight` use the same safe
+  reader and the normal "seat is requested" path no longer warns that the tab
+  is unregistered; the popup's open action uses the real
+  `layout.selectPanel` (`layout.navigation` is the shell's internal
+  AbortController, not a navigation API).
+- Added `tests/client-activation.test.mjs`: loads `lib/client.js` through a
+  strict Cordis-shaped context (un-injected property reads throw) and locks all
+  three failure modes above.
 
 ## [0.3.0] — 2026-11-10
 

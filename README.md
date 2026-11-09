@@ -74,7 +74,7 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 
 ## “智能体原生”在这里的含义
 
-被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.3.0 就是围绕这些问题构建的。
+被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.3.1 就是围绕这些问题构建的。
 
 * **决策级探测。** `rdm_probe` 返回完整的服务器事实记录——经证实的字节范围支持、校验器与 RFC 9110 续传安全性、签名链接过期、TLS 证书有效期、重定向链、校验和可用性、速率限制响应头、耗时、稳定的警告码，以及具体建议。而不是一句“200 OK，48 MB”。
 * **启动时预检。** `rdm_download` 会把同一份服务器事实附着到任务上（有界等待，默认 2 秒），这样智能体无需第二次调用就能决定暂停、校验还是继续等待。
@@ -125,7 +125,7 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 
 ```text
 search scope=all matches=2 total=14
-task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.0-win32-x64.zip" connections=12/16
+task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.1-win32-x64.zip" connections=12/16
 task t_1a2b3c4d5e6f7a80 state=completed progress=100% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="design-critique-notes.pdf" connections=0/0
 ```
 
@@ -146,7 +146,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 一次任务列表回执：
 
 ```text
-kernel state=running version=0.3.0 pid=4212
+kernel state=running version=0.3.1 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -163,7 +163,7 @@ range 0..300 of 1907
 
 ## 内核智能
 
-Rust 内核（`rdm-kernel` 0.3.0，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
+Rust 内核（`rdm-kernel` 0.3.1，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
 
 * **服务器事实** —— 手动跟随的重定向链（最多 8 跳）、经证实的字节范围支持（带已验证 `Content-Range` 的 206，而不是只看 `Accept-Ranges` 响应头）、按 RFC 9110 对校验器做强/弱分类、从最终 URL 推导的各类签名链接过期时间（AWS SigV4/SigV2、GCS SigV4、Azure SAS、通用 `Expires`、ModelScope `auth_key`）、TLS 叶子证书 `notAfter`、校验和可用性（`Content-Digest`/`Content-MD5`/S3 SHA-256/CRC32C）、`Retry-After`、探测/TTFB 耗时，以及有界警告码。携带凭据的值（含 `auth_key` 与每个重定向跳点）在所有投影中都会脱敏。
 * **保持诚实的续传** —— `.part` + 续传状态、校验器兼容性检查，以及显式的 `resumeSafety`：`strong`/`weak`/`none`。内核只为强 ETag 发送 `If-Range`；弱校验器续传会重新探测并校验 `Content-Range`/长度，若源站忽略字节范围则回退为完整响应体。兼容性按稳定身份（URL 路径、大小、校验器）判定，最终 URL 上按请求变化的 `auth_key`/`Expires`/`Policy` 令牌不会再让已完成的分块表作废；每次尝试都会报告 `resumeDecision`/`resumeReason`。进行中的下载在签名链接过期后仍会继续；过期后再续传则不会——诊断会给出“不要暂停”。
@@ -174,7 +174,7 @@ Rust 内核（`rdm-kernel` 0.3.0，协议 2）是一个常驻子进程：不监�
 * **感知尾部的收尾** —— 当剩余 chunk 数不多于 worker 目标时，claim 使用 3 秒停滞期限与快速重试（250 ms × 尝试次数，封顶 1 秒），而不是在一条失效的长尾连接上等 10 秒。
 * **有界** —— 每个任务在视图环中 ≤200 条事件、内存中 ≤3000 个遥测样本、落盘 ≤10 万个样本/任务、每次响应 ≤20 条构建/计划 meta、≤256 个来源，不缓冲完整响应体，stdout 专供协议使用。
 
-性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（当前 `0.3.0`，协议 2）；0.3.0 正式版合并工作台/搜索与多源调度。历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。
+性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（当前 `0.3.1`，协议 2）；0.3.0 合并工作台/搜索与多源调度，0.3.1 修复客户端激活导致的整页加载失败。历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。
 
 ## 验证
 
@@ -223,6 +223,7 @@ node scripts/build-kernel.mjs      # 沙箱外的规范内核构建
 python tests/verify_e2e.py         # 协议 2 内核套件（沙箱安全）
 node tests/tools-receipts.test.mjs # 宿主回执契约
 node tests/host-api.test.mjs       # 浏览器路由 v3 契约
+node tests/client-activation.test.mjs # 客户端激活契约（Cordis 严格上下文）
 node scripts/check-release.mjs     # package/kernel/changelog 一致性
 ```
 
@@ -231,6 +232,8 @@ node scripts/check-release.mjs     # package/kernel/changelog 一致性
 发布流程——五平台内核矩阵、GitHub release、npm trusted publishing 与重试语义——记录在 [docs/release.md](docs/release.md)。
 
 宿主半边只导入 Node 内置模块（schema 库以 vendor 方式内置）；客户端半边注册到 `sidebar.panellist`、带 key 的 `main` 槽位、跨帧的 `shell.overlay` 座位和原生右侧边栏标签座位，并且只使用宿主主题 token。客户端自包含：工作台与弹窗共享同一份浏览器路由轮询，会话标签页只轮询自己的作用域。
+
+客户端激活有一条硬约束：**`apply` 里绝不能同步抛异常，也不能读未声明的服务**。DSH 启动后审计每个客户端条目，只要有一个 fiber 没到 `active`，整页就会被替换为 `Failed to load plugins`——本插件的失败等于装它的 dsh 打不开界面（0.3.0 就是这么挂的）。因此：必需服务写进 `inject`，可选服务（`layout`、`sidebarRightTabs`、`sidebarRight`）一律走 `src/client/services.ts` 的 `optionalService()`（内部用 `ctx.get(name)`，不受 inject 约束），每个可选面板各自 try/catch。回归测试见 `tests/client-activation.test.mjs`。
 
 ## 许可
 

@@ -81,6 +81,7 @@ export {
   protocolMismatchMessage,
 } from './kernel-client'
 export { PROTOCOL_VERSION } from './protocol'
+export { PLUGIN_VERSION } from './version'
 
 /**
  * Register the plugin's prompt section. The `systemPrompt` service is declared

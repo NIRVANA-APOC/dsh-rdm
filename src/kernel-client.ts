@@ -135,6 +135,7 @@ import {
   type WaitResult,
 } from './protocol'
 import type { ResolvedRdmConfig } from './config'
+import { PLUGIN_VERSION } from './version'
 
 // ── Tuning constants ────────────────────────────────────────────────────────
 
@@ -469,7 +470,7 @@ export function protocolMismatchMessage(
     : ''
   return (
     `The RDM kernel at "${binaryPath}" reported ${seen} in its ready frame${version}, ` +
-    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.3.0). ` +
+    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm ${PLUGIN_VERSION}). ` +
     'Rebuild the kernel for this plugin with "bash scripts/dev-build.sh kernel" ' +
     '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a matching kernel.'
   )

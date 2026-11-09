@@ -22,6 +22,7 @@ import { Icon } from './icon'
 import { ReviewPage } from './ledger'
 import { registerNativeSidebar } from './native'
 import { DownloadsPopup } from './overlay'
+import { optionalService } from './services'
 import type { ClientContext, LayoutService, TFunction } from './types'
 
 const NAMESPACE = 'dsh-rdm'
@@ -41,6 +42,19 @@ function flattenDictionary(source: Record<string, unknown>, prefix = '', target:
 }
 
 function apply(ctx: ClientContext): void {
+  // DSH audits every client entry after Cordis boot and fails the whole page
+  // ("Failed to load plugins") when one fiber does not reach `active`. A throw
+  // in `apply` is therefore not a local failure — it takes the harness UI down
+  // for every profile that installs this plugin. Activation stays total: each
+  // optional surface is guarded, and this frame is the last-resort net.
+  try {
+    activate(ctx)
+  } catch (error) {
+    console.warn('[dsh-rdm] client activation failed; download surfaces stay hidden:', error)
+  }
+}
+
+function activate(ctx: ClientContext): void {
   // Dictionaries: the plugin's locale JSON files are the single source of truth;
   // the locale service wants flat keys, so nested sections are flattened here.
   const disposeDictionaries = ctx.locale.register(NAMESPACE, {
@@ -80,11 +94,16 @@ function apply(ctx: ClientContext): void {
 
   // Frame-wide active-download popup. This is the one surface that is visible
   // outside the plugin panel, so it renders nothing unless a session is running
-  // a download. `layout.selectPanel` is the shell's own navigation path.
-  const layout = (ctx.layout ?? (typeof ctx.get === 'function' ? (ctx.get('layout') as LayoutService | undefined) : undefined)) ?? undefined
+  // a download. The layout service is optional: it is read through `ctx.get`
+  // because `ctx.layout` throws for a service outside `inject`, and declaring
+  // `layout` in `inject` would leave the fiber pending (equally fatal) on a
+  // profile that does not mount it.
+  const layout = optionalService<LayoutService>(ctx, 'layout')
   const openDownloads = (): void => {
     try {
-      layout?.selectPanel?.(SLOT_ID)
+      // Throws when the shell has not registered the `rdm` main panel; the
+      // popup's own button then stays a no-op instead of failing activation.
+      if (typeof layout?.selectPanel === 'function') layout.selectPanel(SLOT_ID)
     } catch (error) {
       console.warn('[dsh-rdm] could not open the downloads panel:', error)
     }

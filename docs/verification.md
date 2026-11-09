@@ -1,5 +1,21 @@
 # dsh-rdm 0.3.0 — verification report
 
+> **0.3.1 hotfix (2026-11-10):** `apply` in the client half read `ctx.layout`
+> without declaring `layout` in `inject`. Cordis throws on an un-injected
+> service read (`cannot get property "layout" without inject`), so the client
+> entry's fiber never reached `active` and DSH's boot audit replaced the whole
+> page with `Failed to load plugins / dsh-rdm`: installing 0.3.0 made the
+> harness web UI unloadable. Fixed by reading optional services through
+> `ctx.get` (`src/client/services.ts`), a last-resort guard around activation,
+> and the real `layout.selectPanel` call for the popup.
+> Evidence: headless Chromium boot of a patched `dsh web` — 0.3.0 bundle renders
+> `Failed to load plugins`; fixed bundle boots all 90 client entries with zero
+> console errors and mounts the workbench (sidebar entry `下载`, panel `rdm`,
+> 12 ledger records). Regression test `tests/client-activation.test.mjs`
+> (7/7 pass; 5/7 fail against the 0.3.0 bundle). Protocol and kernel behavior
+> unchanged; `lib/index.js` version hint now derives from `package.json`
+> (`PLUGIN_VERSION`), so `check-release` and the hint cannot drift apart.
+
 Status: **PASS** — all nine brief items, the active-download popup, host route v3,
 the session/workspace catalog, user-action notices, the desktop open action and
 `rdm_search` pass. No HIGH or MEDIUM defect remains; the verifier's five LOW

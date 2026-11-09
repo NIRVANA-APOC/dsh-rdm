@@ -1,6 +1,6 @@
 [package]
 name = "rdm-kernel"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Slim resident download kernel for the dsh-rdm DSH plugin"
 license = "MIT OR Apache-2.0"

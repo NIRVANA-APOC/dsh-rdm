@@ -96,8 +96,16 @@ export interface SidebarTabRegistry {
 }
 
 /** Client layout service subset (`ctx.layout`): panel selection and rightbar. */
+/**
+ * The shell's layout service as `ctx.get('layout')` returns it.
+ *
+ * `selectPanel` lives on the service itself (`layout.navigation` is the shell's
+ * internal AbortController for pending navigations, not a navigation API) and
+ * throws for a panel id the shell has not registered, so callers guard it.
+ */
 export interface LayoutService {
   selectPanel?(panelId: string | null): void
+  hasMainPanel?(panelId: string): boolean
   openRightbar?(track: boolean, fullscreen: boolean): void
   closeRightbar?(): void
 }

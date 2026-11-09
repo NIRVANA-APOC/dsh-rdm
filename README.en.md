@@ -100,7 +100,7 @@ Full method, per-run data and reproduction scripts:
 A downloader used by a model is not a GUI that happens to have an API. The agent
 has to answer, in as few model steps as possible: *is this URL usable, how should
 I fetch it, what is happening now, should I intervene, and can I trust the
-result?* `dsh-rdm` 0.3.0 is built around those questions.
+result?* `dsh-rdm` 0.3.1 is built around those questions.
 
 * **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
   proven range support, validators and RFC 9110 resume safety, signed-URL
@@ -218,7 +218,7 @@ A search receipt:
 
 ```text
 search scope=all matches=2 total=14
-task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.0-win32-x64.zip" connections=12/16
+task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.1-win32-x64.zip" connections=12/16
 task t_1a2b3c4d5e6f7a80 state=completed progress=100% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="design-critique-notes.pdf" connections=0/0
 ```
 
@@ -239,7 +239,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 A task list receipt:
 
 ```text
-kernel state=running version=0.3.0 pid=4212
+kernel state=running version=0.3.1 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -256,7 +256,7 @@ range 0..300 of 1907
 
 ## Kernel intelligence
 
-The Rust kernel (`rdm-kernel` 0.3.0, protocol 2) is a resident child process; it
+The Rust kernel (`rdm-kernel` 0.3.1, protocol 2) is a resident child process; it
 does not listen on a port, starts lazily and stays warm.
 
 * **Server facts** — manual redirect chain (up to 8 hops), proven range support
@@ -323,8 +323,9 @@ the stage/version record is
 Release notes live in [CHANGELOG.en.md](CHANGELOG.en.md) with one section per tag;
 the same change must update both the version and this changelog. From 0.2.2 the
 kernel and plugin package share one version number (currently
-`0.3.0`, protocol 2); this release merges the workbench/search
-work and the multi-source scheduling pass. Historical recordings keep the strings
+`0.3.1`, protocol 2); 0.3.0 merged the workbench/search work and the
+multi-source scheduling pass, and 0.3.1 fixes the client activation failure
+that took the whole harness page down. Historical recordings keep the strings
 their binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2
 builds = `1.2.0`).
 

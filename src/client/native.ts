@@ -21,6 +21,7 @@
 import React from 'react'
 import { Icon } from './icon'
 import { makeSessionTabBody, makeSessionTabTitle } from './session-tab'
+import { optionalService } from './services'
 import type { ClientContext, SidebarRightService, SidebarTabRegistry, TFunction } from './types'
 
 /** Native tab implementation id (unique across every registration). */
@@ -40,23 +41,17 @@ export interface NativeSidebarDeps {
 
 /** Resolve the native tab registry from the plugin context (direct or via `get`). */
 function registryOf(ctx: ClientContext): SidebarTabRegistry | undefined {
-  const direct = ctx.sidebarRightTabs
+  // `ctx.sidebarRightTabs` throws for a service outside `inject`; the optional
+  // reader goes through `ctx.get` and treats a missing service as absent.
+  const direct = optionalService<SidebarTabRegistry>(ctx, 'sidebarRightTabs')
   if (direct !== undefined && typeof direct.register === 'function') return direct
-  if (typeof ctx.get === 'function') {
-    const viaGet = ctx.get('sidebarRightTabs') as SidebarTabRegistry | undefined
-    if (viaGet !== undefined && typeof viaGet.register === 'function') return viaGet
-  }
   return undefined
 }
 
 /** Resolve the sidebar navigation controller. */
 function controllerOf(ctx: ClientContext): SidebarRightService | undefined {
-  const direct = ctx.sidebarRight
+  const direct = optionalService<SidebarRightService>(ctx, 'sidebarRight')
   if (direct !== undefined && typeof direct.openResource === 'function') return direct
-  if (typeof ctx.get === 'function') {
-    const viaGet = ctx.get('sidebarRight') as SidebarRightService | undefined
-    if (viaGet !== undefined && typeof viaGet.openResource === 'function') return viaGet
-  }
   return undefined
 }
 
@@ -191,17 +186,23 @@ export function registerNativeSidebar(ctx: ClientContext, deps: NativeSidebarDep
   }
 
   // Wait for the registry service when the context supports cordis injection.
+  let seatRequested = false
   if (typeof ctx.inject === 'function') {
     try {
       const seat = ctx.inject(['sidebarRightTabs'], (injected) => {
         const tabs = injected.get('sidebarRightTabs') as SidebarTabRegistry | undefined
         if (tabs !== undefined && typeof tabs.register === 'function') installOnce(tabs)
       })
+      // A seat exists even when the callback has not run yet: the sidebar
+      // package may provide the registry after this plugin activates, so the
+      // install happens later and silence here is correct.
+      seatRequested = true
       if (seat !== undefined && typeof seat.dispose === 'function' && typeof ctx.effect === 'function') {
         ctx.effect(() => () => seat.dispose?.(), 'dsh-rdm: native sidebar seat')
       }
       if (installed) return
     } catch (error) {
+      seatRequested = false
       console.warn('[dsh-rdm] waiting for the right-sidebar registry failed:', error)
     }
   }
@@ -211,7 +212,12 @@ export function registerNativeSidebar(ctx: ClientContext, deps: NativeSidebarDep
     installOnce(immediate)
     return
   }
-  // Last chance: the service may have been present on the raw context.
+  // A requested seat installs the tab as soon as the service appears; only a
+  // context without cordis injection is genuinely unable to wait for it.
+  if (seatRequested) {
+    console.debug('[dsh-rdm] native right-sidebar tab waits for "sidebarRightTabs" to mount')
+    return
+  }
   console.warn(
     '[dsh-rdm] native right-sidebar tab not registered: add "@deepseek-ai/dsh-client-ui-sidebar-right" ' +
       'to dsh.client.inject in package.json (the left review page is unaffected).',

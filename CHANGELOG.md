@@ -9,9 +9,30 @@
 `node scripts/check-release.mjs` 会检查 package/kernel 版本一致性和对应章节是否存在。
 
 从 **0.2.2** 起，常驻内核与插件包共用同一版本号。当前合并树为
-**0.3.0**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
-ready/initialize/stats 帧都报告 `0.3.0`。历史录制保留二进制实际写入的
+**0.3.1**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
+ready/initialize/stats 帧都报告 `0.3.1`。历史录制保留二进制实际写入的
 版本串（0.2.1 内核 = `1.1.0`；版本统一前的 0.2.2 构建 = `1.2.0`）。
+
+## [0.3.1] — 2026-11-10
+
+### 修复
+- **严重：安装本插件后 DSH Web UI 直接打不开（`Failed to load plugins`）。**
+  0.3.0 的客户端半边在 `apply` 里读 `ctx.layout`，却没有把 `layout` 声明进
+  `inject`。Cordis 对未注入的服务访问是抛错
+  （`cannot get property "layout" without inject`），`apply` 同步抛异常 →
+  该客户端条目的 fiber 停在 `failed`；而 DSH 的启动审计把「任一客户端条目未
+  active」当成致命错误，于是整页被替换成 `Failed to load plugins / dsh-rdm`。
+  换句话说：只要装了 0.3.0，那个 dsh 的浏览器 UI 就起不来（已用无头浏览器
+  复现并验证修复）。
+  修复内容：可选服务一律通过 `ctx.get(name)`（Cordis 的反射读取，不受
+  `inject` 约束）读取，见新增的 `src/client/services.ts`；`apply` 增加兜底
+  帧，任何可选面板注册失败只写一条 warning，绝不再让 fiber 失败；原生右侧
+  边栏标签的 `sidebarRightTabs`/`sidebarRight` 读取同样改为安全读取，并且
+  等待座位的正常路径不再误报「未注册」；弹窗的「打开面板」改用真实的
+  `layout.selectPanel`（`layout.navigation` 是 shell 内部的 AbortController，
+  不是导航 API）。
+- 新增 `tests/client-activation.test.mjs`：用 Cordis 语义的严格上下文（未注入
+  的属性读取直接抛错）加载 `lib/client.js`，锁定上述三种失败模式。
 
 ## [0.3.0] — 2026-11-10
 

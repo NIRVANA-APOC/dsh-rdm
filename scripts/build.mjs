@@ -8,6 +8,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// The host bundle's version hint must name the manifest version, so the value
+// is injected at build time instead of being hard-coded in `src/version.ts`.
+const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
 const libDir = path.join(root, 'lib')
 // `--host-only` / `--client-only` let two owners build their halves in
 // parallel without deleting the other half's artifact (0.2.0 workstreams).
@@ -30,6 +33,7 @@ await build({
   format: 'esm',
   target: 'node20',
   external: ['node:*'],
+  define: { __DSH_RDM_VERSION__: JSON.stringify(String(pkg.version)) },
   alias: {
     // The host bundle is self-contained: a linked local plugin cannot resolve
     // Harness packages from the profile, so the config schema library is

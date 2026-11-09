@@ -40,6 +40,7 @@ import {
   renderTasksListReceipt,
   renderWaitReceipt,
   sessionIdFromExec,
+  PLUGIN_VERSION,
 } from '../lib/index.js'
 
 let passed = 0
@@ -273,8 +274,9 @@ check('protocol mismatch error is actionable', () => {
   assert.match(message, /protocol 1/)
   assert.match(message, /requires protocol 2/)
   assert.match(message, /build-kernel/)
-  // 0.3.0 versioning: the plugin/kernel versions named in the hint are current.
-  assert.match(message, /dsh-rdm 0\.3\.0/)
+  // Versioning: the plugin version named in the hint is the manifest's, not a
+  // literal that drifts on every bump.
+  assert.match(message, new RegExp(`dsh-rdm ${PLUGIN_VERSION.replace(/\./g, '\\.')}`))
   assert.match(message, /matching kernel/)
 })
 
