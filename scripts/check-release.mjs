@@ -30,8 +30,8 @@ try {
 if (changelog) {
   const heading = new RegExp(`^## \\[${packageVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`, 'm')
   if (!heading.test(changelog)) problems.push(`CHANGELOG.md has no "## [${packageVersion}]" section`)
-  if (!/^#\s+Changelog/m.test(changelog)) problems.push('CHANGELOG.md has no "# Changelog" heading')
-  if (!/Release\/tag policy/i.test(changelog)) problems.push('CHANGELOG.md has no release/tag policy note')
+  if (!/^#\s+(Changelog|更新日志)/m.test(changelog)) problems.push('CHANGELOG.md has no "# Changelog" / "# 更新日志" heading')
+  if (!/(Release\/tag policy|发布\/tag 政策)/i.test(changelog)) problems.push('CHANGELOG.md has no release/tag policy note')
 }
 
 if (problems.length > 0) {

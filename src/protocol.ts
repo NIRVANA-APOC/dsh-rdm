@@ -2,7 +2,7 @@
  * TypeScript mirrors of `dsh-rdm/PROTOCOL.md` — the NDJSON contract between
  * this plugin (parent) and the resident `rdm-kernel` child process.
  *
- * Protocol 2 (kernel 0.3.0-alpha.1) is the agent-native revision: tasks carry session
+ * Protocol 2 (kernel 0.3.0-alpha.2) is the agent-native revision: tasks carry session
  * attribution and live telemetry windows, `probe`/`get` return a full
  * `ServerFacts` / `TaskDetail`, and the hot path (`list` / notifications) stays
  * a flat, cheap `TaskView`.

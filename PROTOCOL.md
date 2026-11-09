@@ -33,7 +33,7 @@ throughput with saturation backoff and tail freeze, tail chunks retry fast, and
 an unknown RPC method returns the stable `unsupported_method` error. See
 [0.2.2 additive changes](#022-additive-changes).
 
-**0.3.0-alpha.1** keeps the protocol-2 envelope: every method, field and
+**0.3.0-alpha.2** keeps the protocol-2 envelope: every method, field and
 notification keeps its shape, and the kernel identity is unified with the plugin
 package. The multi-source pass is additive/defaulted: `start` accepts candidate
 `sources[]` plus `sourcePolicy`/`sourceRaceBytes`/`discoverSources`/`metalinkFile`,
@@ -931,8 +931,8 @@ Protocol stays **2** and the envelope is unchanged; release 0.2.2 (kernel
 
 ## 0.3.0 additive changes
 
-Protocol stays **2**; release **0.3.0-alpha.1** (kernel identity
-`0.3.0-alpha.1`) adds multi-source scheduling with defaulted fields, so an older
+Protocol stays **2**; release **0.3.0-alpha.2** (kernel identity
+`0.3.0-alpha.2`) adds multi-source scheduling with defaulted fields, so an older
 task record still loads and a single-URL request is unchanged.
 
 1. **`start` request fields** (all optional):

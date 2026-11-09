@@ -1,14 +1,23 @@
-# dsh-rdm 0.3.0 — verification report
+# dsh-rdm 0.3.0-alpha.2 — verification report
 
 Status: **PASS** — all nine brief items, the active-download popup, host route v3,
 the session/workspace catalog, user-action notices, the desktop open action and
 `rdm_search` pass. No HIGH or MEDIUM defect remains; the verifier's five LOW
 findings were fixed in this build (see §6).
 
+> **0.3.0-alpha.2 note:** this release only localizes `README.md`/`CHANGELOG.md`
+> and bumps the package/kernel identity; protocol and behavior are unchanged
+> from `0.3.0-alpha.1`. The rebuilt win32-x64 kernel is 5,349,376 B, SHA-256
+> `17FDD85D71B5801B1248622A3E08C1C6FC940BD14498298884A9A5A1E7CDD6A2`.
+> Gates re-run after the bump: cargo **157/157**, Python e2e **205/205**, extra
+> **56/56**, claims **15/15**, tools **56**, host-api **21/21**, kernel-e2e
+> **PASS**, fixture **64/64**, `verify-kernels --host --run` **PASS**,
+> `check-release` **PASS**, `tsc --noEmit` clean.
+
 - Contract: [`.design/0.3.0-ui-spec.md`](../.design/0.3.0-ui-spec.md)
-- Kernel protocol: [PROTOCOL.md](../PROTOCOL.md) v2, kernel `0.3.0` (identity-only
-  bump; wire format unchanged from 0.2.2)
-- Package: `dsh-rdm` 0.3.0
+- Kernel protocol: [PROTOCOL.md](../PROTOCOL.md) v2, kernel `0.3.0-alpha.2`
+  (identity bump; wire format unchanged from 0.2.2)
+- Package: `dsh-rdm` 0.3.0-alpha.2
 - Verifier: independent `verifier` teammate; implementation Lead; verification
   report and scripts under [`.design/verify-03/`](../.design/verify-03/).
 

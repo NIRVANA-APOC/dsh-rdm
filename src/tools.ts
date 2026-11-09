@@ -659,7 +659,7 @@ const ERROR_HINTS: Record<string, string> = {
   kernel_stopped: 'The plugin is unloading/reloading; retry after it registers rdm_* again.',
   kernel_not_running: 'The kernel child is not ready yet; retry in a moment.',
   protocol_mismatch:
-    'This plugin needs a protocol-2 (kernel 0.3.0-alpha.1) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
+    'This plugin needs a protocol-2 (kernel 0.3.0-alpha.2) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
   timeout:
     'The kernel is still busy. Check progress with rdm_tasks (taskId=...) and rdm_wait instead of resubmitting the same download.',
   cancelled: 'The call was cancelled; nothing else was changed.',
@@ -675,7 +675,7 @@ const ERROR_HINTS: Record<string, string> = {
   io: 'Local filesystem error; check that the destination directory exists and is writable.',
   unsupported: 'The kernel cannot honor this request; simplify the parameters (for example drop singleStream/insecure).',
   unsupported_method:
-    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.3.0-alpha.1 and retry.',
+    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.3.0-alpha.2 and retry.',
   internal: 'Unexpected kernel error; retry once, then report it to the user with the kernel stderr tail.',
 }
 
@@ -774,7 +774,7 @@ function waitErrorHint(error: ToolError): string {
 function historyErrorHint(taskId: string, error: ToolError): string {
   if (error.code === 'not_found') return 'rdm_tasks without taskId lists the existing ids.'
   if (error.code === 'unsupported_method') {
-    return 'upgrade the kernel binary to 0.3.0-alpha.1 (dsh-rdm 0.3.0-alpha.1+); the running build does not implement rdm_history.'
+    return 'upgrade the kernel binary to 0.3.0-alpha.2 (dsh-rdm 0.3.0-alpha.2+); the running build does not implement rdm_history.'
   }
   return `retry rdm_history taskId=${taskId}; if it persists, report the kernel error to the user.`
 }
