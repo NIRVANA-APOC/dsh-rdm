@@ -142,3 +142,25 @@ English counts, stale composer comments) are fixed in the same build.
 - [`tests/tools-receipts.test.mjs`](../tests/tools-receipts.test.mjs) — 49 checks.
 - [`tests/host-api.test.mjs`](../tests/host-api.test.mjs) — 21 tests.
 - Committed screenshots: `assets/screenshots/review-*.png`.
+
+## 0.3.0-alpha.1 — multi-source acceptance (2026-11-09)
+
+Merged with the 0.3.0 workbench/search pass. Gate run on the final merged tree
+(Windows 11 x64, rustc 1.99.1, Node 24.19.0):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | cargo test --all-targets | **157/157** (lib 78, engine 15, protocol 5, unit 17, v022 13, v030 21, multi_source 8) |
+| 2 | python tests/verify_e2e.py | **205/205** |
+| 3 | python tests/verify_extra.py / verify_claims.py | **56/56** / **15/15** |
+| 4 | node tests/kernel-e2e.mjs (incl. multi-source select) | **PASS** |
+| 5 | node tests/tools-receipts.test.mjs / host-api.test.mjs | **PASS 56 checks** / **21/21** |
+| 6 | node scripts/verify-fixture.mjs / verify-kernels.mjs --host --run | **64/64** / **PASS** |
+| 7 | node scripts/check-release.mjs | **PASS** (package = kernel = 0.3.0-alpha.1) |
+| 8 | npx tsc --noEmit -p tsconfig.json | **clean** |
+
+Multi-source behavior is covered by the kernel `multi_source` suite (explicit
+selection, failover, unproven-identity refusal, two-source race, slow-source
+exclusion, hedged first range, Metalink/HTTP Link discovery, `.meta4` resolution
+and SHA-256). A real-network Alpine ISO run measured `select` at **11.4×** the
+single official CDN; see [session_logs/20261109-multisource/README.md](../session_logs/20261109-multisource/README.md).

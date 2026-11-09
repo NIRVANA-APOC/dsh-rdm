@@ -1,18 +1,24 @@
 {
   "meta": {
     "title": "Downloads",
-    "description": "Review agent-started downloads: what was requested, what the server claimed, what the kernel measured and whether the result verified."
+    "description": "Review surface for agent-requested downloads: what was asked, what the server claimed, what the kernel measured and what was verified."
   },
   "page": {
-    "title": "Downloads"
+    "title": "Downloads",
+    "pid": "pid {pid}",
+    "recorderLabel": "Aggregate throughput, last 120 seconds",
+    "recorderNow": "now",
+    "recorderAria": "Aggregate download throughput over the last 120 seconds; current rate {rate}",
+    "recorderNote": "Sampled by this review page. Kernel-reported windows are in each record's evidence drawer."
   },
   "kernel": {
     "ok": "Kernel OK",
     "bad": "Kernel error",
-    "running": "Kernel running",
-    "starting": "Kernel starting",
-    "stopped": "Kernel not running",
-    "checking": "Checking kernel"
+    "running": "Engine running",
+    "starting": "Engine starting",
+    "stopped": "Engine not running",
+    "checking": "Checking kernel",
+    "error": "Engine error"
   },
   "composer": {
     "placeholder": "Paste a download link",
@@ -51,26 +57,29 @@
     "total": "Records: {n}"
   },
   "empty": {
-    "global": "No downloads yet",
+    "global": "No downloads recorded yet. Anything an agent fetches with rdm_download appears here, with its evidence.",
     "globalHint": "Files fetched through rdm_download appear here with their evidence.",
     "filtered": "No records match",
     "filteredHint": "Change the filter, or paste a link above to start a download.",
     "session": "No downloads in this session yet."
   },
   "group": {
-    "unattributed": "Unassigned workspace",
+    "unattributed": "Unattributed",
     "unattributedSession": "Unassigned session",
     "sessionFallback": "Session {id}",
-    "records": "Records: {n}",
+    "records": "{n} records",
     "active": "Active: {n}",
-    "live": "live"
+    "live": "live",
+    "session": "Session {id}"
   },
   "session": {
     "title": "Downloads",
-    "unknownScope": "This tab is not bound to a session yet."
+    "unknownScope": "This tab is not attached to a session yet.",
+    "verifiedCount": "{n} verified",
+    "riskCount": "{n} at risk"
   },
   "guide": {
-    "description": "Review this session's downloads"
+    "description": "Reviews this session's downloads"
   },
   "popup": {
     "title": "Downloading: {n}",
@@ -88,7 +97,10 @@
     "paused": "{n} paused"
   },
   "rates": {
-    "idle": "Idle"
+    "idle": "Idle",
+    "now": "now",
+    "w5": "5s",
+    "w30": "30s"
   },
   "route": {
     "hint": "The plugin's host half may still be starting; this page retries every second."
@@ -96,9 +108,9 @@
   "record": {
     "etaLabel": "ETA",
     "etaConfidence": "ETA confidence: {level}",
-    "pulse": "{name} throughput",
-    "sizeUnknown": "Size unknown",
-    "reveal": "Open in sidebar",
+    "pulse": "Throughput pulse for {name}",
+    "sizeUnknown": "size unknown",
+    "reveal": "Reveal file",
     "copyPath": "Copy path",
     "copyHash": "Copy hash",
     "copyId": "Copy download id",
@@ -129,16 +141,18 @@
     "openedFile": "Opened {name}",
     "openedFolder": "Opened the containing folder",
     "stop": "Stop",
-    "confirmStop": "Confirm stop"
+    "confirmStop": "Confirm stop",
+    "toggle": "{name}, {status}. Show the evidence record.",
+    "stopRequested": "Stopping {name}"
   },
   "common": {
-    "copyFailed": "copy failed",
+    "copyFailed": "Could not copy",
     "dismiss": "Dismiss",
     "cancel": "Cancel",
     "delete": "Delete"
   },
   "drawer": {
-    "regionLabel": "Evidence for {name}",
+    "regionLabel": "Evidence record for {name}",
     "loading": "Loading the record…",
     "retry": "Retry",
     "request": "Request",
@@ -151,7 +165,7 @@
     "risk": "Risk",
     "diagnosis": "Diagnosis",
     "events": "Events",
-    "notRecorded": "This download did not record that block.",
+    "notRecorded": "Not recorded for this download.",
     "none": "None",
     "notCompared": "Not compared",
     "noWarnings": "The server raised no warnings.",
@@ -159,10 +173,12 @@
     "noMessage": "No detail",
     "eventsLoading": "Loading events…",
     "eventsEmpty": "No events recorded.",
-    "sampledNote": "These four rates are the windows the kernel reports."
+    "sampledNote": "The waveform is sampled by this review page (one point per second). The four rates above are kernel-reported windows.",
+    "sources": "Sources",
+    "mirrorMore": "+{n} more"
   },
   "facts": {
-    "url": "Request URL",
+    "url": "Requested URL",
     "finalUrl": "Final URL",
     "redirects": "Redirects",
     "session": "Session",
@@ -172,7 +188,7 @@
     "host": "Host",
     "contentType": "Content type",
     "contentEncoding": "Content encoding",
-    "fileNameSource": "File-name source",
+    "fileNameSource": "File name from",
     "signedUrl": "Signed URL",
     "tls": "TLS",
     "rateLimit": "Rate limit",
@@ -184,10 +200,10 @@
     "finalizeMs": "Finalize",
     "started": "Started",
     "finished": "Finished",
-    "window1": "1 s rate",
-    "window5": "5 s rate",
-    "window30": "30 s rate",
-    "window300": "300 s rate",
+    "window1": "1s rate",
+    "window5": "5s rate",
+    "window30": "30s rate",
+    "window300": "300s rate",
     "peak": "Peak rate",
     "average": "Average rate",
     "stalled": "Stalled for",
@@ -199,11 +215,11 @@
     "verdict": "Verdict",
     "verified": "Verified",
     "mismatch": "Mismatch",
-    "serverChecksum": "Server checksum",
+    "serverChecksum": "Server checksums",
     "dir": "Directory",
     "path": "Saved file",
-    "part": "Part file",
-    "resumeStateFile": "Resume-state file",
+    "part": "Partial file",
+    "resumeStateFile": "Resume state file",
     "size": "Size",
     "downloaded": "Downloaded",
     "resumeSafety": "Resume safety",
@@ -215,7 +231,7 @@
     "resumedChunks": "Resumed chunks",
     "resumedBytes": "Resumed bytes",
     "validatorsMatched": "Validators matched",
-    "workers": "Active workers",
+    "workers": "Workers now",
     "workersTarget": "Target workers",
     "workersRequested": "Requested workers",
     "workersMax": "Worker ceiling",
@@ -223,7 +239,7 @@
     "chunkSize": "Chunk size",
     "retries": "Retries",
     "signedState": "Signed URL state",
-    "signedExpires": "Signed URL remaining",
+    "signedExpires": "Signed URL expires in",
     "tlsState": "TLS state",
     "tlsNotAfter": "TLS valid until",
     "tlsIssuer": "TLS issuer",
@@ -235,39 +251,45 @@
     "originMedian": "median",
     "originBest": "best",
     "originLastError": "last error",
-    "remaining": "remaining {n}",
-    "limit": "limit {n}",
-    "retryAfter": "retry after {n}s"
+    "remaining": "{n} remaining",
+    "limit": "{n} limit",
+    "retryAfter": "retry after {n}s",
+    "sourcePolicy": "Source policy",
+    "selectedSource": "Selected source",
+    "sourceSwitches": "Source switches",
+    "sourceCount": "Sources",
+    "sourceSelected": "selected",
+    "mirrors": "Mirrors"
   },
   "chips": {
-    "range": "Ranges",
-    "noRange": "No ranges",
-    "resumeStrong": "Resume safe",
-    "resumeWeak": "Resume weak",
-    "resumeNone": "No resume",
-    "signed": "Signed {time}",
-    "signedExpired": "Signature expired",
-    "tls": "TLS {time}",
-    "tlsExpired": "TLS expired",
-    "verify": "SHA-256"
+    "range": "range",
+    "noRange": "no range",
+    "resumeStrong": "resume strong",
+    "resumeWeak": "resume weak",
+    "resumeNone": "resume unsafe",
+    "signed": "signed {time}",
+    "signedExpired": "signed expired",
+    "tls": "tls {time}",
+    "tlsExpired": "tls expired",
+    "verify": "sha256"
   },
   "seal": {
     "verified": "Verified, SHA-256 {hash}",
-    "mismatch": "Checksum mismatch, SHA-256 {hash}"
+    "mismatch": "Mismatch, SHA-256 {hash}"
   },
   "risk": {
-    "summary": "{n} records need a look",
-    "more": "{n} more",
-    "warnLabel": "Needs a look",
-    "errorLabel": "Failed",
-    "failedCause": "Download failed",
-    "mismatchCause": "Checksum mismatch",
-    "signedExpiringReason": "The signed URL expires in {time}.",
-    "signedExpiredReason": "The signed URL has expired.",
-    "tlsExpiringReason": "The TLS certificate expires in {time}.",
-    "tlsExpiredReason": "The TLS certificate has expired.",
-    "noRangeReason": "The server does not support byte ranges, so this transfer cannot resume.",
-    "regionLabel": "Records needing a look"
+    "summary": "{n} records need review",
+    "more": "+{n} more",
+    "warnLabel": "needs review",
+    "errorLabel": "failed",
+    "failedCause": "the download failed",
+    "mismatchCause": "the checksum did not match",
+    "signedExpiringReason": "the signed URL expires in {time}.",
+    "signedExpiredReason": "the signed URL has expired.",
+    "tlsExpiringReason": "the TLS certificate expires in {time}.",
+    "tlsExpiredReason": "the TLS certificate has expired.",
+    "noRangeReason": "the server does not support byte ranges, so this transfer cannot resume.",
+    "regionLabel": "Review queue"
   },
   "confidence": {
     "high": "high",
@@ -276,17 +298,17 @@
     "unknown": "unknown"
   },
   "trend": {
-    "rising": "Rising",
-    "steady": "Steady",
-    "falling": "Falling",
-    "stalled": "Stalled",
-    "unknown": "Unknown"
+    "rising": "rising",
+    "steady": "steady",
+    "falling": "falling",
+    "stalled": "stalled",
+    "unknown": "unknown"
   },
   "resume": {
     "safety": {
-      "strong": "Strong",
-      "weak": "Weak",
-      "none": "None"
+      "strong": "strong",
+      "weak": "weak",
+      "none": "unsafe"
     }
   },
   "status": {
@@ -301,7 +323,7 @@
   },
   "warning": {
     "no-range-support": "The server does not support byte ranges.",
-    "no-validators": "The server provides no validators.",
+    "no-validators": "The server sent no validators.",
     "weak-validators": "Only weak validators are available.",
     "unknown-size": "The total size is unknown.",
     "signed-url-expiring": "The signed URL is about to expire.",
@@ -309,33 +331,52 @@
     "tls-expiring": "The TLS certificate is about to expire.",
     "tls-expired": "The TLS certificate has expired.",
     "rate-limited": "The server is rate-limiting this client.",
-    "head-failed": "HEAD probing failed; the facts come from a ranged GET.",
+    "head-failed": "The HEAD probe failed; facts come from a ranged GET.",
     "redirected": "The request was redirected.",
-    "content-encoding": "The response uses content encoding."
+    "content-encoding": "The response is content-encoded."
   },
   "error": {
     "code": {
       "invalid_request": "Invalid request",
       "bad_request": "Invalid request",
-      "not_found": "Not found",
-      "conflict": "The task does not allow that action right now",
+      "not_found": "Task not found",
+      "conflict": "Action not allowed in the current state",
       "http_status": "The server returned an HTTP error",
       "network": "Network error",
       "offline": "Network error",
-      "timeout": "Request timed out",
-      "invalid_response": "The plugin route returned an invalid response",
-      "remote_changed": "The remote file changed during the download",
+      "timeout": "Timed out",
+      "invalid_response": "Invalid response from the plugin route",
+      "remote_changed": "The remote file changed during download",
       "checksum_mismatch": "Checksum mismatch",
       "io": "Local file error",
       "cancelled": "Cancelled",
-      "unsupported": "Unsupported",
+      "unsupported": "Not supported",
       "internal": "Kernel internal error",
-      "kernel_not_running": "The kernel is not running",
+      "kernel_not_running": "The kernel is not running yet",
       "kernel_exited": "The kernel exited",
-      "kernel_missing": "The kernel executable is missing",
+      "kernel_missing": "The kernel binary is missing",
       "protocol_mismatch": "Kernel protocol mismatch",
       "open_failed": "Could not open the file",
       "unknown": "Unknown error"
+    }
+  },
+  "source": {
+    "policy": {
+      "single": "single",
+      "select": "select",
+      "failover": "failover",
+      "hedge": "hedge",
+      "race": "race"
+    },
+    "state": {
+      "active": "active",
+      "standby": "standby",
+      "bad": "bad"
+    },
+    "role": {
+      "primary": "primary",
+      "alternate": "alternate",
+      "discovered": "discovered"
     }
   }
 }

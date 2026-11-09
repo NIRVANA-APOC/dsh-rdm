@@ -1,10 +1,15 @@
 {
   "meta": {
     "title": "下载",
-    "description": "审阅智能体发起的下载：请求了什么、服务器声明了什么、内核测量了什么、校验结果是什么。"
+    "description": "智能体发起的下载的审阅界面：请求了什么、服务器声明了什么、内核测量了什么、校验结果是什么。"
   },
   "page": {
-    "title": "下载"
+    "title": "下载",
+    "pid": "pid {pid}",
+    "recorderLabel": "最近 120 秒的总吞吐",
+    "recorderNow": "现在",
+    "recorderAria": "最近 120 秒的下载总吞吐，当前速率 {rate}",
+    "recorderNote": "本页自行采样绘制。内核上报的时间窗口在各条记录的证据抽屉里。"
   },
   "kernel": {
     "ok": "内核正常",
@@ -12,7 +17,8 @@
     "running": "内核运行中",
     "starting": "内核启动中",
     "stopped": "内核未运行",
-    "checking": "内核检测中"
+    "checking": "内核检测中",
+    "error": "内核错误"
   },
   "composer": {
     "placeholder": "粘贴下载链接",
@@ -51,23 +57,26 @@
     "total": "{n} 条记录"
   },
   "empty": {
-    "global": "还没有下载记录",
+    "global": "还没有下载记录。智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
     "globalHint": "智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
     "filtered": "没有符合条件的记录",
     "filteredHint": "调整筛选，或在上方粘贴链接开始新的下载。",
     "session": "这个会话还没有下载。"
   },
   "group": {
-    "unattributed": "未归属工作区",
+    "unattributed": "未归属会话",
     "unattributedSession": "未关联会话",
     "sessionFallback": "会话 {id}",
     "records": "{n} 条记录",
     "active": "{n} 个进行中",
-    "live": "活跃"
+    "live": "活跃",
+    "session": "会话 {id}"
   },
   "session": {
     "title": "下载",
-    "unknownScope": "此标签页尚未绑定到会话。"
+    "unknownScope": "此标签页尚未绑定到会话。",
+    "verifiedCount": "{n} 个已校验",
+    "riskCount": "{n} 个有风险"
   },
   "guide": {
     "description": "查看本会话的下载"
@@ -88,7 +97,10 @@
     "paused": "{n} 个已暂停"
   },
   "rates": {
-    "idle": "空闲"
+    "idle": "空闲",
+    "now": "现在",
+    "w5": "5 秒",
+    "w30": "30 秒"
   },
   "route": {
     "hint": "插件的 Host 半边可能仍在启动；此页面每秒自动重试。"
@@ -129,7 +141,9 @@
     "openedFile": "已打开 {name}",
     "openedFolder": "已打开所在目录",
     "stop": "停止",
-    "confirmStop": "确认停止"
+    "confirmStop": "确认停止",
+    "toggle": "{name}，{status}。展开证据记录。",
+    "stopRequested": "正在停止 {name}"
   },
   "common": {
     "copyFailed": "复制失败",
@@ -159,7 +173,9 @@
     "noMessage": "无详情",
     "eventsLoading": "正在加载事件…",
     "eventsEmpty": "没有记录到事件。",
-    "sampledNote": "上面的四个速率是内核上报的时间窗口。"
+    "sampledNote": "曲线由本审阅页采样（每秒一个点）；上面的四个速率是内核上报的时间窗口。",
+    "sources": "源",
+    "mirrorMore": "另有 {n} 个"
   },
   "facts": {
     "url": "请求地址",
@@ -237,7 +253,13 @@
     "originLastError": "最近错误",
     "remaining": "剩余 {n}",
     "limit": "上限 {n}",
-    "retryAfter": "{n} 秒后重试"
+    "retryAfter": "{n} 秒后重试",
+    "sourcePolicy": "源策略",
+    "selectedSource": "已选源",
+    "sourceSwitches": "源切换次数",
+    "sourceCount": "源数量",
+    "sourceSelected": "已选中",
+    "mirrors": "镜像"
   },
   "chips": {
     "range": "支持范围",
@@ -336,6 +358,25 @@
       "protocol_mismatch": "内核协议不匹配",
       "open_failed": "无法打开文件",
       "unknown": "未知错误"
+    }
+  },
+  "source": {
+    "policy": {
+      "single": "单源",
+      "select": "择优",
+      "failover": "故障转移",
+      "hedge": "对冲",
+      "race": "竞速"
+    },
+    "state": {
+      "active": "活跃",
+      "standby": "备用",
+      "bad": "故障"
+    },
+    "role": {
+      "primary": "主源",
+      "alternate": "候选",
+      "discovered": "发现"
     }
   }
 }

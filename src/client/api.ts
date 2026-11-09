@@ -20,6 +20,7 @@ import type {
   GetValue,
   KernelInfo,
   ListValue,
+  MirrorSource,
   OpenResult,
   OpenTarget,
   RateTrend,
@@ -35,6 +36,7 @@ import type {
   ServerTlsFacts,
   ServerValidators,
   SessionMeta,
+  SourceView,
   StartResult,
   StatsValue,
   TFunction,
@@ -281,6 +283,45 @@ function normalizeError(value: unknown): TaskView['error'] {
   return { code, message: asString(record.message) ?? '' }
 }
 
+/** Kernel-side cap on the per-task source projection (defensive client bound). */
+const MAX_SOURCES = 8
+
+/**
+ * Normalize one per-source row (multi-source downloads). A pre-0.3.0 host omits
+ * `sources` entirely, which becomes an empty array; rows never carry credentials
+ * (the kernel redacts URLs before projecting them).
+ */
+export function normalizeSourceRow(value: unknown): SourceView {
+  const record = asRecord(value) ?? {}
+  return {
+    id: asNumber(record.id) ?? 0,
+    url: asString(record.url) ?? '',
+    host: asString(record.host) ?? '',
+    state: asString(record.state) ?? 'standby',
+    role: asString(record.role) ?? 'alternate',
+    bytes: asNumber(record.bytes) ?? 0,
+    bps: asRate(record.bps),
+    active: record.active === true,
+    lastError: asString(record.lastError),
+  }
+}
+
+/** Normalize the bounded per-source projection. */
+function normalizeSources(value: unknown): SourceView[] {
+  return asArray(value).slice(0, MAX_SOURCES).map(normalizeSourceRow)
+}
+
+/** Normalize one discovered mirror row (Metalink/HTTP). */
+function normalizeMirror(value: unknown): MirrorSource {
+  const record = asRecord(value) ?? {}
+  return {
+    url: asString(record.url) ?? '',
+    priority: asNumber(record.priority),
+    geo: asString(record.geo),
+    source: asString(record.source) ?? 'unknown',
+  }
+}
+
 /** Normalize one task record; every unknown field becomes null, never absent. */
 export function normalizeTask(value: unknown): TaskView {
   const record = asRecord(value) ?? {}
@@ -336,6 +377,10 @@ export function normalizeTask(value: unknown): TaskView {
     elapsedMs: asNumber(record.elapsedMs),
     signedUrlExpiresAt: asNumber(record.signedUrlExpiresAt),
     tlsNotAfter: asNumber(record.tlsNotAfter),
+    sourcePolicy: asString(record.sourcePolicy),
+    selectedSource: asNumber(record.selectedSource),
+    sourceSwitches: asNumber(record.sourceSwitches),
+    sources: normalizeSources(record.sources),
   }
 }
 
@@ -699,6 +744,7 @@ function normalizeServer(value: unknown): ServerFacts | null {
     warnings: asArray(record.warnings).filter((warning): warning is string => typeof warning === 'string'),
     recommendation,
     origin,
+    mirrors: asArray(record.mirrors).slice(0, MAX_SOURCES).map(normalizeMirror),
   }
 }
 
@@ -777,6 +823,10 @@ function normalizeDetail(value: unknown): TaskDetail | null {
     resumeState,
     timing,
     diagnosis,
+    sourcePolicy: asString(record.sourcePolicy),
+    selectedSource: asNumber(record.selectedSource),
+    sourceSwitches: asNumber(record.sourceSwitches),
+    sources: normalizeSources(record.sources),
   }
 }
 

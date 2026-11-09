@@ -62,6 +62,8 @@ export {
   renderTaskRecord,
   renderTasksListReceipt,
   renderWaitReceipt,
+  renderSourceLine,
+  renderSourceRow,
   sessionIdFromExec,
 } from './tools'
 export { handleRdmApiRequest, registerRdmHostApi } from './host-api'
@@ -69,10 +71,13 @@ export { SessionCatalog, createSessionCatalog, resolveTaskOpenPath } from './ses
 export {
   KernelError,
   normalizeAggregate,
+  normalizeRequestSpec,
   normalizeServerFacts,
+  normalizeSourcePolicy,
   normalizeTaskDetail,
   normalizeTaskHistory,
   normalizeTaskView,
+  normalizeSources,
   protocolMismatchMessage,
 } from './kernel-client'
 export { PROTOCOL_VERSION } from './protocol'

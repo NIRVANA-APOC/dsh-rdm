@@ -196,17 +196,53 @@ pub async fn run(task: Arc<Task>, origin: Option<OriginFacts>) -> EngineOutcome 
 }
 async fn run_inner(task: &Arc<Task>, spec: &Spec, origin: Option<OriginFacts>) -> EngineResult<Option<String>> {
     let control = task.control();
-    let client = http::client_for_spec(spec)?;
-    let probe_client = http::probe_client_for_spec(spec)?;
     task.set_status(crate::protocol::Status::Probing);
-    task.add_event("probe", Some(format!("probing {}", spec.url)), None, None, None);
+    // A `.meta4` request is metadata, not the object: resolve it to the chosen
+    // file's HTTP(S) mirror list (and SHA-256) before probing or transferring.
+    let mut resolved = spec.clone();
+    if let Some(metalink) = resolve_metalink(spec).await? {
+        task.add_event("source", Some(format!("metalink resolved {} to {} source(s)", crate::protocol::redact_url(&spec.url), metalink.sources.len())), None, None, None);
+        task.replace_spec(metalink.clone());
+        resolved = metalink;
+    }
+    let spec = &resolved;
+    task.add_event("probe", Some(format!("probing {} source(s)", spec.sources.len().max(1))), None, None, None);
     if let Some(error) = control_error(&control) {
         return Err(error);
     }
-    let outcome = probe::probe_spec(&probe_client, spec, origin).await?;
-    let meta = outcome.meta;
-    task.set_probe_ms(outcome.facts.timing.probe_ms);
-    task.set_server(&outcome.facts);
+    let candidates = probe_candidates(spec, origin).await?;
+    let pool = Arc::new(crate::source::SourcePool::new(spec, candidates)?);
+    let facts = pool.selected_facts().ok_or_else(|| EngineError::network("no source selected".to_string()))?;
+    let meta = facts.meta();
+    task.set_probe_ms(facts.timing.probe_ms);
+    task.set_server(&facts);
+    task.set_sources(pool.snapshot(), Some(pool.active_index()), pool.policy().as_str(), pool.switches());
+    task.add_event(
+        "source",
+        Some(format!(
+            "{} source(s); selected {} ({}) policy={} switches=0",
+            pool.len(),
+            facts.host,
+            crate::protocol::redact_url(&facts.url),
+            pool.policy().as_str()
+        )),
+        None,
+        None,
+        None,
+    );
+    if pool.policy() != spec.source_policy {
+        task.add_event(
+            "source",
+            Some(format!(
+                "source policy {} downgraded to {}: candidates do not share a strong content identity",
+                spec.source_policy.as_str(),
+                pool.policy().as_str()
+            )),
+            None,
+            None,
+            None,
+        );
+    }
     task.add_event(
         "probe",
         Some(format!("{} bytes, ranges={}, type={}", meta.total_bytes.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()), meta.supports_ranges, meta.content_type.as_deref().unwrap_or("unknown"),)),
@@ -224,9 +260,141 @@ async fn run_inner(task: &Arc<Task>, spec: &Spec, origin: Option<OriginFacts>) -
         return Err(error);
     }
     match meta.total_bytes {
-        Some(total) if meta.supports_ranges && !spec.single_stream => chunked::run(task, spec, &client, &meta, total, &target, &part, &state_path).await,
-        total => single::run(task, spec, &client, &meta, total, &target, &part, &state_path).await,
+        Some(total) if meta.supports_ranges && !spec.single_stream => chunked::run(task, spec, &pool, total, &target, &part, &state_path).await,
+        total => single::run(task, spec, &pool, total, &target, &part, &state_path).await,
     }
+}
+
+/// Probe every candidate source concurrently (bounded by `MAX_SOURCES`),
+/// then probe Metalink/HTTP mirrors discovered on the responses. Returns the
+/// successful candidates in caller order. A failed primary does not fail the
+/// task while another candidate succeeds.
+async fn probe_candidates(spec: &Spec, origin: Option<OriginFacts>) -> EngineResult<Vec<(crate::protocol::SourceInput, crate::protocol::ServerFacts)>> {
+    use crate::protocol::SourceInput;
+    let primary_only = spec.source_policy == crate::protocol::SourcePolicy::Single;
+    let inputs: Vec<SourceInput> = if primary_only { spec.sources.iter().take(1).cloned().collect() } else { spec.sources.clone() };
+    let sample_bytes = if primary_only { 64 } else { probe::MULTI_PROBE_SAMPLE_BYTES };
+    let mut results = probe_batch(spec, inputs, origin, sample_bytes).await;
+    if results.is_empty() {
+        return Err(EngineError::network("all source probes failed".to_string()));
+    }
+    if spec.discover_sources && !primary_only {
+        let mut known: Vec<String> = results.iter().map(|(input, _)| input.url.clone()).collect();
+        let mut discovered: Vec<SourceInput> = Vec::new();
+        for (_, facts) in &results {
+            for mirror in &facts.mirrors {
+                if results.len() + discovered.len() >= crate::protocol::MAX_SOURCES {
+                    break;
+                }
+                if known.iter().any(|url| url == &mirror.url) {
+                    continue;
+                }
+                let Ok(parsed) = url::Url::parse(&mirror.url) else { continue };
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    continue;
+                }
+                known.push(mirror.url.clone());
+                discovered.push(SourceInput { url: mirror.url.clone(), headers: spec.headers.clone(), cookie: spec.cookie.clone(), priority: mirror.priority, discovered: true });
+            }
+        }
+        if !discovered.is_empty() {
+            let mut extra = probe_batch(spec, discovered, None, probe::MULTI_PROBE_SAMPLE_BYTES).await;
+            results.append(&mut extra);
+        }
+    }
+    Ok(results)
+}
+
+/// Resolve a Metalink `.meta4` URL into the selected file's HTTP(S) mirrors.
+/// Returns `None` when the request is not a Metalink document. The document is
+/// bounded at 8 MiB; only `http`/`https` mirrors are kept.
+async fn resolve_metalink(spec: &Spec) -> EngineResult<Option<Spec>> {
+    let path = url::Url::parse(&spec.url).map(|url| url.path().to_ascii_lowercase()).unwrap_or_default();
+    let looks_like_metalink = path.ends_with(".meta4") || path.ends_with(".metalink") || spec.metalink_file.is_some();
+    if !looks_like_metalink {
+        return Ok(None);
+    }
+    let client = http::client_for_spec(spec)?;
+    let response = client
+        .get(&spec.url)
+        .send()
+        .await
+        .map_err(|error| EngineError::network(format!("metalink request failed: {error}")))?;
+    if !response.status().is_success() {
+        return Err(EngineError::http_status(response.status().as_u16(), &spec.url));
+    }
+    if response.content_length().is_some_and(|length| length > 8 * 1024 * 1024) {
+        return Err(EngineError::invalid("metalink document is larger than 8 MiB".to_string()));
+    }
+    let body = response.bytes().await.map_err(|error| EngineError::network(format!("metalink body failed: {error}")))?;
+    if body.len() > 8 * 1024 * 1024 {
+        return Err(EngineError::invalid("metalink document is larger than 8 MiB".to_string()));
+    }
+    let text = String::from_utf8_lossy(&body);
+    let files = crate::metalink::parse(&text).map_err(|error| EngineError::invalid(error))?;
+    let file = crate::metalink::select(&files, spec.metalink_file.as_deref()).map_err(|error| EngineError::invalid(error))?;
+    let mut urls = file.urls.clone();
+    urls.sort_by_key(|url| url.priority.unwrap_or(u32::MAX));
+    let Some(primary) = urls.first() else {
+        return Err(EngineError::invalid("metalink file has no HTTP(S) URL".to_string()));
+    };
+    let mut resolved = spec.clone();
+    resolved.url = primary.url.clone();
+    resolved.sources = urls
+        .iter()
+        .map(|url| crate::protocol::SourceInput {
+            url: url.url.clone(),
+            headers: spec.headers.clone(),
+            cookie: spec.cookie.clone(),
+            priority: url.priority,
+            discovered: false,
+        })
+        .collect();
+    if resolved.sources.len() > 1 && resolved.source_policy == crate::protocol::SourcePolicy::Single {
+        resolved.source_policy = crate::protocol::SourcePolicy::Select;
+    }
+    if resolved.file_name.is_none() {
+        resolved.file_name = file.name.as_deref().map(|name| name.rsplit('/').next().unwrap_or(name).to_string());
+    }
+    if resolved.expected_sha256.is_none() {
+        if let Some(hash) = file.sha256.as_deref().filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())) {
+            resolved.expected_sha256 = Some(hash.to_ascii_lowercase());
+        }
+    }
+    resolved.metalink_file = None;
+    Ok(Some(resolved))
+}
+
+async fn probe_batch(spec: &Spec, inputs: Vec<crate::protocol::SourceInput>, origin: Option<OriginFacts>, sample_bytes: usize) -> Vec<(crate::protocol::SourceInput, crate::protocol::ServerFacts)> {    let mut set = tokio::task::JoinSet::new();
+    for (index, input) in inputs.into_iter().enumerate() {
+        let source_spec = spec.for_source(&input);
+        let source_origin = if index == 0 { origin.clone() } else { None };
+        set.spawn(async move {
+            let client = http::probe_client_for_spec(&source_spec)?;
+            let outcome = probe::probe_with_sample(&client, &source_spec.url, source_origin, sample_bytes).await?;
+            Ok::<_, EngineError>((index, input, outcome.facts))
+        });
+    }
+    let mut rows: Vec<(usize, crate::protocol::SourceInput, crate::protocol::ServerFacts)> = Vec::new();
+    let mut first_error: Option<EngineError> = None;
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(row)) => rows.push(row),
+            Ok(Err(error)) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(EngineError::internal(format!("probe task failed: {error}")));
+                }
+            }
+        }
+    }
+    rows.sort_by_key(|(index, _, _)| *index);
+    let _ = first_error;
+    rows.into_iter().map(|(_, input, facts)| (input, facts)).collect()
 }
 pub async fn finalize(task: &Arc<Task>, spec: &Spec, part: &Path, state_path: &Path, target: &Path, total: Option<u64>) -> EngineResult<Option<String>> {
     task.begin_finalize();

@@ -843,6 +843,14 @@ export const REVIEW_CSS = `
 .rdm2-event { display: grid; grid-template-columns: 64px 88px minmax(0, 1fr); gap: 8px; font-size: 11.5px; line-height: 17px; color: var(--rdm2-ink-2); }
 .rdm2-event-time, .rdm2-event-kind { color: var(--rdm2-ink-3); }
 .rdm2-event-text { min-width: 0; overflow-wrap: anywhere; font-family: var(--rdm2-code); font-size: 11px; line-height: 17px; }
+.rdm2-sources { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.rdm2-source { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; line-height: 17px; }
+.rdm2-source-host { color: var(--rdm2-ink-2); min-width: 0; overflow-wrap: anywhere; }
+.rdm2-source-meta { color: var(--rdm2-ink-3); }
+.rdm2-source-error { color: var(--rdm2-err-text); min-width: 0; overflow-wrap: anywhere; }
+.rdm2-source[data-state='bad'] .rdm2-source-host { color: var(--rdm2-err-text); }
+.rdm2-note { margin: 0; padding: 4px 0; font-size: 12px; line-height: 18px; color: var(--rdm2-ink-2); }
+.rdm2-empty .rdm2-note { padding: 18px 16px; }
 
 /* --------------------------------------------------------- skeleton/empty */
 

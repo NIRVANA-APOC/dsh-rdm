@@ -1,4 +1,4 @@
-# dsh-rdm — architecture (0.3.0)
+# dsh-rdm — architecture (0.3.0-alpha.1)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
@@ -16,18 +16,27 @@ ModelScope pass** (kernel identity 0.2.2 at the time): recordings gain a per-run
 meta record for build attribution, rate accounting moves to this-run bytes
 (`transferredBytes`), the controller judges growth on aggregate throughput with
 saturation and tail-freeze policies, tail chunks retry fast, and an unknown RPC
-method returns `unsupported_method`. 0.3.0 is the **download workbench**: the
-human can compose a download, filter/batch-manage records grouped by workspace
+method returns `unsupported_method`. 0.3.0-alpha.1 combines the **download workbench**
+(the human can compose a download, filter/batch-manage records grouped by workspace
 and real session title, open results on the desktop, and follow live progress in
-a frame-wide top-right popup; the agent gains `rdm_search`. The kernel code is
-unchanged apart from its identity (package and kernel both `0.3.0`, protocol 2).
+a frame-wide top-right popup; the agent gains `rdm_search`) with **multi-source
+scheduling**: a task may carry up to eight HTTP(S) candidates for one object; the
+engine probes them, selects by measured throughput/health, and applies `select`,
+`failover`, `hedge` or `race` per the task policy. A source pool
+(`kernel/src/source.rs`) owns one client per source, content identity and
+per-source health; the chunk engine asks the pool for a source per claim. Mixing
+bytes is gated on a strong shared content identity. Metalink/HTTP
+`Link: rel=duplicate` mirrors and `.meta4` documents are resolved before the
+transfer.
 
 The binding contract for the 0.2.0 framing is
 [design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the 0.2.1 changes
 are explained in [design/0.2.1-real-data-fixes.md](design/0.2.1-real-data-fixes.md);
 the 0.2.2 changes are specified in [`.design/0.2.2-spec.md`](../.design/0.2.2-spec.md)
 and explained in [design/0.2.2-live-modelscope-pass.md](design/0.2.2-live-modelscope-pass.md).
-The 0.3.0 UI/API contract is [`.design/0.3.0-ui-spec.md`](../.design/0.3.0-ui-spec.md).
+The 0.3.0 UI/API contract is [`.design/0.3.0-ui-spec.md`](../.design/0.3.0-ui-spec.md);
+the multi-source design note is
+[research/multi-source-scheduling.md](research/multi-source-scheduling.md).
 The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md) v2.
 
 ## Goals
@@ -91,7 +100,7 @@ dsh-rdm/
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml            # rdm-kernel 0.3.0, protocol 2 (version unified with package.json)
+│   ├── Cargo.toml            # rdm-kernel 0.3.0-alpha.1, protocol 2 (version unified with package.json)
 │   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine,
 │   │                         #   controller (adaptive growth/collapse/rebuild), history (JSONL recording)
 │   └── tests/…               # unit + protocol smoke + in-process fixture e2e
@@ -108,11 +117,12 @@ dsh-rdm/
 A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
 plugin's protocol.
 
-| Concern | 0.3.0 kernel |
+| Concern | 0.3.0-alpha.1 kernel |
 |---|---|
 | Public API | NDJSON server + task manager (protocol 2; 0.2.1 additive fields + `history`, 0.2.2 `transferredBytes`/`requestedConnections`/history meta, `unsupported_method`) |
 | GUI/CLI/IPC/MCP/resolver | not present |
 | Probe | manual redirect chain + HEAD/ranged-GET, full `ServerFacts` |
+| Multi-source | up to 8 HTTP(S) candidates, measured selection, `select`/`failover`/`hedge`/`race`, content-key resume, Metalink/HTTP `Link` + `.meta4` resolution (`source.rs`, `metalink.rs`) |
 | Server intelligence | ranges/validators/resume safety, signed-URL expiry (AWS/GCS/Azure/generic) plus `auth_key` signed material, TLS leaf validity, checksum headers, Retry-After, timing |
 | Telemetry | 1s/5s/30s/300s windows, peak/avg, stall, trend, ETA confidence; after a resume all rates start from this-run `transferredBytes` |
 | Memory | bounded per-host origin ledger (`origins.json`, ≤256 hosts) |

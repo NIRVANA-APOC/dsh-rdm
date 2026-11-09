@@ -148,6 +148,42 @@ export type TaskStatus =
 /** Resume safety reported by the kernel. */
 export type ResumeSafety = 'strong' | 'weak' | 'none'
 
+/** Multi-source policy reported on a task (0.3.0); unknown strings stay verbatim. */
+export type SourcePolicy = 'single' | 'select' | 'failover' | 'hedge' | 'race'
+
+/** Pool state of one candidate source (`active`/`standby`/`bad`). */
+export type SourceState = 'active' | 'standby' | 'bad'
+
+/** How one candidate source entered the pool (`primary`/`alternate`/`discovered`). */
+export type SourceRole = 'primary' | 'alternate' | 'discovered'
+
+/**
+ * One redacted source row of a multi-source download (0.3.0). Older hosts omit
+ * the whole array; the API layer normalizes it to an empty array.
+ */
+export interface SourceView {
+  id: number
+  /** Redacted URL; prefer `host` for display. */
+  url: string
+  host: string
+  state: SourceState | string
+  role: SourceRole | string
+  bytes: number
+  bps: number | null
+  active: boolean
+  lastError: string | null
+}
+
+/** One mirror discovered on a probe response (Metalink/HTTP, 0.3.0). */
+export interface MirrorSource {
+  /** Redacted URL. */
+  url: string
+  priority: number | null
+  geo: string | null
+  /** Discovery channel: `http-link`, `metalink` or `unknown`. */
+  source: string
+}
+
 /** ETA confidence reported by the kernel. */
 export type EtaConfidence = 'high' | 'medium' | 'low' | 'unknown'
 
@@ -220,6 +256,14 @@ export interface TaskView {
   elapsedMs: number | null
   signedUrlExpiresAt: number | null
   tlsNotAfter: number | null
+  /** Effective multi-source policy; null on a pre-0.3.0 host. */
+  sourcePolicy: string | null
+  /** Pool index currently carrying the transfer, null before selection. */
+  selectedSource: number | null
+  /** Count of active-source changes during this run. */
+  sourceSwitches: number | null
+  /** Bounded per-source projection; empty for single-source/old hosts. */
+  sources: SourceView[]
 }
 
 /** One diagnostic event from PROTOCOL.md TaskEvent. */
@@ -354,6 +398,8 @@ export interface ServerFacts {
   warnings: string[]
   recommendation: ServerRecommendation | null
   origin: ServerOrigin | null
+  /** Metalink/HTTP mirrors discovered by the probe; empty when none/old host. */
+  mirrors: MirrorSource[]
 }
 
 /** Telemetry block of `get` (protocol v2 §2.3). */
@@ -417,6 +463,12 @@ export interface TaskDetail {
   resumeState: TaskResumeState | null
   timing: TaskTiming | null
   diagnosis: TaskDiagnosis[]
+  /** Effective multi-source policy (0.3.0); null on an old host. */
+  sourcePolicy: string | null
+  selectedSource: number | null
+  sourceSwitches: number | null
+  /** Bounded per-source projection; empty for single-source/old hosts. */
+  sources: SourceView[]
 }
 
 /** Aggregate line returned by `list` (protocol v2 §2.4). */

@@ -22,7 +22,10 @@ import {
   formatProgressPair,
   formatRate,
   normalizeAggregate,
+  normalizeRequestSpec,
   normalizeServerFacts,
+  normalizeSourcePolicy,
+  normalizeSources,
   normalizeTaskDetail,
   normalizeTaskHistory,
   normalizeTaskView,
@@ -65,6 +68,22 @@ function assertReceiptLines(text) {
 }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
+
+/** One redacted per-source row (0.3.0 multi-source task view projection). */
+function sourceFixture(overrides = {}) {
+  return {
+    id: 0,
+    url: 'https://cdn.example.com/app.zip?sig=<redacted>',
+    host: 'cdn.example.com',
+    state: 'active',
+    role: 'primary',
+    bytes: 21184000,
+    bps: 1468006,
+    active: true,
+    lastError: null,
+    ...overrides,
+  }
+}
 
 function taskFixture(overrides = {}) {
   return {
@@ -114,6 +133,10 @@ function taskFixture(overrides = {}) {
     elapsedMs: 17500,
     signedUrlExpiresAt: 1763000123000,
     tlsNotAfter: 1767000000000,
+    sourcePolicy: 'single',
+    selectedSource: 0,
+    sourceSwitches: 0,
+    sources: [sourceFixture()],
     ...overrides,
   }
 }
@@ -166,6 +189,7 @@ function serverFixture(overrides = {}) {
       lastError: 'network',
       lastAt: 1762990000000,
     },
+    mirrors: [],
     ...overrides,
   }
 }
@@ -206,6 +230,10 @@ function detailFixture(overrides = {}) {
     },
     timing: { queuedMs: 100, probeMs: 84, transferMs: 17400, finalizeMs: 0 },
     diagnosis: [{ code: 'on-track', advice: 'wait', message: 'ETA 20s at 5s rate' }],
+    sourcePolicy: 'single',
+    selectedSource: 0,
+    sourceSwitches: 0,
+    sources: [sourceFixture()],
     ...overrides,
   }
 }
@@ -245,9 +273,9 @@ check('protocol mismatch error is actionable', () => {
   assert.match(message, /protocol 1/)
   assert.match(message, /requires protocol 2/)
   assert.match(message, /build-kernel/)
-  // 0.2.2 versioning: the plugin/kernel versions named in the hint are current.
-  assert.match(message, /dsh-rdm 0\.3\.0/)
-  assert.match(message, /0\.3\.0 kernel/)
+  // 0.3.0 versioning: the plugin/kernel versions named in the hint are current.
+  assert.match(message, /dsh-rdm 0\.3\.0-alpha\.1/)
+  assert.match(message, /matching kernel/)
 })
 
 // ── Tool surface ────────────────────────────────────────────────────────────
@@ -268,6 +296,42 @@ check('download parameters expose the 0.3.0 concurrency surface', () => {
   assert.equal(properties.maxConnections.type, 'number')
   assert.match(properties.maxConnections.description, /1\.\.128/)
   assert.match(properties.maxConnections.description, /controller may grow/)
+})
+check('download parameters expose the multi-source surface', () => {
+  const download = tools.find((tool) => tool.name === 'rdm_download')
+  const properties = download.parameters.properties
+  // `json` parameters compile to an annotation-only node (any JSON value).
+  assert.equal(properties.sources.type, undefined)
+  assert.match(properties.sources.description, /Candidate mirrors/)
+  assert.match(properties.sources.description, /max 7/)
+  assert.deepEqual(properties.sourcePolicy.enum, ['single', 'select', 'failover', 'hedge', 'race'])
+  assert.equal(properties.sourceRaceBytes.type, 'number')
+  assert.match(properties.sourceRaceBytes.description, /65536\.\.67108864/)
+  assert.equal(properties.discoverSources.type, 'boolean')
+  assert.equal(properties.metalinkFile.type, 'string')
+})
+check('task schemas carry the multi-source wire fields', () => {
+  const download = tools.find((tool) => tool.name === 'rdm_download')
+  const taskSchema = download.output.schema.properties.task
+  assert.deepEqual(taskSchema.properties.sourcePolicy.enum, ['single', 'select', 'failover', 'hedge', 'race'])
+  assert.equal(taskSchema.properties.selectedSource.oneOf[1].type, 'null')
+  assert.equal(taskSchema.properties.selectedSource.oneOf[0].type, 'number')
+  assert.equal(taskSchema.properties.sourceSwitches.type, 'number')
+  assert.deepEqual(taskSchema.properties.sources.items.properties.state.enum, ['active', 'standby', 'bad'])
+  assert.deepEqual(taskSchema.properties.sources.items.properties.role.enum, ['primary', 'alternate', 'discovered'])
+  const tasksTool = tools.find((tool) => tool.name === 'rdm_tasks')
+  const detailSchema = tasksTool.output.schema.properties.detail.oneOf[0]
+  assert.deepEqual(detailSchema.properties.sourcePolicy.enum, ['single', 'select', 'failover', 'hedge', 'race'])
+  assert.equal(detailSchema.properties.sourceSwitches.type, 'number')
+  assert.deepEqual(detailSchema.properties.sources.items.properties.state.enum, ['active', 'standby', 'bad'])
+  const probe = tools.find((tool) => tool.name === 'rdm_probe')
+  const mirrors = probe.output.schema.properties.server.oneOf[0].properties.mirrors
+  assert.equal(mirrors.type, 'array')
+  assert.deepEqual(Object.keys(mirrors.items.properties), ['url', 'priority', 'geo', 'source'])
+  assert.ok(
+    tasksTool.output.schema.properties.events.items.properties.kind.enum.includes('source'),
+    'source event kind missing from the closed event schema',
+  )
 })
 check('history parameters match the 0.3.0 tool contract', () => {
   const history = tools.find((tool) => tool.name === 'rdm_history')
@@ -424,8 +488,43 @@ check('download receipt matches the §3.4 shape and order', () => {
   assert.equal(lines[2], 'server host=cdn.example.com status=200 size=48.1MiB http=HTTP/2.0')
   assert.equal(lines[3], 'range=bytes resume=strong signed=valid(19m40s) tls=valid(40d) checksum=none')
   assert.equal(lines[4], 'plan connections=8 chunk=1.5MiB verify=recommended reason=ranges+strong-etag')
+  // 0.3.0: one bounded source-pool summary line (policy/selected/count/switches).
+  assert.equal(lines[5], 'source policy=single selected=0 count=1 switches=0 host=cdn.example.com')
   assert.match(lines.at(-1), /^next rdm_tasks taskId=t_9f3a1c2d5e6b7a80 \| rdm_wait taskIds=\["t_9f3a1c2d5e6b7a80"\] timeoutSec=60$/)
   assert.ok(!lines.some((line) => line.startsWith('preflight=')), 'preflight lives on the task line')
+  assertReceiptLines(lines.join('\n'))
+})
+check('download receipt summarizes a multi-source pool without leaking URLs', () => {
+  const lines = renderDownloadReceipt({
+    task: taskFixture({
+      sourcePolicy: 'failover',
+      selectedSource: 1,
+      sourceSwitches: 2,
+      sources: [
+        sourceFixture({ id: 0, host: 'cdn.example.com', state: 'bad', role: 'primary', active: false, lastError: 'network' }),
+        sourceFixture({
+          id: 1,
+          url: 'https://cdn2.example.com/app.zip?token=SECRET_SOURCE',
+          host: 'cdn2.example.com',
+          state: 'active',
+          role: 'alternate',
+          active: true,
+          bytes: 25165824,
+          bps: 2097152,
+        }),
+        sourceFixture({ id: 2, host: 'mirror.example.net', state: 'standby', role: 'discovered', active: false, bytes: 0, bps: null }),
+      ],
+    }),
+    server: serverFixture(),
+    preflightTimedOut: false,
+    terminal: false,
+    hint: 'x',
+  })
+  assert.ok(
+    lines.includes('source policy=failover selected=1 count=3 switches=2 host=cdn2.example.com'),
+    `missing multi-source summary: ${lines.join(' | ')}`,
+  )
+  assert.ok(!lines.join('\n').includes('SECRET_SOURCE'), 'source URLs must never be echoed')
   assertReceiptLines(lines.join('\n'))
 })
 check('download receipt renders preflight timeout without server facts', () => {
@@ -475,9 +574,29 @@ check('probe receipt carries server facts, plan and follow-up', () => {
   assert.match(text, /^file name=app\.zip source=content-disposition size=48\.1MiB type=application\/zip encoding=-$/m)
   assert.match(text, /^plan start=now connections=8 chunk=1\.5MiB singleStream=false verify=recommended reason=ranges\+strong-etag$/m)
   assert.match(text, /^warnings=weak-validators redirects=1$/m)
+  assert.match(text, /^mirrors=0$/m)
   assert.match(text, /^timing probe=84ms ttfb=61ms sample=- origin=known attempts=3 completed=2 median=14MiB\/s best=22MiB\/s lastError=network$/m)
   assert.match(text, /^next rdm_download url=https:\/\/cdn\.example\.com\/app\.zip\?sig=abc$/m)
   assert.ok(!text.includes('resume=safe'), 'resume safety renders the protocol vocabulary')
+  assertReceiptLines(text)
+})
+check('probe receipt lists discovered mirrors bounded to four, host only', () => {
+  const mirrors = [
+    { url: 'https://cdn2.example.com/app.zip?token=SECRET_MIRROR', priority: 1, geo: 'de', source: 'http-link' },
+    { url: 'https://mirror.example.org/app.zip', priority: null, geo: null, source: 'metalink' },
+    ...Array.from({ length: 4 }, (_, index) => ({
+      url: `https://extra${index}.example.net/app.zip`,
+      priority: index + 2,
+      geo: null,
+      source: 'http-link',
+    })),
+  ]
+  const text = renderProbeReceipt({ server: serverFixture({ mirrors }), hint: 'x' }).join('\n')
+  assert.match(
+    text,
+    /^mirrors=6 host=cdn2\.example\.com priority=1 source=http-link geo=de; host=mirror\.example\.org priority=- source=metalink; host=extra0\.example\.net priority=2 source=http-link; host=extra1\.example\.net priority=3 source=http-link; \+2 more$/m,
+  )
+  assert.ok(!text.includes('SECRET_MIRROR'), 'mirror URLs must not be echoed')
   assertReceiptLines(text)
 })
 
@@ -543,11 +662,59 @@ check('detail receipt has header, telemetry, server, target, verify, timing, dia
   assert.ok(text.indexOf('resume decision=') > text.indexOf('telemetry trend='), 'resume line follows telemetry')
   assert.ok(text.indexOf('resume decision=') < text.indexOf('server host='), 'resume line precedes server block')
   assert.match(text, /^server host=cdn\.example\.com status=200 size=48\.1MiB http=HTTP\/2\.0$/m)
+  // 0.3.0: source-pool summary plus one per-source row, between server and target.
+  assert.match(text, /^source policy=single selected=0 count=1 switches=0 host=cdn\.example\.com$/m)
+  assert.match(text, /^src id=0 role=primary state=active active=true host=cdn\.example\.com bytes=20\.2MiB bps=1\.4MiB\/s$/m)
+  assert.ok(text.indexOf('source policy=') > text.indexOf('server host='), 'source summary follows server facts')
+  assert.ok(text.indexOf('src id=0 ') > text.indexOf('source policy='), 'source rows follow the summary')
+  assert.ok(text.indexOf('src id=0 ') < text.indexOf('target part='), 'source rows precede the target block')
   assert.match(text, /^target part=C:\\Downloads\\app\.zip\.part resume=C:\\Downloads\\app\.zip\.part\.json$/m)
   assert.match(text, /^verify state=not-compared checksums=-$/m)
   assert.match(text, /^timing queued=100ms probe=84ms transfer=17s finalize=0ms$/m)
   assert.match(text, /^diagnosis code=on-track advice=wait msg="ETA 20s at 5s rate"$/m)
   assert.match(text, /^event seq=1 at=23:26:40 kind=plan msg="8 connections"$/m)
+  assertReceiptLines(text)
+})
+check('detail receipt bounds per-source rows to eight and renders bad sources', () => {
+  const sources = Array.from({ length: 10 }, (_, index) =>
+    sourceFixture({
+      id: index,
+      host: `m${index}.example.com`,
+      state: index === 0 ? 'bad' : index === 1 ? 'active' : 'standby',
+      role: index === 0 ? 'primary' : index === 1 ? 'alternate' : 'discovered',
+      active: index === 1,
+      bytes: index * 1024 * 1024,
+      bps: index === 1 ? 1048576 : null,
+      lastError: index === 0 ? 'network reset' : null,
+    }),
+  )
+  const text = renderTaskDetailReceipt({
+    kernel: kernelStatus,
+    task: taskFixture({ sourcePolicy: 'race', selectedSource: 1, sourceSwitches: 3, sources }),
+    detail: detailFixture({ sourcePolicy: 'race', selectedSource: 1, sourceSwitches: 3, sources }),
+    events: [],
+    hint: 'x',
+  }).join('\n')
+  const rows = text.split('\n').filter((line) => line.startsWith('src '))
+  assert.equal(rows.length, 8)
+  assert.match(text, /^source policy=race selected=1 count=10 switches=3 host=m1\.example\.com$/m)
+  assert.equal(
+    rows[0],
+    'src id=0 role=primary state=bad active=false host=m0.example.com bytes=0B bps=- lastError="network reset"',
+  )
+  assert.equal(rows[1], 'src id=1 role=alternate state=active active=true host=m1.example.com bytes=1MiB bps=1MiB/s')
+  assertReceiptLines(text)
+})
+check('detail receipt tolerates a detail without source rows (old kernel)', () => {
+  const text = renderTaskDetailReceipt({
+    kernel: kernelStatus,
+    task: taskFixture({ sourcePolicy: 'single', selectedSource: null, sourceSwitches: 0, sources: [] }),
+    detail: detailFixture({ sourcePolicy: 'single', selectedSource: null, sourceSwitches: 0, sources: [] }),
+    events: [],
+    hint: 'x',
+  }).join('\n')
+  assert.match(text, /^source policy=single selected=- count=0 switches=0$/m)
+  assert.ok(!text.split('\n').some((line) => line.startsWith('src ')), 'no per-source rows without sources')
   assertReceiptLines(text)
 })
 check('detail receipt renders a rejected resume verdict with a null reason', () => {
@@ -808,9 +975,60 @@ check('normalizers are defensive', () => {
   })
   assert.equal(explicit.transferredBytes, 50)
   assert.equal(explicit.requestedConnections, 16)
+  // 0.3.0 view fields: a pre-multi-source kernel reports none of them.
+  assert.equal(task.sourcePolicy, 'single')
+  assert.equal(task.selectedSource, null)
+  assert.equal(task.sourceSwitches, 0)
+  assert.deepEqual(task.sources, [])
+  const multi = normalizeTaskView({
+    id: 't_src',
+    sourcePolicy: 'select',
+    selectedSource: 1,
+    sourceSwitches: 2,
+    sources: [
+      { id: 0, url: 'https://a.example/x', state: 'bad' },
+      { id: 1, url: 'https://b.example/x?token=abc', state: 'active', role: 'alternate', bytes: 5, bps: 10, active: true },
+    ],
+  })
+  assert.equal(multi.sourcePolicy, 'select')
+  assert.equal(multi.selectedSource, 1)
+  assert.equal(multi.sourceSwitches, 2)
+  assert.equal(multi.sources.length, 2)
+  assert.equal(multi.sources[0].role, 'alternate', 'unknown role falls back to alternate')
+  assert.equal(multi.sources[1].role, 'alternate')
+  assert.equal(multi.sources[1].host, 'b.example', 'host is derived when the kernel omits it')
+  assert.equal(multi.sources[1].bytes, 5)
+  assert.equal(multi.sources[0].lastError, null)
+  // Unknown policy/role/state values degrade to safe defaults instead of leaking.
+  const odd = normalizeTaskView({ id: 't_odd', sourcePolicy: 'nonsense', selectedSource: -2, sourceSwitches: -1, sources: [{ state: 'bogus', role: 'bogus' }] })
+  assert.equal(odd.sourcePolicy, 'single')
+  assert.equal(odd.selectedSource, null)
+  assert.equal(odd.sourceSwitches, 0)
+  assert.equal(odd.sources[0].state, 'standby')
+  assert.equal(odd.sources.length, 1)
   const detail = normalizeTaskDetail({})
   assert.equal(detail.server, null)
   assert.deepEqual(detail.diagnosis, [])
+  // 0.3.0 detail fields: the policy falls back to the owning task's value.
+  assert.equal(detail.sourcePolicy, 'single')
+  assert.equal(normalizeTaskDetail({}, 'hedge').sourcePolicy, 'hedge')
+  assert.equal(normalizeTaskDetail({ sourcePolicy: 'race' }).sourcePolicy, 'race')
+  assert.equal(detail.selectedSource, null)
+  assert.equal(detail.sourceSwitches, 0)
+  assert.deepEqual(detail.sources, [])
+  // ServerFacts.mirrors is [] on older kernels and bounded/redacted here.
+  assert.deepEqual(normalizeServerFacts({ url: 'https://x.example/y' }).mirrors, [])
+  const mirrored = normalizeServerFacts({
+    mirrors: [
+      { url: 'https://m1.example/a', priority: 1, geo: 'de', source: 'http-link' },
+      { url: '', source: 'unknown' },
+      { url: 'https://m2.example/a', source: '' },
+    ],
+  })
+  assert.equal(mirrored.mirrors.length, 2)
+  assert.equal(mirrored.mirrors[0].priority, 1)
+  assert.equal(mirrored.mirrors[1].priority, null)
+  assert.equal(mirrored.mirrors[1].source, 'unknown', 'missing discovery channel stays a documented token')
   // 0.3.0 resume verdict defaults: not-attempted with no reason.
   assert.equal(detail.resumeState.resumeDecision, 'not-attempted')
   assert.equal(detail.resumeState.resumeReason, null)
@@ -828,6 +1046,48 @@ check('normalizers are defensive', () => {
     w300Bps: null,
     riskCount: 0,
   })
+})
+check('source request fields validate, clamp and stay optional', () => {
+  const sources = normalizeSources([
+    { url: 'https://m1.example/a', headers: { Authorization: 'Bearer x' }, cookie: 'a=1', priority: 3 },
+    { url: 'http://m2.example/a', priority: -4 },
+  ])
+  assert.equal(sources.length, 2)
+  assert.equal(sources[0].url, 'https://m1.example/a')
+  assert.deepEqual(sources[0].headers, { Authorization: 'Bearer x' })
+  assert.equal(sources[0].cookie, 'a=1')
+  assert.equal(sources[0].priority, 3)
+  assert.equal(sources[1].priority, 0, 'negative priority clamps to zero')
+  assert.equal(normalizeSources(undefined), undefined)
+  assert.equal(normalizeSourcePolicy(undefined), undefined)
+  assert.equal(normalizeSourcePolicy('hedge'), 'hedge')
+  assert.throws(() => normalizeSources('nope'), /sources must be a JSON array/)
+  assert.throws(() => normalizeSources([{ url: 'ftp://m.example/a' }]), /sources\[0\]\.url must use http/)
+  assert.throws(
+    () => normalizeSources(Array.from({ length: 9 }, (_, index) => ({ url: `https://m${index}.example/a` }))),
+    /at most 7/,
+  )
+  assert.throws(() => normalizeSourcePolicy('bogus'), /sourcePolicy must be one of/)
+  // A request without multi-source fields omits them entirely so the kernel's
+  // own defaults apply (`select` with sources, else `single`; discovery on).
+  const plain = normalizeRequestSpec({ url: 'https://m.example/a' })
+  for (const key of ['sources', 'sourcePolicy', 'sourceRaceBytes', 'discoverSources', 'metalinkFile']) {
+    assert.equal(key in plain, false, `${key} must stay absent when not supplied`)
+  }
+  const multi = normalizeRequestSpec({
+    url: 'https://m.example/a',
+    sources,
+    sourcePolicy: 'select',
+    sourceRaceBytes: 5,
+    discoverSources: false,
+    metalinkFile: 'app.iso',
+  })
+  assert.equal(multi.sources.length, 2)
+  assert.equal(multi.sourcePolicy, 'select')
+  assert.equal(multi.sourceRaceBytes, 65536, 'hedge window clamps up to the 64 KiB floor')
+  assert.equal(multi.discoverSources, false)
+  assert.equal(multi.metalinkFile, 'app.iso')
+  assert.equal(normalizeRequestSpec({ url: 'https://m.example/a', sourceRaceBytes: 999999999 }).sourceRaceBytes, 67108864)
 })
 check('history normalizer always returns bounded arrays and null paths', () => {
   const empty = normalizeTaskHistory(null, 't_fallback')
@@ -1121,6 +1381,20 @@ check('canonical values validate against their output schemas', () => {
     terminal: true,
     hint: 'x',
   })
+  assertCanonical('rdm_download', {
+    task: taskFixture({
+      sourcePolicy: 'hedge',
+      selectedSource: null,
+      sourceSwitches: 1,
+      sources: [sourceFixture({ state: 'standby', active: false })],
+    }),
+    server: serverFixture({
+      mirrors: [{ url: 'https://m.example/a', priority: 1, geo: null, source: 'http-link' }],
+    }),
+    preflightTimedOut: false,
+    terminal: false,
+    hint: 'x',
+  })
   assertCanonical('rdm_probe', { server: serverFixture(), error: null, hint: 'x' })
   assertCanonical('rdm_probe', { server: null, error: { code: 'network', message: 'reset' }, hint: 'x' })
   const aggregate = {
@@ -1160,6 +1434,24 @@ check('canonical values validate against their output schemas', () => {
     task: taskFixture(),
     detail: detailFixture(),
     events: [],
+    error: null,
+    hint: 'x',
+  })
+  assertCanonical('rdm_tasks', {
+    kernel: kernelStatus,
+    task: taskFixture({ sourcePolicy: 'race', selectedSource: 1, sourceSwitches: 2 }),
+    detail: detailFixture({ sourcePolicy: 'race', selectedSource: 1, sourceSwitches: 2 }),
+    events: [
+      {
+        seq: 1,
+        at: 1762990000123,
+        kind: 'source',
+        message: 'switched source 0 -> 1 after throughput collapse',
+        chunk: null,
+        attempt: null,
+        delayMs: null,
+      },
+    ],
     error: null,
     hint: 'x',
   })
@@ -1430,7 +1722,7 @@ check('canonical values validate against their output schemas', () => {
       .map((block) => block.text)
       .join('\n')
     assert.match(text, /^error code=unsupported_method message=/m)
-    assert.match(text, /^next upgrade the kernel binary to 0\.3\.0 \(dsh-rdm 0\.3\.0\+\)/m)
+    assert.match(text, /^next upgrade the kernel binary to 0\.3\.0-alpha\.1 \(dsh-rdm 0\.3\.0-alpha\.1\+\)/m)
     assert.ok(text.split('\n').length <= 6, 'error receipt stays bounded to 6 lines')
     assertReceiptLines(text)
     passed += 1

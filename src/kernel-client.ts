@@ -42,15 +42,22 @@ import {
   MAX_HISTORY_SAMPLES,
   MAX_LIST_LIMIT,
   MAX_SESSION_ID_LENGTH,
+  MAX_ADDITIONAL_SOURCES,
+  MAX_SOURCE_RACE_BYTES,
+  MAX_SOURCES,
   MAX_TASK_IDS,
   MAX_WAIT_MS,
   MAX_WAIT_PROBE_MS,
   MIB,
   MIN_CHUNK_BYTES,
   MIN_CONNECTIONS,
+  MIN_SOURCE_RACE_BYTES,
   MIN_WAIT_MS,
   PROTOCOL_VERSION,
   SESSION_ID_PATTERN,
+  SOURCE_POLICIES,
+  SOURCE_ROLES,
+  SOURCE_STATES,
   TASK_EVENT_KINDS,
   TASK_STATUSES,
   TERMINAL_STATUSES,
@@ -79,6 +86,7 @@ import {
   type KernelStatusView,
   type ListParams,
   type ListResult,
+  type MirrorSource,
   type OriginFacts,
   type ProbeMethod,
   type ProbeParams,
@@ -99,6 +107,9 @@ import {
   type ServerWarningCode,
   type SignedUrlFacts,
   type SignedUrlSource,
+  type SourceInput,
+  type SourcePolicy,
+  type SourceView,
   type StartAdvice,
   type StartResult,
   type StatsResult,
@@ -326,6 +337,11 @@ function maybeNum(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+/** Coerce to a non-negative integer or null. */
+function maybeUint(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : null
+}
+
 /** Coerce to a string, else fall back. */
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
@@ -425,6 +441,9 @@ const VERIFY_RECOMMENDATIONS: readonly VerifyRecommendation[] = ['recommended', 
 const FILE_NAME_SOURCES: readonly FileNameSource[] = ['content-disposition', 'url']
 const ACCEPT_RANGES: readonly AcceptRanges[] = ['bytes', 'none', 'unknown']
 
+/** Upper bound for a caller-supplied source ordering hint (kernel stores a u32). */
+const MAX_SOURCE_PRIORITY = 4_294_967_295
+
 /** Pick one value from a known vocabulary (first match wins), else fallback. */
 function pick<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
@@ -437,7 +456,7 @@ function pickOrNull<T extends string>(value: unknown, allowed: readonly T[]): T 
 
 /**
  * The actionable error shown when a kernel reports a protocol this plugin does
- * not speak. Protocol 1 binaries are not compatible with 0.3.0.
+ * not speak. Protocol 1 binaries are not compatible with 0.3.0-alpha.1.
  */
 export function protocolMismatchMessage(
   reported: number,
@@ -450,9 +469,9 @@ export function protocolMismatchMessage(
     : ''
   return (
     `The RDM kernel at "${binaryPath}" reported ${seen} in its ready frame${version}, ` +
-    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.3.0). ` +
+    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.3.0-alpha.1). ` +
     'Rebuild the kernel for this plugin with "bash scripts/dev-build.sh kernel" ' +
-    '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a 0.3.0 kernel.'
+    '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a matching kernel.'
   )
 }
 
@@ -625,6 +644,51 @@ function optionalNumber(value: unknown, label: string): number | undefined {
   return value
 }
 
+/**
+ * Validate the optional `sources[]` candidate list (0.3.0).
+ *
+ * Every entry needs an absolute http(s) URL; per-source headers/cookie are
+ * optional and override the request-wide ones in the kernel. The primary
+ * request `url` is always source 0, so at most {@link MAX_SOURCES} candidates
+ * are accepted here (the kernel caps the merged pool at the same number).
+ */
+export function normalizeSources(value: unknown): SourceInput[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) {
+    throw new KernelError('invalid_request', 'sources must be a JSON array of candidate sources')
+  }
+  if (value.length > MAX_ADDITIONAL_SOURCES) {
+    throw new KernelError('invalid_request', `sources accepts at most ${MAX_ADDITIONAL_SOURCES} additional sources per call`)
+  }
+  const sources: SourceInput[] = []
+  for (let index = 0; index < value.length; index += 1) {
+    const record = asRecord(value[index])
+    if (record === null) {
+      throw new KernelError('invalid_request', `sources[${index}] must be an object with a url`)
+    }
+    const source: SourceInput = { url: assertHttpUrl(record.url, `sources[${index}].url`) }
+    if (record.headers !== undefined) source.headers = normalizeHeaders(record.headers)
+    const cookie = optionalString(record.cookie, `sources[${index}].cookie`)
+    if (cookie !== undefined) source.cookie = cookie
+    const priority = optionalNumber(record.priority, `sources[${index}].priority`)
+    if (priority !== undefined) source.priority = clampInt(priority, 0, MAX_SOURCE_PRIORITY)
+    sources.push(source)
+  }
+  return sources
+}
+
+/** Validate an optional multi-source policy (0.3.0). */
+export function normalizeSourcePolicy(value: unknown): SourcePolicy | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string' && (SOURCE_POLICIES as readonly string[]).includes(value)) {
+    return value as SourcePolicy
+  }
+  throw new KernelError(
+    'invalid_request',
+    `sourcePolicy must be one of ${SOURCE_POLICIES.join(', ')} (got ${JSON.stringify(value)})`,
+  )
+}
+
 /** Validate and normalize a `start` request spec. */
 export function normalizeRequestSpec(input: unknown): RequestSpec {
   const raw = asRecord(input)
@@ -677,6 +741,20 @@ export function normalizeRequestSpec(input: unknown): RequestSpec {
   if (maxAttempts !== undefined) spec.maxAttempts = clampInt(maxAttempts, 1, 100)
   const sessionId = normalizeSessionId(raw.sessionId)
   if (sessionId !== null) spec.sessionId = sessionId
+  // 0.3.0 multi-source fields. The primary `url` is source 0; `sources[]` only
+  // adds candidates, so an omitted list keeps the request single-source.
+  const sources = normalizeSources(raw.sources)
+  if (sources !== undefined) spec.sources = sources
+  const sourcePolicy = normalizeSourcePolicy(raw.sourcePolicy)
+  if (sourcePolicy !== undefined) spec.sourcePolicy = sourcePolicy
+  const sourceRaceBytes = optionalNumber(raw.sourceRaceBytes, 'sourceRaceBytes')
+  if (sourceRaceBytes !== undefined) {
+    spec.sourceRaceBytes = clampInt(sourceRaceBytes, MIN_SOURCE_RACE_BYTES, MAX_SOURCE_RACE_BYTES)
+  }
+  const discoverSources = optionalBoolean(raw.discoverSources, 'discoverSources')
+  if (discoverSources !== undefined) spec.discoverSources = discoverSources
+  const metalinkFile = optionalString(raw.metalinkFile, 'metalinkFile')
+  if (metalinkFile !== undefined) spec.metalinkFile = metalinkFile
   const waitProbeMs = optionalNumber(raw.waitProbeMs, 'waitProbeMs')
   if (waitProbeMs !== undefined) spec.waitProbeMs = clampInt(waitProbeMs, 0, MAX_WAIT_PROBE_MS)
   return spec
@@ -750,6 +828,53 @@ function hostFromUrl(url: string): string {
   } catch {
     return ''
   }
+}
+
+/** Normalize one redacted source row (0.3.0); `null` when it has no identity. */
+function normalizeSourceView(raw: unknown): SourceView | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  const url = str(record.url)
+  return {
+    id: uint(record.id, 0),
+    url,
+    host: str(record.host) !== '' ? str(record.host) : hostFromUrl(url),
+    state: pick(record.state, SOURCE_STATES, 'standby'),
+    role: pick(record.role, SOURCE_ROLES, 'alternate'),
+    bytes: uint(record.bytes, 0),
+    bps: maybeNum(record.bps),
+    active: bool(record.active, false),
+    lastError: maybeStr(record.lastError),
+  }
+}
+
+/** Normalize the bounded per-source projection; older kernels report none. */
+function normalizeSourceViews(raw: unknown): SourceView[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry) => normalizeSourceView(entry))
+    .filter((entry): entry is SourceView => entry !== null)
+    .slice(0, MAX_SOURCES)
+}
+
+/** Normalize discovered Metalink/HTTP mirrors; absent on older kernels. */
+function normalizeMirrors(raw: unknown): MirrorSource[] {
+  if (!Array.isArray(raw)) return []
+  const mirrors: MirrorSource[] = []
+  for (const entry of raw) {
+    const record = asRecord(entry)
+    if (record === null) continue
+    const url = str(record.url)
+    if (url === '') continue
+    mirrors.push({
+      url,
+      priority: maybeUint(record.priority),
+      geo: maybeStr(record.geo),
+      source: str(record.source) !== '' ? str(record.source) : 'unknown',
+    })
+    if (mirrors.length >= MAX_SOURCES) break
+  }
+  return mirrors
 }
 
 /** Normalize one task view so every protocol-v2 field is present. */
@@ -845,6 +970,10 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     elapsedMs: uint(record.elapsedMs, 0),
     signedUrlExpiresAt: maybeNum(record.signedUrlExpiresAt),
     tlsNotAfter: maybeNum(record.tlsNotAfter),
+    sourcePolicy: pick(record.sourcePolicy, SOURCE_POLICIES, 'single'),
+    selectedSource: maybeUint(record.selectedSource),
+    sourceSwitches: uint(record.sourceSwitches, 0),
+    sources: normalizeSourceViews(record.sources),
   }
 }
 
@@ -1165,6 +1294,7 @@ export function normalizeServerFacts(raw: unknown): ServerFacts | null {
     warnings,
     recommendation: normalizeRecommendation(record.recommendation),
     origin: normalizeOriginFacts(record.origin),
+    mirrors: normalizeMirrors(record.mirrors),
   }
 }
 
@@ -1246,8 +1376,14 @@ function normalizeDiagnosis(raw: unknown): Diagnosis | null {
   return { code, advice: str(record.advice), message: str(record.message) }
 }
 
-/** Normalize a whole `TaskDetail` (missing blocks become safe empty shapes). */
-export function normalizeTaskDetail(raw: unknown): TaskDetail {
+/**
+ * Normalize a whole `TaskDetail` (missing blocks become safe empty shapes).
+ *
+ * Kernel detail frames carry the source pool but not the effective policy, so
+ * the caller passes the owning task's policy (the same task view) as the
+ * fallback; a detail frame that does report `sourcePolicy` wins.
+ */
+export function normalizeTaskDetail(raw: unknown, fallbackSourcePolicy: SourcePolicy = 'single'): TaskDetail {
   const record = asRecord(raw) ?? {}
   const rawDiagnosis = Array.isArray(record.diagnosis) ? record.diagnosis : []
   const diagnosis = rawDiagnosis
@@ -1262,6 +1398,10 @@ export function normalizeTaskDetail(raw: unknown): TaskDetail {
     resumeState: normalizeResumeStateDetail(record.resumeState),
     timing: normalizeDetailTiming(record.timing),
     diagnosis,
+    sourcePolicy: pick(record.sourcePolicy, SOURCE_POLICIES, fallbackSourcePolicy),
+    selectedSource: maybeUint(record.selectedSource),
+    sourceSwitches: uint(record.sourceSwitches, 0),
+    sources: normalizeSourceViews(record.sources),
   }
 }
 
@@ -2125,7 +2265,7 @@ export class KernelService {
       : []
     return {
       task,
-      detail: normalizeTaskDetail(record?.detail),
+      detail: normalizeTaskDetail(record?.detail, task.sourcePolicy),
       events: normalizedEvents,
     }
   }

@@ -2,7 +2,7 @@ use crate::diagnosis::{diagnose, DiagnosisInput};
 use crate::filename;
 use crate::history::{EventRecord, HistoryWriter, SampleRecord};
 use crate::protocol::{
-    now_ms, percent_of, ErrorInfo, ResumeSafety, ResumeStateFacts, ServerFacts, Spec, Status, TargetFacts, TaskDetail, TaskEvent, TaskRecord, TaskView, Telemetry, TimingDetail, Trend, VerificationFacts, EVENT_RING_CAPACITY,
+    now_ms, percent_of, ErrorInfo, ResumeSafety, ResumeStateFacts, ServerFacts, SourceView, Spec, Status, TargetFacts, TaskDetail, TaskEvent, TaskRecord, TaskView, Telemetry, TimingDetail, Trend, VerificationFacts, EVENT_RING_CAPACITY,
 };
 use crate::state;
 use crate::telemetry::{self, SpeedRing};
@@ -96,6 +96,8 @@ pub struct ViewState {
     pub peak_bps: u64, pub resume_safety: ResumeSafety, pub verified: Option<bool>,
     pub signed_url_expires_at: Option<u64>, pub tls_not_after: Option<u64>,
     pub server: Option<ServerFacts>,
+    pub source_policy: String, pub selected_source: Option<usize>, pub source_switches: u32,
+    pub sources: Vec<SourceView>,
     pub ewma: f64, pub last_byte_at: Option<Instant>, pub last_retry_at: Option<Instant>,
     pub last_throttle_at: Option<Instant>,
     pub resume_chunks_done: u64, pub resume_bytes_done: u64,
@@ -192,6 +194,10 @@ impl Task {
             signed_url_expires_at: None,
             tls_not_after: None,
             server: None,
+            source_policy: "single".to_string(),
+            selected_source: None,
+            source_switches: 0,
+            sources: Vec::new(),
             ewma: 0.0,
             last_byte_at: None,
             last_retry_at: None,
@@ -291,6 +297,10 @@ impl Task {
             signed_url_expires_at: stored.signed_url_expires_at,
             tls_not_after: stored.tls_not_after,
             server,
+            source_policy: stored.source_policy,
+            selected_source: stored.selected_source,
+            source_switches: stored.source_switches,
+            sources: stored.sources,
             ewma: 0.0,
             last_byte_at: None,
             last_retry_at: None,
@@ -472,6 +482,28 @@ impl Task {
 
     pub fn set_probe_ms(&self, ms: u64) {
         self.mutate(|inner| inner.view.probe_ms = ms, false);
+    }
+
+    /// Replace the request spec after a pre-transfer resolution step (e.g. a
+    /// Metalink `.meta4` document resolved to its file URLs and SHA-256). The
+    /// task record then shows the real object instead of the metadata URL.
+    pub fn replace_spec(&self, spec: Spec) {
+        self.lock().spec = spec;
+    }
+
+    /// Project the multi-source pool into the flat/detail views. URLs are
+    /// already redacted by the pool snapshot.
+    pub fn set_sources(&self, sources: Vec<SourceView>, selected: Option<usize>, policy: &str, switches: u32) {
+        self.mutate(
+            |inner| {
+                let view = &mut inner.view;
+                view.sources = sources;
+                view.selected_source = selected;
+                view.source_policy = policy.to_string();
+                view.source_switches = switches;
+            },
+            false,
+        );
     }
 
     pub fn set_target(&self, dir: &Path, file_name: &str, target: &Path) {
@@ -791,6 +823,10 @@ impl Task {
             elapsed_ms: Self::elapsed_ms(inner),
             signed_url_expires_at: view.signed_url_expires_at,
             tls_not_after: view.tls_not_after,
+            source_policy: view.source_policy.clone(),
+            selected_source: view.selected_source,
+            source_switches: view.source_switches,
+            sources: view.sources.clone(),
         }
     }
 
@@ -855,6 +891,10 @@ impl Task {
             resume_state: ResumeStateFacts { chunks_done: view.resume_chunks_done, bytes_done: view.resume_bytes_done, resumed_chunks: view.resumed_chunks, resumed_bytes: view.resumed_bytes, validators_matched: view.validators_matched, resume_decision: view.resume_decision.clone(), resume_reason: view.resume_reason.clone() },
             timing: TimingDetail { queued_ms, probe_ms: view.probe_ms, transfer_ms: view.transfer_ms.saturating_add(live_transfer), finalize_ms: view.finalize_ms.saturating_add(live_finalize) },
             diagnosis,
+            sources: view.sources.clone(),
+            selected_source: view.selected_source,
+            source_switches: view.source_switches,
+            source_policy: view.source_policy.clone(),
         }
     }
 

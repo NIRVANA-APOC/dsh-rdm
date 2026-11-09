@@ -381,8 +381,8 @@ def scenario_sessions_protocol_stats(fixture: Fixture, binary: str) -> None:
         check("stats.origins >= 1 after probe", (stats.get("origins") or 0) >= 1, stats.get("origins"))
         check("stats.tasks completed >= 3", field(stats, "tasks", "completed", default=0) >= 3, field(stats, "tasks"))
         check(
-            "stats.kernel.version 1.1.x",
-            str(field(stats, "kernel", "version", default="")).startswith("1.1."),
+            "stats.kernel.version 0.3.0-alpha.1",
+            str(field(stats, "kernel", "version", default="")) == "0.3.0-alpha.1",
             field(stats, "kernel", "version"),
         )
         check("stats.totals.bytesDownloaded > 0", field(stats, "totals", "bytesDownloaded", default=0) > 0, field(stats, "totals"))

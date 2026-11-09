@@ -1,0 +1,180 @@
+{
+  "iso": "alpine-standard-3.20.3-x86_64.iso",
+  "size": 219152384,
+  "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+  "mirrors": {
+    "official": "https://dl-cdn.alpinelinux.org/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso",
+    "bfsu": "https://mirrors.bfsu.edu.cn/alpine/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso",
+    "cernet": "https://mirrors.cernet.edu.cn/alpine/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso",
+    "nju": "https://mirror.nju.edu.cn/alpine/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso"
+  },
+  "results": [
+    {
+      "id": "single:official",
+      "label": "single official CDN",
+      "status": "completed",
+      "wallMs": 24239,
+      "transferMs": 23731,
+      "finalizeMs": 124,
+      "avgMbps": 8.62317943572998,
+      "effectiveMbps": 8.807045636509207,
+      "downloaded": 219152384,
+      "total": 219152384,
+      "policy": "single",
+      "selectedSource": 0,
+      "sourceSwitches": 0,
+      "sources": [
+        {
+          "id": 0,
+          "host": "dl-cdn.alpinelinux.org",
+          "state": "active",
+          "role": "primary",
+          "bytes": 219152384,
+          "bps": 2021266
+        }
+      ],
+      "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+      "expectedSelected": null
+    },
+    {
+      "id": "single:bfsu",
+      "label": "single BFSU mirror",
+      "status": "completed",
+      "wallMs": 2283,
+      "transferMs": 2106,
+      "finalizeMs": 120,
+      "avgMbps": 91.62647914886475,
+      "effectiveMbps": 99.24026590693258,
+      "downloaded": 219152384,
+      "total": 219152384,
+      "policy": "single",
+      "selectedSource": 0,
+      "sourceSwitches": 0,
+      "sources": [
+        {
+          "id": 0,
+          "host": "mirrors.bfsu.edu.cn",
+          "state": "active",
+          "role": "primary",
+          "bytes": 219152384,
+          "bps": 20344225
+        }
+      ],
+      "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+      "expectedSelected": null
+    },
+    {
+      "id": "select:official+bfsu",
+      "label": "select official + BFSU",
+      "status": "completed",
+      "wallMs": 2654,
+      "transferMs": 2079,
+      "finalizeMs": 125,
+      "avgMbps": 78.80844593048096,
+      "effectiveMbps": 100.52910052910052,
+      "downloaded": 219152384,
+      "total": 219152384,
+      "policy": "select",
+      "selectedSource": 1,
+      "sourceSwitches": 0,
+      "sources": [
+        {
+          "id": 0,
+          "host": "dl-cdn.alpinelinux.org",
+          "state": "standby",
+          "role": "primary",
+          "bytes": 0,
+          "bps": null
+        },
+        {
+          "id": 1,
+          "host": "mirrors.bfsu.edu.cn",
+          "state": "active",
+          "role": "alternate",
+          "bytes": 219152384,
+          "bps": 19412533
+        }
+      ],
+      "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+      "expectedSelected": 1
+    },
+    {
+      "id": "race:bfsu+cernet",
+      "label": "race BFSU + CERNET",
+      "status": "completed",
+      "wallMs": 2317,
+      "transferMs": 2123,
+      "finalizeMs": 124,
+      "avgMbps": 90.28077697753906,
+      "effectiveMbps": 98.44559585492227,
+      "downloaded": 219152384,
+      "total": 219152384,
+      "policy": "race",
+      "selectedSource": 0,
+      "sourceSwitches": 0,
+      "sources": [
+        {
+          "id": 0,
+          "host": "mirrors.bfsu.edu.cn",
+          "state": "active",
+          "role": "primary",
+          "bytes": 156220630,
+          "bps": 18833849
+        },
+        {
+          "id": 1,
+          "host": "mirrors.cernet.edu.cn",
+          "state": "standby",
+          "role": "alternate",
+          "bytes": 62931754,
+          "bps": 13921095
+        }
+      ],
+      "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+      "expectedSelected": null
+    },
+    {
+      "id": "race:bfsu+cernet+nju",
+      "label": "race BFSU + CERNET + NJU",
+      "status": "completed",
+      "wallMs": 2489,
+      "transferMs": 2114,
+      "finalizeMs": 119,
+      "avgMbps": 84.03699207305908,
+      "effectiveMbps": 98.86471144749291,
+      "downloaded": 219152384,
+      "total": 219152384,
+      "policy": "race",
+      "selectedSource": 0,
+      "sourceSwitches": 0,
+      "sources": [
+        {
+          "id": 0,
+          "host": "mirrors.bfsu.edu.cn",
+          "state": "active",
+          "role": "primary",
+          "bytes": 99391831,
+          "bps": 19893771
+        },
+        {
+          "id": 1,
+          "host": "mirrors.cernet.edu.cn",
+          "state": "standby",
+          "role": "alternate",
+          "bytes": 119760553,
+          "bps": 12376519
+        },
+        {
+          "id": 2,
+          "host": "mirror.nju.edu.cn",
+          "state": "standby",
+          "role": "alternate",
+          "bytes": 0,
+          "bps": null
+        }
+      ],
+      "sha256": "c66fc1e0470781f8ecbab8eb9cc8d906066171a5e0c6c1ab20aedc7061836d27",
+      "expectedSelected": null
+    }
+  ]
+}

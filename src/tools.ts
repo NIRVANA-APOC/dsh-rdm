@@ -34,15 +34,22 @@ import type { SessionCatalogLike, SessionMeta } from './session-catalog'
 import {
   DEFAULT_HISTORY_EVENTS,
   DEFAULT_HISTORY_SAMPLES,
-  DEFAULT_MAX_CONNECTIONS,
+  DEFAULT_SOURCE_RACE_BYTES,
   DEFAULT_WAIT_MS,
   DEFAULT_WAIT_PROBE_MS,
   MAX_CONNECTIONS,
   MAX_HISTORY_SAMPLES,
+  MAX_ADDITIONAL_SOURCES,
+  MAX_SOURCE_RACE_BYTES,
+  MAX_SOURCES,
   MAX_TASK_IDS,
   MAX_WAIT_MS,
   MAX_WAIT_PROBE_MS,
+  MIN_SOURCE_RACE_BYTES,
   MIN_WAIT_MS,
+  SOURCE_POLICIES,
+  SOURCE_ROLES,
+  SOURCE_STATES,
   TASK_EVENT_KINDS,
   TASK_STATUSES,
   TOOL_LIST_DEFAULT,
@@ -53,6 +60,9 @@ import {
   type Diagnosis,
   type KernelStatusView,
   type ServerFacts,
+  type SourceInput,
+  type SourcePolicy,
+  type SourceView,
   type TaskDetail,
   type TaskEvent,
   type TaskHistory,
@@ -303,6 +313,67 @@ function renderServerLines(server: ServerFacts): string[] {
   ]
 }
 
+/** Host portion of a URL, or the raw value when it cannot be parsed. */
+function hostOfUrl(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/**
+ * `source policy=... selected=... count=... switches=... [host=...]` summary of
+ * the task's multi-source pool (0.3.0). Always one bounded line.
+ */
+export function renderSourceLine(task: TaskView): string {
+  const selected =
+    task.selectedSource === null ? undefined : task.sources.find((source) => source.id === task.selectedSource)
+  const parts = [
+    `policy=${task.sourcePolicy}`,
+    `selected=${task.selectedSource === null ? DASH : task.selectedSource}`,
+    `count=${task.sources.length}`,
+    `switches=${task.sourceSwitches}`,
+  ]
+  if (selected !== undefined && selected.host !== '') parts.push(`host=${selected.host}`)
+  return `source ${parts.join(' ')}`
+}
+
+/** One per-source detail line (`src id=0 role=primary state=active host=...`). */
+export function renderSourceRow(source: SourceView): string {
+  const parts = [
+    `id=${source.id}`,
+    `role=${source.role}`,
+    `state=${source.state}`,
+    `active=${formatFlag(source.active)}`,
+    `host=${source.host !== '' ? source.host : DASH}`,
+    `bytes=${formatBytes(source.bytes)}`,
+    `bps=${formatRate(source.bps)}`,
+  ]
+  if (source.lastError !== null && source.lastError !== '') {
+    parts.push(`lastError="${collapse(source.lastError)}"`)
+  }
+  return `src ${parts.join(' ')}`
+}
+
+/** `mirrors=` line of a probe receipt; bounded to four discovered mirrors. */
+function renderMirrorsLine(mirrors: ServerFacts['mirrors']): string {
+  if (mirrors.length === 0) return 'mirrors=0'
+  const show = (mirror: ServerFacts['mirrors'][number]): string => {
+    const parts = [
+      `host=${mirror.url !== '' ? hostOfUrl(mirror.url) : DASH}`,
+      `priority=${mirror.priority === null ? DASH : mirror.priority}`,
+      `source=${mirror.source}`,
+    ]
+    if (mirror.geo !== null && mirror.geo !== '') parts.push(`geo=${mirror.geo}`)
+    return parts.join(' ')
+  }
+  const parts = mirrors.slice(0, 4).map(show)
+  const hidden = mirrors.length - parts.length
+  if (hidden > 0) parts.push(`+${hidden} more`)
+  return `mirrors=${mirrors.length} ${parts.join('; ')}`
+}
+
 /** Follow-up commands for a task (the receipt's `next` line). */
 function nextLine(task: TaskView): string {
   return `next rdm_tasks taskId=${task.id} | rdm_wait taskIds=["${task.id}"] timeoutSec=60`
@@ -319,6 +390,7 @@ export function renderDownloadReceipt(value: DownloadValue): string[] {
   if (task.path !== null && task.path !== '') lines.push(`file ${task.path}`)
   if (task.error !== null) lines.push(renderErrorLine(task.error))
   if (value.server !== null) lines.push(...renderServerLines(value.server))
+  lines.push(renderSourceLine(task))
   if (task.expectedSha256 !== null || task.sha256 !== null || task.verified !== null) {
     lines.push(renderVerifyLine(task.expectedSha256, task.sha256, task.verified))
   }
@@ -366,6 +438,7 @@ export function renderProbeReceipt(value: ProbeValue): string[] {
   lines.push(
     `warnings=${server.warnings.length > 0 ? server.warnings.join(',') : DASH} redirects=${server.redirects.length}`,
   )
+  lines.push(renderMirrorsLine(server.mirrors))
   const origin =
     server.origin === null
       ? DASH
@@ -453,6 +526,9 @@ export function renderTaskDetailReceipt(value: TaskDetailValue): string[] {
   } else {
     lines.push(...renderServerLines(detail.server))
   }
+  lines.push(renderSourceLine(task))
+  const sources = detail.sources.length > 0 ? detail.sources : task.sources
+  for (const source of sources.slice(0, MAX_SOURCES)) lines.push(renderSourceRow(source))
   lines.push(
     `target part=${detail.target.part ?? DASH} resume=${detail.target.resumeState ?? DASH}`,
   )
@@ -583,7 +659,7 @@ const ERROR_HINTS: Record<string, string> = {
   kernel_stopped: 'The plugin is unloading/reloading; retry after it registers rdm_* again.',
   kernel_not_running: 'The kernel child is not ready yet; retry in a moment.',
   protocol_mismatch:
-    'This plugin needs a protocol-2 (kernel 0.3.0) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
+    'This plugin needs a protocol-2 (kernel 0.3.0-alpha.1) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
   timeout:
     'The kernel is still busy. Check progress with rdm_tasks (taskId=...) and rdm_wait instead of resubmitting the same download.',
   cancelled: 'The call was cancelled; nothing else was changed.',
@@ -599,7 +675,7 @@ const ERROR_HINTS: Record<string, string> = {
   io: 'Local filesystem error; check that the destination directory exists and is writable.',
   unsupported: 'The kernel cannot honor this request; simplify the parameters (for example drop singleStream/insecure).',
   unsupported_method:
-    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.3.0 (dsh-rdm 0.3.0+) and retry.',
+    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.3.0-alpha.1 and retry.',
   internal: 'Unexpected kernel error; retry once, then report it to the user with the kernel stderr tail.',
 }
 
@@ -698,7 +774,7 @@ function waitErrorHint(error: ToolError): string {
 function historyErrorHint(taskId: string, error: ToolError): string {
   if (error.code === 'not_found') return 'rdm_tasks without taskId lists the existing ids.'
   if (error.code === 'unsupported_method') {
-    return 'upgrade the kernel binary to 0.3.0 (dsh-rdm 0.3.0+); the running build does not implement rdm_history.'
+    return 'upgrade the kernel binary to 0.3.0-alpha.1 (dsh-rdm 0.3.0-alpha.1+); the running build does not implement rdm_history.'
   }
   return `retry rdm_history taskId=${taskId}; if it persists, report the kernel error to the user.`
 }
@@ -959,6 +1035,27 @@ const CHECKSUM_SCHEMA: SchemaNode = objectNode({
   crc32c: nullableNode({ type: 'string' }),
 })
 
+/** One redacted source row of a multi-source download (0.3.0). */
+const SOURCE_VIEW_SCHEMA: SchemaNode = objectNode({
+  id: num(),
+  url: str(),
+  host: str(),
+  state: enumOf(SOURCE_STATES),
+  role: enumOf(SOURCE_ROLES),
+  bytes: num(),
+  bps: nullableNode({ type: 'number' }),
+  active: { type: 'boolean', required: true },
+  lastError: nullableNode({ type: 'string' }),
+})
+
+/** One mirror discovered on a probe response (Metalink/HTTP, 0.3.0). */
+const MIRROR_SCHEMA: SchemaNode = objectNode({
+  url: str(),
+  priority: nullableNode({ type: 'number' }),
+  geo: nullableNode({ type: 'string' }),
+  source: str(),
+})
+
 /** Recoverable tool failure schema (design §3.5). */
 const TOOL_ERROR_SCHEMA: SchemaNode = objectNode({
   code: str(),
@@ -1052,6 +1149,7 @@ const SERVER_FACTS_SCHEMA: SchemaNode = objectNode({
       lastAt: nullableNode({ type: 'number' }),
     }),
   ),
+  mirrors: arrayNode(MIRROR_SCHEMA),
 })
 
 /** `TaskView` output schema. */
@@ -1107,6 +1205,10 @@ const TASK_VIEW_SCHEMA: SchemaNode = objectNode({
   elapsedMs: num(),
   signedUrlExpiresAt: nullableNode({ type: 'number' }),
   tlsNotAfter: nullableNode({ type: 'number' }),
+  sourcePolicy: enumOf(SOURCE_POLICIES),
+  selectedSource: nullableNode({ type: 'number' }),
+  sourceSwitches: num(),
+  sources: arrayNode(SOURCE_VIEW_SCHEMA),
 })
 
 /** `TaskDetail` output schema. */
@@ -1161,6 +1263,10 @@ const TASK_DETAIL_SCHEMA: SchemaNode = objectNode({
       message: str(),
     }),
   ),
+  sourcePolicy: enumOf(SOURCE_POLICIES),
+  selectedSource: nullableNode({ type: 'number' }),
+  sourceSwitches: num(),
+  sources: arrayNode(SOURCE_VIEW_SCHEMA),
 })
 
 /** `Aggregate` output schema. */
@@ -1290,6 +1396,11 @@ interface DownloadArgs {
   singleStream?: boolean
   proxy?: string
   insecure?: boolean
+  sources?: unknown
+  sourcePolicy?: SourcePolicy
+  sourceRaceBytes?: number
+  discoverSources?: boolean
+  metalinkFile?: string
   waitProbeMs?: number
   waitSec?: number
 }
@@ -1571,55 +1682,75 @@ export function createRdmTools(
       name: 'rdm_download',
       description:
         'Start an HTTP(S) download in the resident RDM kernel and return its task view. ' +
-        'Waits up to waitProbeMs (default 2000) for the preflight server facts; returns without them ' +
-        'when the probe is slower than that (the transfer keeps running). Pass waitSec (max 300) to ' +
-        'also block until the task settles.',
+        'Waits waitProbeMs (default 2000) for preflight server facts, then waitSec (max 300) ' +
+        'blocks until it settles.',
       parameters: {
         url: { type: 'string', required: true, description: 'Absolute http:// or https:// URL.' },
-        dir: {
-          type: 'string',
-          description: 'Absolute destination directory (default: plugin defaultDir, then the DSH host cwd).',
-        },
-        fileName: { type: 'string', description: 'Output file-name override (sanitized by the kernel).' },
+        dir: { type: 'string', description: 'Absolute destination directory (default: plugin config).' },
+        fileName: { type: 'string', description: 'Output file name (kernel-sanitized).' },
         connections: {
           type: 'number',
-          description: `Parallel connections 1..${MAX_CONNECTIONS} (default: plugin config, normally 8).`,
+          description: `Connections 1..${MAX_CONNECTIONS} (default: plugin config).`,
         },
         maxConnections: {
           type: 'number',
           description:
-            `Adaptive concurrency ceiling 1..${MAX_CONNECTIONS} (default: plugin config, ${DEFAULT_MAX_CONNECTIONS}). ` +
-            'Passed to the kernel; the controller may grow from `connections` up to this while throughput is healthy.',
+            `Ceiling 1..${MAX_CONNECTIONS} (default: plugin config); ` +
+            'the controller may grow toward it.',
         },
         headers: {
           type: 'json',
-          description: 'Extra request headers as a JSON object, e.g. {"Authorization":"Bearer ..."}.',
+          description: 'Extra headers as a JSON object, e.g. {"Authorization":"Bearer ..."}.',
         },
-        cookie: { type: 'string', description: 'Cookie header value, e.g. "a=1; b=2".' },
+        cookie: { type: 'string', description: 'Cookie header value.' },
         referer: { type: 'string', description: 'Referer header value.' },
         userAgent: { type: 'string', description: 'User-Agent override.' },
         expectedSha256: {
           type: 'string',
-          description: '64-hex SHA-256 the kernel verifies before finalizing the file.',
+          description: '64-hex SHA-256 verified before finalizing.',
         },
         speedLimitBps: {
           type: 'number',
-          description: 'Per-task bandwidth cap in bytes/second (0/omitted = unlimited).',
+          description: 'Bandwidth cap in bytes/second (0 = unlimited).',
         },
-        resume: { type: 'boolean', description: 'Resume from existing .part state (default true).' },
+        resume: { type: 'boolean', description: 'Resume from .part (default true).' },
         singleStream: {
           type: 'boolean',
-          description: 'Force one rangeless GET; useful for origins without range support.',
+          description: 'Force one rangeless GET (no byte ranges).',
         },
-        proxy: { type: 'string', description: 'HTTP proxy URL, e.g. http://127.0.0.1:7890.' },
-        insecure: { type: 'boolean', description: 'Accept invalid TLS certificates (debug only).' },
+        proxy: { type: 'string', description: 'HTTP proxy URL.' },
+        insecure: { type: 'boolean', description: 'Accept invalid TLS certs (debug).' },
+        sources: {
+          type: 'json',
+          description:
+            `Candidate mirrors: JSON array of {url, headers?, cookie?, priority?}; ` +
+            `url is source 0 (max ${MAX_ADDITIONAL_SOURCES} mirrors).`,
+        },
+        sourcePolicy: {
+          type: 'string',
+          enum: [...SOURCE_POLICIES],
+          description: 'single|select|failover|hedge|race (default: select with sources).',
+        },
+        sourceRaceBytes: {
+          type: 'number',
+          description:
+            `Hedge window bytes (${MIN_SOURCE_RACE_BYTES}..${MAX_SOURCE_RACE_BYTES}, default ${DEFAULT_SOURCE_RACE_BYTES}).`,
+        },
+        discoverSources: {
+          type: 'boolean',
+          description: 'Use Metalink/HTTP Link mirrors (default true).',
+        },
+        metalinkFile: {
+          type: 'string',
+          description: 'File to select from a multi-file .meta4 document.',
+        },
         waitProbeMs: {
           type: 'number',
-          description: 'Max ms to wait inline for preflight server facts (0..5000, default 2000).',
+          description: 'Preflight wait in ms (0..5000, default 2000).',
         },
         waitSec: {
           type: 'number',
-          description: 'Also block until the task settles: 0..300 s (default 0 = return right after preflight).',
+          description: 'Block until settled (0..300 s, default 0).',
         },
       },
       output: {
@@ -1657,6 +1788,11 @@ export function createRdmTools(
               ...(args.singleStream === undefined ? {} : { singleStream: args.singleStream }),
               ...(args.proxy === undefined ? {} : { proxy: args.proxy }),
               ...(args.insecure === undefined ? {} : { insecure: args.insecure }),
+              ...(args.sources === undefined ? {} : { sources: args.sources as SourceInput[] }),
+              ...(args.sourcePolicy === undefined ? {} : { sourcePolicy: args.sourcePolicy }),
+              ...(args.sourceRaceBytes === undefined ? {} : { sourceRaceBytes: args.sourceRaceBytes }),
+              ...(args.discoverSources === undefined ? {} : { discoverSources: args.discoverSources }),
+              ...(args.metalinkFile === undefined ? {} : { metalinkFile: args.metalinkFile }),
               ...(sessionId === null ? {} : { sessionId }),
               waitProbeMs,
             },
@@ -1695,14 +1831,14 @@ export function createRdmTools(
     defineTool<ProbeArgs, ProbeValue>({
       name: 'rdm_probe',
       description:
-        'Inspect an HTTP(S) URL without downloading the body. Returns server facts (final URL, size, ' +
-        'type, range support, resume safety, signed-URL/TLS expiry, redirects, timing, origin history), ' +
-        'stable warning codes and an advisory transfer plan. Use it before rdm_download for an unknown source.',
+        'Inspect an HTTP(S) URL without downloading it. Returns server facts (final URL, size, ' +
+        'type, ranges, resume safety, expiry, redirects, timing, origin history, mirrors), warning codes ' +
+        'and an advisory plan. Use it before rdm_download for an unknown source.',
       parameters: {
         url: { type: 'string', required: true, description: 'Absolute http:// or https:// URL.' },
         headers: {
           type: 'json',
-          description: 'Extra request headers as a JSON object, e.g. {"Authorization":"Bearer ..."}.',
+          description: 'Extra headers as a JSON object, e.g. {"Authorization":"Bearer ..."}.',
         },
         cookie: { type: 'string', description: 'Cookie header value.' },
         referer: { type: 'string', description: 'Referer header value.' },
@@ -1745,8 +1881,8 @@ export function createRdmTools(
       name: 'rdm_tasks',
       description:
         'Read download state. With taskId: one task plus telemetry windows, server facts, target, ' +
-        'verification, timing, diagnosis and recent events. Without taskId: kernel status, aggregate ' +
-        'counters and bounded task views. Task state is authoritative; events are diagnostic only.',
+        'verification, timing, diagnosis, events. Without taskId: kernel status, aggregate ' +
+        'counters and bounded task views. Task state is authoritative; events diagnostic.',
       parameters: {
         taskId: {
           type: 'string',
@@ -1987,7 +2123,7 @@ export function createRdmTools(
       name: 'rdm_history',
       description:
         'Read the persisted per-sample telemetry and event recording for one task (JSONL under the kernel data dir). ' +
-        'Survives kernel restarts; use it to replay a transfer and tune the kernel. ' +
+        'Survives restarts; use it to replay a transfer and tune the kernel. ' +
         'Returns bounded samples/events plus their file paths.',
       parameters: {
         taskId: { type: 'string', required: true, description: 'Task id, e.g. "t_9f3a1c2d5e6b7a80".' },

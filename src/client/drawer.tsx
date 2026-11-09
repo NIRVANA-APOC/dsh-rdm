@@ -23,7 +23,7 @@ import type { DetailState } from './data'
 import { eventDetail, formatBytes, formatClock, formatDuration, formatElapsed, formatSpeed, hashPrefix, shortHash } from './format'
 import { canStop, taskPath } from './model'
 import { LiveRegion, Note, Seal } from './primitives'
-import type { TFunction, TaskDetail, TaskEvent, TaskView } from './types'
+import type { MirrorSource, SourceView, TFunction, TaskDetail, TaskEvent, TaskView } from './types'
 
 /** One label/value pair in a fact grid. */
 function Fact({ label, value, mono = false, wide = false }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
@@ -127,6 +127,15 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
   const target = full?.target ?? null
   const timing = full?.timing ?? null
   const resumeState = full?.resumeState ?? null
+  // Multi-source facts (0.3.0). An old host omits them, so every read falls
+  // back to the task view and finally to an honest empty state.
+  const detailSources = full?.sources ?? []
+  const sources: SourceView[] = detailSources.length > 0 ? detailSources : task.sources
+  const sourcePolicy = full?.sourcePolicy ?? task.sourcePolicy
+  const selectedSource = full?.selectedSource ?? task.selectedSource
+  const sourceSwitches = full?.sourceSwitches ?? task.sourceSwitches
+  const selectedHost =
+    selectedSource === null ? null : sources.find((source) => source.id === selectedSource)?.host ?? null
 
   return (
     <div className="rdm2-drawer" id={props.id} role="region" aria-label={t('drawer.regionLabel', { name: task.fileName || task.id })}>
@@ -303,6 +312,51 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
               <Fact label={t('facts.retries')} value={task.retries === null ? '—' : String(task.retries)} />
             </dl>
           </Section>
+
+          <Section title={t('drawer.sources')}>
+            {sourcePolicy === null && sources.length === 0 ? (
+              <Absent text={t('drawer.notRecorded')} />
+            ) : (
+              <>
+                <dl className="rdm2-facts">
+                  <Fact
+                    label={t('facts.sourcePolicy')}
+                    value={sourcePolicy === null ? '—' : sourceLabel(t, 'source.policy', sourcePolicy)}
+                  />
+                  <Fact
+                    label={t('facts.selectedSource')}
+                    value={selectedHost !== null && selectedHost !== '' ? selectedHost : selectedSource === null ? '—' : String(selectedSource)}
+                    mono
+                  />
+                  <Fact label={t('facts.sourceSwitches')} value={sourceSwitches === null ? '—' : String(sourceSwitches)} />
+                  <Fact label={t('facts.sourceCount')} value={String(sources.length)} />
+                </dl>
+                {sources.length > 0 ? (
+                  <ul className="rdm2-sources" aria-label={t('drawer.sources')}>
+                    {sources.map((source) => (
+                      <li className="rdm2-source" key={`${source.id}:${source.url}`} data-state={source.state}>
+                        <span className="rdm2-source-host rdm2-mono">{source.host !== '' ? source.host : '—'}</span>
+                        <span className="rdm2-source-meta">
+                          {[
+                            sourceLabel(t, 'source.state', source.state),
+                            sourceLabel(t, 'source.role', source.role),
+                            source.active ? t('facts.sourceSelected') : '',
+                            formatBytes(source.bytes),
+                            formatSpeed(source.bps),
+                          ]
+                            .filter((part) => part !== '')
+                            .join('   ')}
+                        </span>
+                        {source.lastError !== null && source.lastError !== '' ? (
+                          <span className="rdm2-source-error">{source.lastError}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            )}
+          </Section>
         </div>
 
         <div className="rdm2-drawer-col">
@@ -320,6 +374,7 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
                 <Fact label={t('facts.signedUrl')} value={server.signedUrl?.state ?? '—'} />
                 <Fact label={t('facts.tls')} value={server.tls?.state ?? '—'} />
                 <Fact label={t('facts.rateLimit')} value={rateLimitText(server.rateLimit, t)} wide />
+                <Fact label={t('facts.mirrors')} value={mirrorText(server.mirrors, t)} wide />
               </dl>
             )}
           </Section>
@@ -414,6 +469,32 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
       </div>
     </div>
   )
+}
+
+/** Localized source vocabulary value, falling back to the raw kernel token. */
+function sourceLabel(t: TFunction, prefix: 'source.policy' | 'source.state' | 'source.role', value: string): string {
+  const key = `${prefix}.${value}`
+  const localized = t(key)
+  return localized === key ? value : localized
+}
+
+/** Compact mirror list for the server section: hosts plus a hidden count. */
+function mirrorText(mirrors: MirrorSource[], t: TFunction): string {
+  if (mirrors.length === 0) return '—'
+  const shown = mirrors.slice(0, 3)
+  const hosts = shown
+    .map((mirror) => {
+      try {
+        return new URL(mirror.url).host
+      } catch {
+        return ''
+      }
+    })
+    .filter((host) => host !== '')
+  const hidden = mirrors.length - shown.length
+  const text = hosts.join('   ')
+  if (hidden > 0) return text === '' ? t('drawer.mirrorMore', { n: hidden }) : `${text}   ${t('drawer.mirrorMore', { n: hidden })}`
+  return text === '' ? String(mirrors.length) : text
 }
 
 function rateLimitText(rateLimit: { limit: number | null; remaining: number | null; retryAfterSecs: number | null } | null, t: TFunction): string {
