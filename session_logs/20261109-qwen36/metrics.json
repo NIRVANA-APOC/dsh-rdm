@@ -1,0 +1,1012 @@
+{
+  "package": "session_logs/20261109-qwen36",
+  "generated_by": ".design/20261109-qwen36-metrics.py (analyst); reproducible from package copies only",
+  "generated_at": "2026-11-09T13:55:40.531+08:00",
+  "rate_basis": {
+    "active_transfer_Q4": "kernel task-record timing.transferMs = 251739 ms (detail.timing.transferMs; identical to the 'finished in 251739 ms' event) -> 84.71 MiB/s = 22,360,456,160 / 251.739 s",
+    "active_transfer_Q6": "sum of per-phase transfer windows from the kernel event stream: 185758 + 107719 + 121764 = 415241 ms (restart downtime 177228 + 27027 = 204255 ms excluded) -> 73.13 MiB/s = 31,843,777,504 / 415.241 s",
+    "restored_record_note": "the restored Q6 task record's timing.transferMs is 229845 ms and covers only the two post-restart phases (phase A's timer did not survive the 0.2.1 -> 0.2.2 restart); it is not the Q6 whole-run basis",
+    "formula": "MB/s = bytes / (transfer_ms/1000) / 1e6; MiB/s = bytes / (transfer_ms/1000) / 1048576",
+    "verify_basis": "Q4 timing.finalizeMs = 11475 ms (event span 11477 ms); Q6 timing.finalizeMs = 16459 ms (event span 16459 ms)"
+  },
+  "session": {
+    "model": "Qwen3.6-35B-A3B-GGUF",
+    "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
+    "source_host": "www.modelscope.cn (cdn-lfs-cn-1.modelscope.cn)",
+    "dest_dir": "D:\\llm\\models",
+    "kernel_data_dir": "D:\\llm\\models\\.dsh-rdm-data",
+    "session_note": "live ModelScope downloads during the dsh-rdm 0.2.2 pass; Q4 on the 0.2.1 build, Q6 spans 0.2.1 start -> 0.2.2 resume x2 (kernel restarts)"
+  },
+  "downloads": [
+    {
+      "label": "Q4",
+      "taskId": "t_eff93d4e8e7cbb78",
+      "file": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+      "bytes": 22360456160,
+      "sha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+      "verified": true,
+      "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+      "phases": 1,
+      "history_samples": 1604,
+      "history_meta_lines": 0,
+      "transfer_ms": 251739,
+      "transfer_window_basis": "kernel task-record timing.transferMs (detail.timing.transferMs=251739 ms; same as the 'finished in 251739 ms' event)",
+      "avg_MB_s": 88.82396513849662,
+      "avg_MiB_s": 84.70913423394835,
+      "verify_ms": 11477,
+      "finalize_ms_record": 11475,
+      "record_timing": {
+        "finalizeMs": 11475,
+        "probeMs": 377,
+        "queuedMs": 0,
+        "transferMs": 251739
+      }
+    },
+    {
+      "label": "Q6",
+      "taskId": "t_0c48feb24198fef1",
+      "file": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+      "bytes": 31843777504,
+      "sha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+      "verified": true,
+      "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+      "phases": 3,
+      "history_samples": 2644,
+      "history_meta_lines": 2,
+      "transfer_ms": 415241,
+      "transfer_window_basis": "sum of per-phase kernel event windows (started -> interrupted / started -> 'finished in'); restart downtime excluded",
+      "avg_MB_s": 76.68745982212738,
+      "avg_MiB_s": 73.1348608227991,
+      "verify_ms": 16459,
+      "finalize_ms_record": 16459,
+      "record_timing": {
+        "finalizeMs": 16459,
+        "probeMs": 246,
+        "queuedMs": 0,
+        "transferMs": 229845
+      }
+    }
+  ],
+  "q4": {
+    "label": "Q4",
+    "build": "0.2.1 / kernel 1.1.0 (history has no meta)",
+    "taskId": "t_eff93d4e8e7cbb78",
+    "file": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "dir": "D:\\llm\\models",
+    "specConnections": 16,
+    "totalBytes": 22360456160,
+    "started_local": "2026-11-09T13:30:39.007+08:00",
+    "transfer_started_local": "2026-11-09T13:30:39.411+08:00",
+    "transfer_finished_local": "2026-11-09T13:34:51.151+08:00",
+    "completed_local": "2026-11-09T13:35:02.628+08:00",
+    "transfer_ms": 251739,
+    "wall_to_completed_ms": 263621,
+    "verify_ms": 11477,
+    "record_timing": {
+      "finalizeMs": 11475,
+      "probeMs": 377,
+      "queuedMs": 0,
+      "transferMs": 251739
+    },
+    "finalize_ms_record": 11475,
+    "transferredBytes": 22360456160,
+    "avgBps_transfer_window": 88823965.13849662,
+    "avgBps_transfer_window_MiB_s": 84.70913423394835,
+    "avgBps_taskview": 0,
+    "peakBps_taskview": 138096155,
+    "peakBps_taskview_MiB_s": 131.69875621795654,
+    "peakWorkers": 128,
+    "targetWorkers_final": 76,
+    "requestedConnections_field": 1,
+    "retries": 3,
+    "retry_events": [
+      {
+        "t": 1794202410221,
+        "local": "2026-11-09T13:33:30.221+08:00",
+        "message": "no body data for 30 s (stalled connection)",
+        "chunk": 8942256128,
+        "attempt": 1,
+        "delay_ms": 1000,
+        "stall_s": 30,
+        "stall_began_local": "2026-11-09T13:33:00.221+08:00"
+      },
+      {
+        "t": 1794202475329,
+        "local": "2026-11-09T13:34:35.329+08:00",
+        "message": "no body data for 10 s (stalled connection)",
+        "chunk": 21088960512,
+        "attempt": 1,
+        "delay_ms": 1000,
+        "stall_s": 10,
+        "stall_began_local": "2026-11-09T13:34:25.329+08:00"
+      },
+      {
+        "t": 1794202478162,
+        "local": "2026-11-09T13:34:38.162+08:00",
+        "message": "no body data for 10 s (stalled connection)",
+        "chunk": 22045261824,
+        "attempt": 1,
+        "delay_ms": 1000,
+        "stall_s": 10,
+        "stall_began_local": "2026-11-09T13:34:28.162+08:00"
+      }
+    ],
+    "controller": {
+      "grow": 23,
+      "revert": 4,
+      "shrink": 4,
+      "backoff": 0,
+      "rebuild": 1,
+      "freeze": 0,
+      "unfreeze": 0,
+      "tail_freeze": 0,
+      "other": 0
+    },
+    "controller_messages": [
+      {
+        "local": "2026-11-09T13:30:40.414+08:00",
+        "message": "grow to 18: per-connection 0.8 MiB/s, instant 12.4 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:30:47.412+08:00",
+        "message": "grow to 20: per-connection 1.4 MiB/s, instant 24.7 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:30:50.412+08:00",
+        "message": "grow to 22: per-connection 0.8 MiB/s, instant 16.4 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:30:53.412+08:00",
+        "message": "grow to 24: per-connection 1.5 MiB/s, instant 32.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:30:56.412+08:00",
+        "message": "grow to 27: per-connection 1.6 MiB/s, instant 38.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:30:57.412+08:00",
+        "message": "revert to 24: growth diluted per-connection rate"
+      },
+      {
+        "local": "2026-11-09T13:30:59.412+08:00",
+        "message": "pool rebuild #1: 38.2 -> 11.6 MiB/s at 24 workers"
+      },
+      {
+        "local": "2026-11-09T13:30:59.412+08:00",
+        "message": "grow to 27: probe after pool rebuild"
+      },
+      {
+        "local": "2026-11-09T13:31:09.412+08:00",
+        "message": "revert to 24: pool rebuild and probe did not recover throughput"
+      },
+      {
+        "local": "2026-11-09T13:31:12.412+08:00",
+        "message": "grow to 27: per-connection 0.4 MiB/s, instant 9.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:15.412+08:00",
+        "message": "grow to 30: per-connection 0.4 MiB/s, instant 11.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:18.411+08:00",
+        "message": "grow to 33: per-connection 2.8 MiB/s, instant 84.9 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:23.411+08:00",
+        "message": "grow to 37: per-connection 2.7 MiB/s, instant 90.6 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:28.411+08:00",
+        "message": "grow to 41: per-connection 3.0 MiB/s, instant 110.4 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:33.411+08:00",
+        "message": "grow to 46: per-connection 2.7 MiB/s, instant 109.9 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:41.411+08:00",
+        "message": "grow to 51: per-connection 2.4 MiB/s, instant 109.9 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:47.411+08:00",
+        "message": "grow to 57: per-connection 2.2 MiB/s, instant 110.3 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:51.411+08:00",
+        "message": "grow to 64: per-connection 1.9 MiB/s, instant 108.7 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:54.411+08:00",
+        "message": "grow to 72: per-connection 1.7 MiB/s, instant 111.3 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:31:57.411+08:00",
+        "message": "grow to 81: per-connection 1.6 MiB/s, instant 112.7 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:04.411+08:00",
+        "message": "grow to 91: per-connection 1.4 MiB/s, instant 111.4 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:07.411+08:00",
+        "message": "grow to 102: per-connection 1.3 MiB/s, instant 113.8 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:08.411+08:00",
+        "message": "revert to 91: growth diluted per-connection rate"
+      },
+      {
+        "local": "2026-11-09T13:32:23.411+08:00",
+        "message": "grow to 102: per-connection 1.3 MiB/s, instant 114.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:31.411+08:00",
+        "message": "grow to 114: per-connection 1.1 MiB/s, instant 113.2 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:32.412+08:00",
+        "message": "revert to 102: growth diluted per-connection rate"
+      },
+      {
+        "local": "2026-11-09T13:32:47.411+08:00",
+        "message": "grow to 114: per-connection 1.1 MiB/s, instant 114.7 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:32:50.411+08:00",
+        "message": "grow to 128: per-connection 1.0 MiB/s, instant 112.8 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:34:23.411+08:00",
+        "message": "shrink to 112: average rate falling"
+      },
+      {
+        "local": "2026-11-09T13:34:24.411+08:00",
+        "message": "shrink to 98: average rate falling"
+      },
+      {
+        "local": "2026-11-09T13:34:25.412+08:00",
+        "message": "shrink to 86: average rate falling"
+      },
+      {
+        "local": "2026-11-09T13:34:28.413+08:00",
+        "message": "shrink to 76: average rate falling"
+      }
+    ],
+    "shrink_sequence": [
+      {
+        "local": "2026-11-09T13:34:23.411+08:00",
+        "message": "shrink to 112: average rate falling",
+        "target": 112
+      },
+      {
+        "local": "2026-11-09T13:34:24.411+08:00",
+        "message": "shrink to 98: average rate falling",
+        "target": 98
+      },
+      {
+        "local": "2026-11-09T13:34:25.412+08:00",
+        "message": "shrink to 86: average rate falling",
+        "target": 86
+      },
+      {
+        "local": "2026-11-09T13:34:28.413+08:00",
+        "message": "shrink to 76: average rate falling",
+        "target": 76
+      }
+    ],
+    "tail": {
+      "last_grow_local": "2026-11-09T13:32:50.411+08:00",
+      "first_shrink_local": "2026-11-09T13:34:23.411+08:00",
+      "bytes_from_last_grow": 11083778763,
+      "last_grow_to_finish_ms": 132217,
+      "first_shrink_to_finish_ms": 39217,
+      "stall_wait_total_s": 50,
+      "rate_plateau_bps_mean_MiB_s": 84.43188339847367
+    },
+    "verified": true,
+    "sha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+    "expectedSha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+    "history": {
+      "samples": 1604,
+      "events": 42,
+      "meta_lines": 0,
+      "transferred_field": false,
+      "first_local": "2026-11-09T13:30:39.519+08:00",
+      "last_local": "2026-11-09T13:34:51.125+08:00",
+      "span_s": 251.606,
+      "cadence_hz": 6.371072231981749,
+      "max_gap_ms": 207,
+      "stats": {
+        "samples": 1604,
+        "bps_mean_MiB_s": 84.37924506717786,
+        "bps_p50_MiB_s": 108.18161010742188,
+        "bps_p95_MiB_s": 114.36584477424621,
+        "bps_max_MiB_s": 126.5177412033081,
+        "workers_min": 1,
+        "workers_max": 128,
+        "stalled_max_ms": 499
+      }
+    },
+    "progress": {
+      "rows": 133,
+      "first_local": "2026-11-09T13:30:39.008+08:00",
+      "last_local": "2026-11-09T13:35:03.160+08:00",
+      "avg_via_progress_bps": 84650090.76816612,
+      "final_target": 76
+    },
+    "rdm_history_tool_result": {
+      "captured_local": null,
+      "keys": [
+        "events",
+        "eventsPath",
+        "offset",
+        "sampleStride",
+        "samples",
+        "samplesPath",
+        "taskId",
+        "totalEvents",
+        "totalSamples",
+        "truncated"
+      ],
+      "totalSamples": 1604,
+      "builds": null,
+      "meta": null
+    }
+  },
+  "q6": {
+    "label": "Q6",
+    "taskId": "t_0c48feb24198fef1",
+    "file": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+    "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+    "dir": "D:\\llm\\models",
+    "specConnections": 16,
+    "totalBytes": 31843777504,
+    "started_local": "2026-11-09T13:35:39.237+08:00",
+    "completed_local": "2026-11-09T13:46:16.179+08:00",
+    "transfer_finished_local": "2026-11-09T13:45:59.720+08:00",
+    "wall_to_completed_ms": 636942,
+    "verify_ms": 16459,
+    "record_timing": {
+      "finalizeMs": 16459,
+      "probeMs": 246,
+      "queuedMs": 0,
+      "transferMs": 229845
+    },
+    "finalize_ms_record": 16459,
+    "downtime_gaps": {
+      "A_to_B_s": 177.228,
+      "B_to_C_s": 27.027
+    },
+    "active_transfer_ms": 415241,
+    "active_avg_MB_s": 76.68745982212738,
+    "active_avg_MiB_s": 73.1348608227991,
+    "overall_avg_MB_s": 49.994783675750696,
+    "phases": [
+      {
+        "phase": "A",
+        "build": "0.2.1 / kernel 1.1.0 (no meta)",
+        "attribution_basis": "pre-meta",
+        "kernelVersion": null,
+        "pid": null,
+        "meta_local": null,
+        "transfer_start_local": "2026-11-09T13:35:39.614+08:00",
+        "transfer_end_local": "2026-11-09T13:38:45.372+08:00",
+        "transfer_ms": 185758,
+        "bytes": 14008445673,
+        "start_bytes": 0,
+        "end_bytes": 14008445673,
+        "transfer_window_basis": "kernel events: started -> interrupted (A/B) / started -> 'finished in' (C)",
+        "avg_MB_s": 75.4123411804606,
+        "avg_MiB_s": 71.91881292387066,
+        "history_samples": 1193,
+        "history_first_local": "2026-11-09T13:35:39.716+08:00",
+        "history_last_local": "2026-11-09T13:38:45.284+08:00",
+        "history_bps_mean_MiB_s": 70.70486445159145,
+        "history_workers_max": 128,
+        "transferred_field_present": false,
+        "controller": {
+          "grow": 20,
+          "revert": 1,
+          "shrink": 0,
+          "backoff": 0,
+          "rebuild": 0,
+          "freeze": 0,
+          "unfreeze": 0,
+          "tail_freeze": 0,
+          "other": 0
+        },
+        "retries": 0,
+        "progress_rows": 93,
+        "progress_downloaded_first": 0,
+        "progress_downloaded_last": 13703249678,
+        "progress_target_end": 128,
+        "history_meta_lines": 0
+      },
+      {
+        "phase": "B",
+        "build": "0.2.2 / kernel 1.2.0",
+        "attribution_basis": "meta#1",
+        "kernelVersion": "1.2.0",
+        "pid": 52800,
+        "meta_local": "2026-11-09T13:41:42.962+08:00",
+        "transfer_start_local": "2026-11-09T13:41:42.962+08:00",
+        "transfer_end_local": "2026-11-09T13:43:30.681+08:00",
+        "transfer_ms": 107719,
+        "bytes": 7324399286,
+        "start_bytes": 14008445673,
+        "end_bytes": 21332844959,
+        "transfer_window_basis": "kernel events: started -> interrupted (A/B) / started -> 'finished in' (C)",
+        "avg_MB_s": 67.99542593228678,
+        "avg_MiB_s": 64.8454913447254,
+        "history_samples": 684,
+        "history_first_local": "2026-11-09T13:41:43.063+08:00",
+        "history_last_local": "2026-11-09T13:43:30.606+08:00",
+        "history_bps_mean_MiB_s": 64.13055904566893,
+        "history_workers_max": 41,
+        "transferred_field_present": true,
+        "controller": {
+          "grow": 10,
+          "revert": 1,
+          "shrink": 0,
+          "backoff": 0,
+          "rebuild": 0,
+          "freeze": 2,
+          "unfreeze": 1,
+          "tail_freeze": 0,
+          "other": 0
+        },
+        "retries": 0,
+        "progress_rows": 54,
+        "progress_downloaded_first": 14008445673,
+        "progress_downloaded_last": 21078083256,
+        "progress_target_end": 41,
+        "history_meta_lines": 1
+      },
+      {
+        "phase": "C",
+        "build": "0.2.2 / kernel 1.2.0",
+        "attribution_basis": "meta#2",
+        "kernelVersion": "1.2.0",
+        "pid": 46656,
+        "meta_local": "2026-11-09T13:43:57.956+08:00",
+        "transfer_start_local": "2026-11-09T13:43:57.956+08:00",
+        "transfer_end_local": "2026-11-09T13:45:59.720+08:00",
+        "transfer_ms": 121764,
+        "bytes": 10510932545,
+        "start_bytes": 21332844959,
+        "end_bytes": 31843777504,
+        "transfer_window_basis": "kernel events: started -> interrupted (A/B) / started -> 'finished in' (C)",
+        "avg_MB_s": 86.32216866233041,
+        "avg_MiB_s": 82.32323518975298,
+        "history_samples": 767,
+        "history_first_local": "2026-11-09T13:43:58.056+08:00",
+        "history_last_local": "2026-11-09T13:45:59.662+08:00",
+        "history_bps_mean_MiB_s": 82.31183069594681,
+        "history_workers_max": 102,
+        "transferred_field_present": true,
+        "controller": {
+          "grow": 8,
+          "revert": 0,
+          "shrink": 0,
+          "backoff": 0,
+          "rebuild": 0,
+          "freeze": 1,
+          "unfreeze": 0,
+          "tail_freeze": 1,
+          "other": 0
+        },
+        "retries": 1,
+        "progress_rows": 62,
+        "progress_downloaded_first": 21332844959,
+        "progress_downloaded_last": 31843777504,
+        "progress_target_end": 102,
+        "history_meta_lines": 1
+      }
+    ],
+    "resume_state_receipts": [
+      {
+        "local": "2026-11-09T13:38:45.372+08:00",
+        "message": "resume state saved: 125 chunks / 14008445673 bytes"
+      },
+      {
+        "local": "2026-11-09T13:43:30.681+08:00",
+        "message": "resume state saved: 41 ranges / 2502 chunks / 21332844959 bytes"
+      }
+    ],
+    "plan_receipts": [
+      {
+        "local": "2026-11-09T13:35:39.614+08:00",
+        "message": "31843777504 bytes, 3797 chunks of 8388608 bytes, 16 workers (adaptive up to 128), 0 resumed bytes (resume: none)"
+      },
+      {
+        "local": "2026-11-09T13:41:42.962+08:00",
+        "message": "31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=16 ceiling=128; resumed=14008445673 bytes resume=accepted:etag"
+      },
+      {
+        "local": "2026-11-09T13:43:57.956+08:00",
+        "message": "31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=41 ceiling=128; resumed=21332844959 bytes resume=accepted:etag"
+      }
+    ],
+    "retry_events": [
+      {
+        "t": 1794203136377,
+        "local": "2026-11-09T13:45:36.377+08:00",
+        "message": "no body data for 5 s (stalled connection)",
+        "chunk": 31550272875,
+        "attempt": 1,
+        "delay_ms": 250,
+        "stall_s": 5,
+        "stall_began_local": "2026-11-09T13:45:31.377+08:00"
+      }
+    ],
+    "growth_freeze_events": [
+      {
+        "local": "2026-11-09T13:42:19.963+08:00",
+        "message": "growth frozen: aggregate gain < 2% at 9.0 MiB/s over 2 probes"
+      },
+      {
+        "local": "2026-11-09T13:42:20.963+08:00",
+        "message": "growth unfrozen: aggregate 9.3 MiB/s vs frozen peak 12.7 MiB/s"
+      },
+      {
+        "local": "2026-11-09T13:42:47.963+08:00",
+        "message": "growth frozen: aggregate gain < 2% at 107.8 MiB/s over 2 probes"
+      },
+      {
+        "local": "2026-11-09T13:44:27.956+08:00",
+        "message": "growth frozen: aggregate gain < 2% at 110.4 MiB/s over 2 probes"
+      }
+    ],
+    "tail_freeze_events": [
+      {
+        "local": "2026-11-09T13:45:28.956+08:00",
+        "message": "tail: target frozen at 102 workers (remaining claim units 93)"
+      }
+    ],
+    "resumed_baseline_evidence": [
+      {
+        "phase": "B",
+        "resumedBytes": 14008445673,
+        "first_sample_after_meta": {
+          "local": "2026-11-09T13:41:43.063+08:00",
+          "bytes": 14008445673,
+          "transferred": 0,
+          "bps": 0
+        }
+      },
+      {
+        "phase": "C",
+        "resumedBytes": 21332844959,
+        "first_sample_after_meta": {
+          "local": "2026-11-09T13:43:58.056+08:00",
+          "bytes": 21332844959,
+          "transferred": 0,
+          "bps": 0
+        }
+      }
+    ],
+    "peakBps_taskview": 184254279,
+    "peakBps_taskview_MiB_s": 175.71857357025146,
+    "peakWorkers": 128,
+    "targetWorkers_final": 102,
+    "requestedConnections_field": 1,
+    "retries": 1,
+    "resumedBytes_final": 21332844959,
+    "transferredBytes_field": 10510932545,
+    "elapsedMs_field": 0,
+    "avgBps_field": 0,
+    "verified": true,
+    "sha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+    "expectedSha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+    "history": {
+      "samples": 2644,
+      "events": 69,
+      "meta_lines": 2,
+      "transferred_field_samples": 1451,
+      "first_local": "2026-11-09T13:35:39.716+08:00",
+      "last_local": "2026-11-09T13:45:59.662+08:00",
+      "span_s": 619.946,
+      "cadence_hz": 4.263274543266672,
+      "max_gap_ms": 177779,
+      "builds": [
+        {
+          "kernelVersion": "1.2.0",
+          "pid": 52800,
+          "run": 1,
+          "t_local": "2026-11-09T13:41:42.962+08:00",
+          "requestedConnections": 16,
+          "initialWorkers": 16,
+          "maxConnections": 128,
+          "resumedBytes": 14008445673,
+          "resumeDecision": "accepted",
+          "resumeReason": "etag"
+        },
+        {
+          "kernelVersion": "1.2.0",
+          "pid": 46656,
+          "run": 1,
+          "t_local": "2026-11-09T13:43:57.956+08:00",
+          "requestedConnections": 16,
+          "initialWorkers": 41,
+          "maxConnections": 128,
+          "resumedBytes": 21332844959,
+          "resumeDecision": "accepted",
+          "resumeReason": "etag"
+        }
+      ],
+      "stats": {
+        "samples": 2644,
+        "bps_mean_MiB_s": 72.37117239855421,
+        "bps_p50_MiB_s": 104.42739629745483,
+        "bps_p95_MiB_s": 113.483269739151,
+        "bps_max_MiB_s": 120.76152801513672,
+        "workers_min": 1,
+        "workers_max": 128,
+        "stalled_max_ms": 608
+      }
+    },
+    "rdm_history_tool_result": {
+      "keys": [
+        "builds",
+        "events",
+        "eventsPath",
+        "meta",
+        "offset",
+        "sampleStride",
+        "samples",
+        "samplesPath",
+        "taskId",
+        "totalEvents",
+        "totalSamples",
+        "truncated"
+      ],
+      "totalSamples": 2644,
+      "builds": [
+        "1.2.0@52800",
+        "1.2.0@46656"
+      ],
+      "meta": [
+        {
+          "chunkSize": 8388608,
+          "chunks": 3797,
+          "fileName": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+          "initialWorkers": 16,
+          "kernelVersion": "1.2.0",
+          "kind": "meta",
+          "maxConnections": 128,
+          "phase": "plan",
+          "pid": 52800,
+          "requestedConnections": 16,
+          "resumeDecision": "accepted",
+          "resumeReason": "etag",
+          "resumedBytes": 14008445673,
+          "run": 1,
+          "t": 1794202902962,
+          "taskId": "t_0c48feb24198fef1",
+          "totalBytes": 31843777504,
+          "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf"
+        },
+        {
+          "chunkSize": 8388608,
+          "chunks": 3797,
+          "fileName": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+          "initialWorkers": 41,
+          "kernelVersion": "1.2.0",
+          "kind": "meta",
+          "maxConnections": 128,
+          "phase": "plan",
+          "pid": 46656,
+          "requestedConnections": 16,
+          "resumeDecision": "accepted",
+          "resumeReason": "etag",
+          "resumedBytes": 21332844959,
+          "run": 1,
+          "t": 1794203037956,
+          "taskId": "t_0c48feb24198fef1",
+          "totalBytes": 31843777504,
+          "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf"
+        }
+      ]
+    },
+    "progress": {
+      "rows": 218,
+      "avg_via_progress_bps": 49868999.55358712,
+      "final_target": 102
+    }
+  },
+  "evidence_to_fix": [
+    {
+      "evidence": "Q6 history has 2 meta lines: kernelVersion 1.2.0, pid 52800 (resumedBytes 14,008,445,673) and pid 46656 (resumedBytes 21,332,844,959, initialWorkers 41)",
+      "fix": "0.2.2 spec 1.2: history meta record at plan time, builds exposed by rdm_history",
+      "data": {
+        "meta": [
+          {
+            "kernelVersion": "1.2.0",
+            "pid": 52800,
+            "run": 1,
+            "t_local": "2026-11-09T13:41:42.962+08:00",
+            "requestedConnections": 16,
+            "initialWorkers": 16,
+            "maxConnections": 128,
+            "resumedBytes": 14008445673,
+            "resumeDecision": "accepted",
+            "resumeReason": "etag"
+          },
+          {
+            "kernelVersion": "1.2.0",
+            "pid": 46656,
+            "run": 1,
+            "t_local": "2026-11-09T13:43:57.956+08:00",
+            "requestedConnections": 16,
+            "initialWorkers": 41,
+            "maxConnections": 128,
+            "resumedBytes": 21332844959,
+            "resumeDecision": "accepted",
+            "resumeReason": "etag"
+          }
+        ]
+      }
+    },
+    {
+      "evidence": "First sample after each 0.2.2 resume: bytes=resumedBytes, transferred=0, bps=0 (no 8.6 GiB/s-style spike)",
+      "fix": "0.2.2 spec 1.3/0.2.2-evidence-5: rate ring baseline on this-run transferred bytes",
+      "data": [
+        {
+          "phase": "B",
+          "resumedBytes": 14008445673,
+          "first_sample_after_meta": {
+            "local": "2026-11-09T13:41:43.063+08:00",
+            "bytes": 14008445673,
+            "transferred": 0,
+            "bps": 0
+          }
+        },
+        {
+          "phase": "C",
+          "resumedBytes": 21332844959,
+          "first_sample_after_meta": {
+            "local": "2026-11-09T13:43:58.056+08:00",
+            "bytes": 21332844959,
+            "transferred": 0,
+            "bps": 0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "Plan receipts show requested / initial / ceiling: 'requested=16 initial=16 ceiling=128' then 'requested=16 initial=41 ceiling=128'",
+      "fix": "0.2.2 spec 1.6: plan line prints requested, initial, ceiling, chunk",
+      "data": [
+        {
+          "local": "2026-11-09T13:35:39.614+08:00",
+          "message": "31843777504 bytes, 3797 chunks of 8388608 bytes, 16 workers (adaptive up to 128), 0 resumed bytes (resume: none)"
+        },
+        {
+          "local": "2026-11-09T13:41:42.962+08:00",
+          "message": "31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=16 ceiling=128; resumed=14008445673 bytes resume=accepted:etag"
+        },
+        {
+          "local": "2026-11-09T13:43:57.956+08:00",
+          "message": "31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=41 ceiling=128; resumed=21332844959 bytes resume=accepted:etag"
+        }
+      ]
+    },
+    {
+      "evidence": "Resume-state receipts changed from 0.2.1 '125 chunks / 14008445673 bytes' to 0.2.2 '41 ranges / 2502 chunks / 21332844959 bytes'",
+      "fix": "0.2.2 spec 1.6: resume-state event prints ranges / chunks / bytes separately",
+      "data": [
+        {
+          "local": "2026-11-09T13:38:45.372+08:00",
+          "message": "resume state saved: 125 chunks / 14008445673 bytes"
+        },
+        {
+          "local": "2026-11-09T13:43:30.681+08:00",
+          "message": "resume state saved: 41 ranges / 2502 chunks / 21332844959 bytes"
+        }
+      ]
+    },
+    {
+      "evidence": "0.2.2 controller messages use aggregate rates: 'revert to 16: growth dropped aggregate rate (12.7 -> 9.4 MiB/s)'; growth freeze/unfreeze events",
+      "fix": "0.2.2 spec 1.4: aggregate-based growth verdict + saturation backoff",
+      "data": {
+        "revert": [
+          {
+            "local": "2026-11-09T13:35:41.615+08:00",
+            "message": "revert to 16: growth diluted per-connection rate"
+          },
+          {
+            "local": "2026-11-09T13:41:44.964+08:00",
+            "message": "revert to 16: growth dropped aggregate rate (12.7 -> 9.4 MiB/s)"
+          }
+        ],
+        "freeze": [
+          {
+            "local": "2026-11-09T13:42:19.963+08:00",
+            "message": "growth frozen: aggregate gain < 2% at 9.0 MiB/s over 2 probes"
+          },
+          {
+            "local": "2026-11-09T13:42:20.963+08:00",
+            "message": "growth unfrozen: aggregate 9.3 MiB/s vs frozen peak 12.7 MiB/s"
+          },
+          {
+            "local": "2026-11-09T13:42:47.963+08:00",
+            "message": "growth frozen: aggregate gain < 2% at 107.8 MiB/s over 2 probes"
+          },
+          {
+            "local": "2026-11-09T13:44:27.956+08:00",
+            "message": "growth frozen: aggregate gain < 2% at 110.4 MiB/s over 2 probes"
+          }
+        ]
+      }
+    },
+    {
+      "evidence": "0.2.2 tail: target frozen at 102 workers (remaining claim units 93); one stall retry with 250 ms delay ('no body data for 5 s')",
+      "fix": "0.2.2 spec 1.4 tail freeze + spec 1.5 tail fast retry",
+      "data": {
+        "tail_freeze": [
+          {
+            "local": "2026-11-09T13:45:28.956+08:00",
+            "message": "tail: target frozen at 102 workers (remaining claim units 93)"
+          }
+        ],
+        "retries": [
+          {
+            "t": 1794203136377,
+            "local": "2026-11-09T13:45:36.377+08:00",
+            "message": "no body data for 5 s (stalled connection)",
+            "chunk": 31550272875,
+            "attempt": 1,
+            "delay_ms": 250,
+            "stall_s": 5,
+            "stall_began_local": "2026-11-09T13:45:31.377+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "evidence": "0.2.1 contrast (Q4): 3 stall retries (30 s + 10 s + 10 s, 1 s delays) and target shrink 128->112->98->86->76 during the tail",
+      "fix": "0.2.2 spec 1.4/1.5: this is the pattern the tail freeze + fast retry fixes",
+      "data": {
+        "retries": [
+          {
+            "t": 1794202410221,
+            "local": "2026-11-09T13:33:30.221+08:00",
+            "message": "no body data for 30 s (stalled connection)",
+            "chunk": 8942256128,
+            "attempt": 1,
+            "delay_ms": 1000,
+            "stall_s": 30,
+            "stall_began_local": "2026-11-09T13:33:00.221+08:00"
+          },
+          {
+            "t": 1794202475329,
+            "local": "2026-11-09T13:34:35.329+08:00",
+            "message": "no body data for 10 s (stalled connection)",
+            "chunk": 21088960512,
+            "attempt": 1,
+            "delay_ms": 1000,
+            "stall_s": 10,
+            "stall_began_local": "2026-11-09T13:34:25.329+08:00"
+          },
+          {
+            "t": 1794202478162,
+            "local": "2026-11-09T13:34:38.162+08:00",
+            "message": "no body data for 10 s (stalled connection)",
+            "chunk": 22045261824,
+            "attempt": 1,
+            "delay_ms": 1000,
+            "stall_s": 10,
+            "stall_began_local": "2026-11-09T13:34:28.162+08:00"
+          }
+        ],
+        "shrink": [
+          {
+            "local": "2026-11-09T13:34:23.411+08:00",
+            "message": "shrink to 112: average rate falling",
+            "target": 112
+          },
+          {
+            "local": "2026-11-09T13:34:24.411+08:00",
+            "message": "shrink to 98: average rate falling",
+            "target": 98
+          },
+          {
+            "local": "2026-11-09T13:34:25.412+08:00",
+            "message": "shrink to 86: average rate falling",
+            "target": 86
+          },
+          {
+            "local": "2026-11-09T13:34:28.413+08:00",
+            "message": "shrink to 76: average rate falling",
+            "target": 76
+          }
+        ]
+      }
+    }
+  ],
+  "open_issues": [
+    "TaskView.requestedConnections persisted as 1 on both finished task records and in q4/q6 result finals (spec.connections is 16): restore path loses the requested count.",
+    "After a kernel restart the loaded task records expose elapsedMs=0 and avgBps=0 (q4.json, q6.json); elapsed/avg are not persisted across restart, while transferredBytes (this-run) is correct (Q6 10,510,932,545).",
+    "History cadence stays ~6.4-6.5 Hz rather than 10 Hz: the 100 ms reporter tick and the 100 ms sample gate are equal, so scheduler jitter rejects ~half the ticks (Q4 6.37 Hz; Q6 overall 4.26 Hz because of the two restart gaps).",
+    "Pre-1.2.0 history has no meta: Q4 (0.2.1 build) 1,604 samples and Q6 phase A 1,193 samples are only attributable via this package's session record, not the JSONL.",
+    "Q6 phase C retry deadline was 5 s (final-phase timeout, claim taken before the tail freeze); the 3 s tail deadline path was not exercised by this run."
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 13821,
+      "sha256": "0cd30d78a919bd3687809ded2e1c03650f83c2477a230d0b880a4630439b0d8d"
+    },
+    {
+      "path": "analyze.md",
+      "bytes": 13863,
+      "sha256": "254df76e41aed14c380af6fc53bee8a651005fb15e1b1d8f4ed6acc0f7c2c7d1"
+    },
+    {
+      "path": "analyze.sh",
+      "bytes": 1020,
+      "sha256": "cd215c57e0f6b7f90c82ee4037d846bf75d7bc15c1b751f0f0fd6b4615e54d48"
+    },
+    {
+      "path": "history/t_0c48feb24198fef1.events.jsonl",
+      "bytes": 11080,
+      "sha256": "b10d0106cd34c36addc8b6906649838931780f85ffb1bde77c933c008e4ead73"
+    },
+    {
+      "path": "history/t_0c48feb24198fef1.samples.jsonl",
+      "bytes": 486542,
+      "sha256": "8946064ae2a879aef2328577ed5c9cea0788c8e506d10641307f530e596ec379"
+    },
+    {
+      "path": "history/t_eff93d4e8e7cbb78.events.jsonl",
+      "bytes": 6539,
+      "sha256": "0821cc58af06be2fa35ef0b1895f30a50a5be9b7004ef663db04ee4aa8837c7e"
+    },
+    {
+      "path": "history/t_eff93d4e8e7cbb78.samples.jsonl",
+      "bytes": 277702,
+      "sha256": "0a5f203f3a3c0c1ddcf8c1222f71e086245dd9abb601996a0c2ad26642ab939d"
+    },
+    {
+      "path": "progress/q4.history.json",
+      "bytes": 395776,
+      "sha256": "31ac5dfa785368643dbba7cb9d760d77a6fb682e4ea1a15aabdbfe6b2598c9d4"
+    },
+    {
+      "path": "progress/q4.progress.jsonl",
+      "bytes": 40982,
+      "sha256": "d137c9448b12824a95d4b99fb123ee36d9b4e2e59a9a8218d4abc9710a931be0"
+    },
+    {
+      "path": "progress/q4.result.json",
+      "bytes": 14634,
+      "sha256": "1164b08eeda439705b683265f4661b74676452db9e459f7b91da0c58de2d936d"
+    },
+    {
+      "path": "progress/q6.history.json",
+      "bytes": 716481,
+      "sha256": "aa299f40ae63e37cc9095fa610d7c37ac873ebb85249a1fea334dffa7bdf5528"
+    },
+    {
+      "path": "progress/q6.progress.jsonl",
+      "bytes": 67066,
+      "sha256": "8a44848cc33b5b76ad1938a83de8da5ecb361796808352c71c4ebc86ea2c356d"
+    },
+    {
+      "path": "progress/q6.result.json",
+      "bytes": 10211,
+      "sha256": "f724c7059959a323f1f5a6f87d532a987ee6121f63261fe6e69b8c2655dae622"
+    },
+    {
+      "path": "tasks-final/q4.json",
+      "bytes": 4073,
+      "sha256": "45e998550a32e8ad652167486d3662800122abaf5659b0a2423af4f7131c23bd"
+    },
+    {
+      "path": "tasks-final/q6.json",
+      "bytes": 4213,
+      "sha256": "7994bbbf285ffb20477cbb51aa9712cd9bebd9f710db743c5b6ed4cc8ecbfa43"
+    }
+  ]
+}

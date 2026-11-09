@@ -1,6 +1,6 @@
 {
   "name": "dsh-rdm",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Agent-native resident downloader for DeepSeek Harness: rdm_* tools with server intelligence and verified receipts, plus a review-first sidebar UI.",
   "type": "module",
   "main": "lib/index.js",
@@ -42,6 +42,7 @@
     "PROTOCOL.md",
     "README.md",
     "README.zh-CN.md",
+    "CHANGELOG.md",
     "docs/**",
     "kernel/Cargo.toml",
     "kernel/src/**",
@@ -81,7 +82,8 @@
     "verify": "node scripts/verify-kernel.mjs",
     "verify:kernels": "node scripts/verify-kernels.mjs",
     "verify:e2e:py": "python tests/verify_e2e.py",
-    "verify:fixture": "node scripts/verify-fixture.mjs"
+    "verify:fixture": "node scripts/verify-fixture.mjs",
+    "check:release": "node scripts/check-release.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

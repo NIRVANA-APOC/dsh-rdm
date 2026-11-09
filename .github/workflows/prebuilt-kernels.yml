@@ -10,12 +10,20 @@ name: Prebuilt kernels
 # Triggers:
 #   * workflow_dispatch — build all targets; by default also commit the fresh
 #     binaries into bin/ on the default branch (that keeps `dsh plugin add
-#     github:<owner>/<repo>` cross-platform).
+#     github:<owner>/<repo>` cross-platform). Dispatch on a v* tag to build that
+#     tag's release (this is how v0.1.2 was produced).
 #   * push of a v* tag — build all targets, pack the complete plugin tarball
-#     (lib/ plus every bin/<platform>-<arch>/) and attach it, the individual
-#     kernels and their sha256 list to a GitHub release. Install an existing
-#     release with:
+#     (lib/ plus every bin/<platform>-<arch>/), attach it, the individual
+#     kernels and their sha256 list to a GitHub release, then publish that same
+#     tarball to npm (see `publish-npm` below). Install an existing release with:
 #       dsh plugin --profile web add https://github.com/<owner>/<repo>/releases/download/<tag>/dsh-rdm-<version>.tgz
+#
+# npm publishing uses trusted publishing over GitHub OIDC (id-token: write) —
+# this repository stores no NPM_TOKEN. The one-time npm-side setup (registering
+# .github/workflows/prebuilt-kernels.yml as the package's trusted publisher) is
+# documented in docs/release.md. Re-running a release run is safe: if the
+# version already exists on npm with the same bytes the publish step is skipped,
+# and a different payload fails before anything is published.
 #
 # Everything runs on GitHub-hosted native runners (no cross-compilation, no
 # Apple SDK requirement); std runners are free for public repositories.
@@ -31,7 +39,10 @@ on:
 
 concurrency:
   group: prebuilt-kernels-${{ github.ref }}
-  cancel-in-progress: true
+  # A tag run is a release: let a second dispatch for the same tag queue instead
+  # of cancelling a run that may already be creating the release or publishing
+  # to npm. Branch dispatches (the routine kernel refresh) still supersede.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: write
@@ -129,7 +140,7 @@ jobs:
       - name: Verify the assembled kernel set
         run: node scripts/verify-kernels.mjs
 
-      - name: Check tag and package version agree
+      - name: Check tag, package version and changelog agree
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
@@ -137,6 +148,10 @@ jobs:
           version="$(node -p 'require("./package.json").version')"
           if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not match package version v${version}"
+            exit 1
+          fi
+          if ! grep -qE "^## \\[${version}\\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no [${version}] section (every tag must ship a changelog section)"
             exit 1
           fi
 
@@ -262,6 +277,17 @@ jobs:
         run: |
           set -euo pipefail
           tarball="$(ls dist/dsh-rdm-*.tgz)"
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            BEGIN { heading = "^## \\[" ver "\\]" }
+            $0 ~ heading { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no release notes for ${version}"
+            exit 1
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             "${tarball}" \
             assets/rdm-kernel-linux-* \
@@ -269,5 +295,230 @@ jobs:
             assets/rdm-kernel-darwin-* \
             assets/rdm-kernels.sha256 \
             --title "dsh-rdm ${GITHUB_REF_NAME}" \
-            --generate-notes \
+            --notes-file release-notes.md \
             --verify-tag
+
+  publish-npm:
+    name: Publish to npm
+    # Publishes exactly the tarball assembled by `package` (lib/ plus all five
+    # native kernels) once the GitHub release exists, so npm and the release
+    # page always offer the same bytes. Authentication is npm trusted
+    # publishing over GitHub OIDC: no NPM_TOKEN secret is stored. One-time
+    # npm-side setup is documented in docs/release.md (the registered workflow
+    # filename is prebuilt-kernels.yml). Re-running is safe: an already
+    # published version is skipped when its bytes match, and rejected when they
+    # do not, before anything is sent to the registry.
+    needs: [package, release]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+    steps:
+      - name: Download the plugin package
+        uses: actions/download-artifact@v4
+        with:
+          name: dsh-rdm-package
+          path: dist
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # Deliberately no registry-url: it would write
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into .npmrc,
+          # npm would send the empty token as real auth and answer ENEEDAUTH
+          # instead of falling through to the OIDC trusted-publisher exchange
+          # (actions/setup-node#1551). registry.npmjs.org is npm's default.
+
+      - name: Verify the release tarball against the tag
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::${tag} is not a publishable semver release tag (expected vX.Y.Z or vX.Y.Z-<prerelease>)"
+            exit 1
+          fi
+          version="${tag#v}"
+
+          mapfile -t tarballs < <(find dist -maxdepth 1 -name 'dsh-rdm-*.tgz' -print)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dsh-rdm-*.tgz in dist/, found ${#tarballs[@]}"
+            exit 1
+          fi
+          tarball="${tarballs[0]}"
+          if [ "${tarball##*/}" != "dsh-rdm-${version}.tgz" ]; then
+            echo "::error::${tarball##*/} does not belong to tag ${tag} (expected dsh-rdm-${version}.tgz)"
+            exit 1
+          fi
+
+          # npm matches the trusted publisher on the packed package manifest, so
+          # name, version and repository must all agree with this run.
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          tar -xzOf "$tarball" package/package.json > "$work/package.json"
+          packed_name="$(node -p "require('$work/package.json').name")"
+          packed_version="$(node -p "require('$work/package.json').version")"
+          packed_repository="$(node -p "String(require('$work/package.json').repository?.url ?? '')")"
+          packed_repository="${packed_repository#git+}"
+          packed_repository="${packed_repository%.git}"
+          packed_repository="${packed_repository%/}"
+          expected_repository="https://github.com/${GITHUB_REPOSITORY}"
+          if [ "$packed_name" != "dsh-rdm" ]; then
+            echo "::error::packed package name is ${packed_name}, expected dsh-rdm"
+            exit 1
+          fi
+          if [ "$packed_version" != "$version" ]; then
+            echo "::error::packed version is ${packed_version}, expected ${version} from tag ${tag}"
+            exit 1
+          fi
+          if [ "$packed_repository" != "$expected_repository" ]; then
+            echo "::error::packed repository is ${packed_repository}; npm trusted publishing requires ${expected_repository}"
+            exit 1
+          fi
+          echo "manifest: ${packed_name}@${packed_version} (${packed_repository})"
+
+          # Installs never compile Rust: assert all five kernels are present and
+          # the unix ones kept their executable bit through pack/upload/download.
+          listing="$(tar -tzf "$tarball")"
+          for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            member="package/bin/${platform}/rdm-kernel"
+            if ! grep -qxF "$member" <<< "$listing"; then
+              echo "::error::${tarball##*/} is missing ${member}"
+              exit 1
+            fi
+            mode="$(tar -tvzf "$tarball" "$member" | awk '{print $1}')"
+            if [[ "$mode" != -rwx* ]]; then
+              echo "::error::${member} is not executable inside the tarball (mode ${mode})"
+              exit 1
+            fi
+          done
+          if ! grep -qxF 'package/bin/win32-x64/rdm-kernel.exe' <<< "$listing"; then
+            echo "::error::${tarball##*/} is missing package/bin/win32-x64/rdm-kernel.exe"
+            exit 1
+          fi
+          kernel_count="$(grep -cE '^package/bin/[^/]+/rdm-kernel(\.exe)?$' <<< "$listing" || true)"
+          if [ "$kernel_count" -ne 5 ]; then
+            echo "::error::expected 5 kernels inside ${tarball##*/}, found ${kernel_count}"
+            exit 1
+          fi
+
+          # Trusted publishing needs npm >= 11.5.1; Node 24 bundles a newer one.
+          npm_version="$(npm --version)"
+          if [ "$(printf '%s\n' 11.5.1 "$npm_version" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "::error::npm ${npm_version} is too old for trusted publishing (needs >= 11.5.1); Node 24 bundles a compatible npm"
+            exit 1
+          fi
+          echo "toolchain: node $(node --version), npm ${npm_version}"
+
+          echo "tarball=${tarball}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the registry for an existing release
+        id: registry
+        shell: bash
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+          TARBALL: ${{ steps.verify.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          local_sha1="$(sha1sum "$TARBALL" | cut -d' ' -f1)"
+          view_error="$(mktemp)"
+          if published_sha1="$(npm view "dsh-rdm@${VERSION}" dist.shasum 2>"$view_error")"; then
+            published_sha1="${published_sha1//\"/}"
+            if [ "$published_sha1" = "$local_sha1" ]; then
+              echo "::notice::dsh-rdm@${VERSION} is already on npm with the same tarball (sha1 ${local_sha1}); skipping the publish step"
+              echo "state=present" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::dsh-rdm@${VERSION} is already on npm with a different tarball (npm ${published_sha1}, local ${local_sha1}); npm versions are immutable — cut a new version"
+              exit 1
+            fi
+          elif grep -qE 'E404|No match found' "$view_error"; then
+            echo "dsh-rdm@${VERSION} is not on npm yet"
+            echo "state=absent" >> "$GITHUB_OUTPUT"
+          else
+            cat "$view_error"
+            echo "::error::could not query the npm registry for dsh-rdm@${VERSION}"
+            exit 1
+          fi
+
+      - name: Publish to npm (OIDC trusted publishing)
+        if: steps.registry.outputs.state == 'absent'
+        shell: bash
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+          TARBALL: ${{ steps.verify.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          dist_tag=latest
+          case "$VERSION" in
+            *-*) dist_tag=next ;;
+          esac
+          # Prefix ./ so npm always resolves a local file spec (an unprefixed
+          # relative .tgz can be treated as a package spec by some npm versions).
+          tarball_spec="${TARBALL#./}"
+          echo "publishing ./${tarball_spec} as dsh-rdm@${VERSION} with dist-tag ${dist_tag}; provenance is attached automatically for a trusted publish"
+          npm publish "./${tarball_spec}" --access public --tag "$dist_tag"
+
+      - name: Verify the registry copy and its provenance
+        shell: bash
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+          TARBALL: ${{ steps.verify.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          local_sha1="$(sha1sum "$TARBALL" | cut -d' ' -f1)"
+          local_integrity="sha512-$(node -e 'const fs = require("node:fs"); const crypto = require("node:crypto"); process.stdout.write(crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' "$TARBALL")"
+          published_sha1="$(npm view "dsh-rdm@${VERSION}" dist.shasum)"
+          published_integrity="$(npm view "dsh-rdm@${VERSION}" dist.integrity)"
+          if [ "$published_sha1" != "$local_sha1" ]; then
+            echo "::error::registry sha1 ${published_sha1} does not match the release tarball sha1 ${local_sha1}"
+            exit 1
+          fi
+          if [ "$published_integrity" != "$local_integrity" ]; then
+            echo "::error::registry integrity ${published_integrity} does not match the release tarball ${local_integrity}"
+            exit 1
+          fi
+          echo "registry bytes match the release tarball (sha1 ${local_sha1})"
+
+          # A trusted publish from this public repository generates provenance
+          # automatically; assert it exists instead of trusting the logs.
+          attestations="${RUNNER_TEMP}/dsh-rdm-attestations.json"
+          npm view "dsh-rdm@${VERSION}" dist.attestations --json > "$attestations"
+          ATTESTATIONS="$attestations" VERSION="$VERSION" node -e '
+          const fs = require("node:fs")
+          let attestations = null
+          try {
+            attestations = JSON.parse(fs.readFileSync(process.env.ATTESTATIONS, "utf8"))
+          } catch {
+            attestations = null
+          }
+          if (!attestations || !attestations.provenance) {
+            console.error("::error::dsh-rdm@" + process.env.VERSION + " has no provenance attestation; trusted publishing from a public repository should generate one automatically")
+            process.exit(1)
+          }
+          console.log("provenance: " + attestations.provenance.predicateType + " " + attestations.url)
+          '
+
+      - name: Summarize the npm publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+          TARBALL: ${{ steps.verify.outputs.tarball }}
+          STATE: ${{ steps.registry.outputs.state }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### npm publish: dsh-rdm@${VERSION}"
+            echo ""
+            echo "- registry: https://www.npmjs.com/package/dsh-rdm/v/${VERSION}"
+            echo "- tarball: \`${TARBALL##*/}\` (sha256 \`$(sha256sum "$TARBALL" | cut -d' ' -f1)\`)"
+            echo "- npm state: ${STATE} (absent = freshly published, present = already published, publish skipped)"
+            echo "- provenance: https://registry.npmjs.org/-/npm/v1/attestations/dsh-rdm@${VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"

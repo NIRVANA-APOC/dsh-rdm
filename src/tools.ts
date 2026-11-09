@@ -1,8 +1,9 @@
 /**
  * Model-facing tool surface of `dsh-rdm`.
  *
- * Five tools drive the resident RDM kernel through {@link KernelService}:
- * `rdm_download`, `rdm_probe`, `rdm_tasks`, `rdm_wait`, `rdm_control`.
+ * Six tools drive the resident RDM kernel through {@link KernelService}:
+ * `rdm_download`, `rdm_probe`, `rdm_tasks`, `rdm_wait`, `rdm_control`,
+ * `rdm_history`.
  *
  * Conventions:
  *  - parameters are schema-validated before `execute` runs;
@@ -30,12 +31,18 @@ import {
 } from './kernel-client'
 import type { KernelService } from './kernel-client'
 import {
+  DEFAULT_HISTORY_EVENTS,
+  DEFAULT_HISTORY_SAMPLES,
+  DEFAULT_MAX_CONNECTIONS,
   DEFAULT_WAIT_MS,
   DEFAULT_WAIT_PROBE_MS,
+  MAX_CONNECTIONS,
+  MAX_HISTORY_SAMPLES,
   MAX_TASK_IDS,
   MAX_WAIT_MS,
   MAX_WAIT_PROBE_MS,
   MIN_WAIT_MS,
+  TASK_EVENT_KINDS,
   TASK_STATUSES,
   TOOL_LIST_DEFAULT,
   TOOL_LIST_MAX,
@@ -47,6 +54,9 @@ import {
   type ServerFacts,
   type TaskDetail,
   type TaskEvent,
+  type TaskHistory,
+  type TaskHistoryEvent,
+  type TaskHistorySample,
   type TaskView,
   type TelemetryDetail,
   type ToolError,
@@ -411,7 +421,7 @@ export function renderTaskEventLine(event: TaskEvent): string {
   return `event ${parts.join(' ')}`
 }
 
-/** One-task receipt: header, telemetry, server, target, verify, timing, diagnosis, events. */
+/** One-task receipt: header, telemetry, resume decision, server, target, verify, timing, diagnosis, events. */
 export function renderTaskDetailReceipt(value: TaskDetailValue): string[] {
   if (value.task === null || value.detail === null) {
     const lines: string[] = [renderKernelLine(value.kernel)]
@@ -429,6 +439,14 @@ export function renderTaskDetailReceipt(value: TaskDetailValue): string[] {
     `progress ${progressLine(task)} workers=${task.activeWorkers}/${task.peakWorkers} range=${taskRangeToken(task.rangeSupported)} resume=${resumeToken(task.resumeSafety)}`,
     ...renderTelemetryLines(detail.telemetry),
   ]
+  // 0.3.0 headline evidence: whether (and why) the plan adopted the `.part`
+  // bytes that already existed. `not-attempted` adds no line.
+  const resumeState = detail.resumeState
+  if (resumeState.resumeDecision !== 'not-attempted') {
+    lines.push(
+      `resume decision=${resumeState.resumeDecision} reason=${resumeState.resumeReason ?? DASH}`,
+    )
+  }
   if (detail.server === null) {
     lines.push(`server=${DASH}`)
   } else {
@@ -482,6 +500,39 @@ export function renderControlReceipt(value: ControlValue): string[] {
   return lines
 }
 
+/**
+ * History receipt (0.3.0/0.2.2): one summary line, the two JSONL paths, the
+ * returned sample range, one `build=` line when the recording spans kernel
+ * builds, and (on failure) the canonical error + follow-up.
+ *
+ * The summary uses the returned page for peak/avg rates and the recorded total
+ * for the sample count, so it stays stable while paging.
+ */
+export function renderHistoryReceipt(value: HistoryValue, offset = 0): string[] {
+  const samples = value.samples
+  let peak: number | null = null
+  let sum = 0
+  for (const sample of samples) {
+    sum += sample.bps
+    if (peak === null || sample.bps > peak) peak = sample.bps
+  }
+  const avg = samples.length > 0 ? sum / samples.length : null
+  const lines: string[] = [
+    `history task=${value.taskId} samples=${value.totalSamples} peak=${formatRate(peak)} avg=${formatRate(avg)}`,
+    `samples ${value.samplesPath ?? DASH}`,
+    `events ${value.eventsPath ?? DASH}`,
+    `range ${offset}..${offset + samples.length} of ${value.totalSamples}`,
+  ]
+  // 0.2.2: one bounded build-tag line when the recording spans kernel builds.
+  const builds = Array.isArray(value.builds) ? value.builds : []
+  if (builds.length > 0) lines.push(`build=${builds.join(',')}`)
+  if (value.error != null) {
+    lines.push(renderErrorLine(value.error))
+    lines.push(renderNextLine(value.hint))
+  }
+  return lines
+}
+
 // ── Error mapping ───────────────────────────────────────────────────────────
 
 /** Actionable follow-up per kernel error code. */
@@ -496,7 +547,7 @@ const ERROR_HINTS: Record<string, string> = {
   kernel_stopped: 'The plugin is unloading/reloading; retry after it registers rdm_* again.',
   kernel_not_running: 'The kernel child is not ready yet; retry in a moment.',
   protocol_mismatch:
-    'This plugin needs a protocol-2 (kernel 1.1.0) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
+    'This plugin needs a protocol-2 (kernel 0.2.2) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
   timeout:
     'The kernel is still busy. Check progress with rdm_tasks (taskId=...) and rdm_wait instead of resubmitting the same download.',
   cancelled: 'The call was cancelled; nothing else was changed.',
@@ -511,6 +562,8 @@ const ERROR_HINTS: Record<string, string> = {
     'The downloaded bytes did not match expectedSha256, so the file was not finalized. Verify the hash value or retry the download.',
   io: 'Local filesystem error; check that the destination directory exists and is writable.',
   unsupported: 'The kernel cannot honor this request; simplify the parameters (for example drop singleStream/insecure).',
+  unsupported_method:
+    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.2.2 (dsh-rdm 0.2.2+) and retry.',
   internal: 'Unexpected kernel error; retry once, then report it to the user with the kernel stderr tail.',
 }
 
@@ -551,6 +604,9 @@ const RECOVERABLE_KERNEL_CODES = new Set([
   'checksum_mismatch',
   'io',
   'unsupported',
+  // 0.2.2 §1.7: an old kernel that lacks a method answers with a stable error;
+  // the tool returns it as a normal recoverable value (with an upgrade hint).
+  'unsupported_method',
 ])
 
 /** Map a thrown error to a canonical `{code,message}`, or `null` when it must throw. */
@@ -600,6 +656,24 @@ function waitErrorHint(error: ToolError): string {
     return 'rdm_tasks without taskId lists the existing ids; re-check the taskIds and retry rdm_wait.'
   }
   return 'retry rdm_wait; if it persists, inspect the tasks with rdm_tasks.'
+}
+
+/** Canonical hint for a recoverable `rdm_history` failure. */
+function historyErrorHint(taskId: string, error: ToolError): string {
+  if (error.code === 'not_found') return 'rdm_tasks without taskId lists the existing ids.'
+  if (error.code === 'unsupported_method') {
+    return 'upgrade the kernel binary to 0.2.2 (dsh-rdm 0.2.2+); the running build does not implement rdm_history.'
+  }
+  return `retry rdm_history taskId=${taskId}; if it persists, report the kernel error to the user.`
+}
+
+/** Follow-up hint after a successful `rdm_history` read. */
+function historyHint(history: TaskHistory, includeEvents: boolean): string {
+  if (history.totalSamples === 0) {
+    return `No recording yet; rdm_tasks taskId=${history.taskId} shows live telemetry, and samples are persisted while a transfer runs.`
+  }
+  const events = includeEvents ? ` and ${history.events.length} recorded events` : ''
+  return `Replay ${history.samples.length} samples${events}; rdm_tasks taskId=${history.taskId} shows the live state.`
 }
 
 // ── Session attribution ─────────────────────────────────────────────────────
@@ -680,6 +754,23 @@ function enumOf(values: readonly string[], description?: string): SchemaNode {
 const ETA_CONFIDENCES = ['high', 'medium', 'low', 'unknown'] as const
 const TASK_TRENDS = ['rising', 'steady', 'falling', 'stalled', 'unknown'] as const
 const RESUME_SAFETIES = ['strong', 'weak', 'none'] as const
+const RESUME_DECISIONS = ['accepted', 'rejected', 'not-attempted'] as const
+const RESUME_DECISION_REASONS = [
+  'etag',
+  'last-modified',
+  'url',
+  'final-url',
+  'disabled',
+  'size-mismatch',
+  'validators-mismatch',
+  'url-mismatch',
+  'file-name-mismatch',
+  'ranges-invalid',
+  'version-mismatch',
+  'state-corrupt',
+  'part-missing',
+  'part-truncated',
+] as const
 const EXPIRY_STATES = ['valid', 'expiring', 'expired', 'unknown'] as const
 const DIAGNOSIS_CODES = [
   'on-track',
@@ -825,6 +916,7 @@ const TASK_VIEW_SCHEMA: SchemaNode = objectNode({
   path: nullableNode({ type: 'string' }),
   status: enumOf(TASK_STATUSES),
   downloaded: num(),
+  transferredBytes: num(),
   total: nullableNode({ type: 'number' }),
   percent: nullableNode({ type: 'number' }),
   speedBps: num(),
@@ -840,8 +932,12 @@ const TASK_VIEW_SCHEMA: SchemaNode = objectNode({
   activeWorkers: num(),
   peakWorkers: num(),
   connections: num(),
+  requestedConnections: num(),
+  maxConnections: num(),
+  targetWorkers: num(),
   chunkSize: nullableNode({ type: 'number' }),
   resumedChunks: num(),
+  resumedBytes: num(),
   rangeSupported: nullableNode({ type: 'boolean' }),
   resumable: { type: 'boolean', required: true },
   resumeSafety: nullableNode({ type: 'string', enum: [...RESUME_SAFETIES] }),
@@ -899,6 +995,8 @@ const TASK_DETAIL_SCHEMA: SchemaNode = objectNode({
     resumedChunks: num(),
     resumedBytes: num(),
     validatorsMatched: nullableNode({ type: 'boolean' }),
+    resumeDecision: enumOf(RESUME_DECISIONS),
+    resumeReason: nullableNode({ type: 'string', enum: [...RESUME_DECISION_REASONS] }),
   }),
   timing: objectNode({
     queuedMs: nullableNode({ type: 'number' }),
@@ -953,20 +1051,32 @@ const KERNEL_SCHEMA: SchemaNode = objectNode({
 const EVENT_SCHEMA: SchemaNode = objectNode({
   seq: num(),
   at: num(),
-  kind: enumOf([
-    'info',
-    'probe',
-    'plan',
-    'started',
-    'retry',
-    'controller',
-    'paused',
-    'resumed',
-    'verify',
-    'completed',
-    'failed',
-    'cancelled',
-  ]),
+  kind: enumOf(TASK_EVENT_KINDS),
+  message: nullableNode({ type: 'string' }),
+  chunk: nullableNode({ type: 'number' }),
+  attempt: nullableNode({ type: 'number' }),
+  delayMs: nullableNode({ type: 'number' }),
+})
+
+/** One recorded telemetry sample from the persisted JSONL history (0.3.0). */
+const HISTORY_SAMPLE_SCHEMA: SchemaNode = objectNode({
+  t: num(),
+  bytes: num(),
+  bps: num(),
+  w1Bps: num(),
+  w5Bps: num(),
+  w30Bps: num(),
+  w300Bps: num(),
+  workers: num(),
+  peakWorkers: num(),
+  stalledMs: num(),
+})
+
+/** One recorded task event from the persisted JSONL history (0.3.0). */
+const HISTORY_EVENT_SCHEMA: SchemaNode = objectNode({
+  t: num(),
+  seq: num(),
+  kind: enumOf(TASK_EVENT_KINDS),
   message: nullableNode({ type: 'string' }),
   chunk: nullableNode({ type: 'number' }),
   attempt: nullableNode({ type: 'number' }),
@@ -980,6 +1090,7 @@ interface DownloadArgs {
   dir?: string
   fileName?: string
   connections?: number
+  maxConnections?: number
   headers?: unknown
   cookie?: string
   referer?: string
@@ -1074,6 +1185,29 @@ interface ControlValue {
   hint: string
 }
 
+interface HistoryArgs {
+  taskId: string
+  limit?: number
+  offset?: number
+  includeEvents?: boolean
+}
+
+interface HistoryValue {
+  kernel: KernelStatusView
+  taskId: string
+  samplesPath: string | null
+  eventsPath: string | null
+  samples: TaskHistorySample[]
+  events: TaskHistoryEvent[]
+  /** Deduped `<kernelVersion>@<pid>` build tags (0.2.2). */
+  builds: string[]
+  totalSamples: number
+  totalEvents: number
+  truncated: boolean
+  error: ToolError | null
+  hint: string
+}
+
 // ── Execution helpers ───────────────────────────────────────────────────────
 
 /** Aggregate value used when a list call failed before producing one. */
@@ -1154,7 +1288,7 @@ function tasksListHint(scope: 'session' | 'all', tasks: TaskView[]): string {
 
 /** Detail-mode hint. */
 function taskDetailHint(task: TaskView): string {
-  return `Control it with rdm_control (pause/resume/cancel/retry/remove) or block with rdm_wait taskIds=["${task.id}"].`
+  return `Control it with rdm_control (pause/resume/cancel/retry/remove) or block with rdm_wait taskIds=["${task.id}"]; the recorded series is in rdm_history taskId=${task.id}.`
 }
 
 /** Wait hint. */
@@ -1189,7 +1323,7 @@ function controlHint(action: ControlAction, taskId: string, deletePart: boolean)
 // ── Tool definitions ────────────────────────────────────────────────────────
 
 /**
- * Build the five model-facing tool definitions bound to one kernel service.
+ * Build the six model-facing tool definitions bound to one kernel service.
  * Exported separately from {@link registerRdmTools} so tests and docs can
  * inspect the surface (and its receipts) without a host context.
  */
@@ -1211,7 +1345,13 @@ export function createRdmTools(kernel: KernelService): ToolDefinition<any, any>[
         fileName: { type: 'string', description: 'Output file-name override (sanitized by the kernel).' },
         connections: {
           type: 'number',
-          description: `Parallel connections 1..32 (default: plugin config, normally 8).`,
+          description: `Parallel connections 1..${MAX_CONNECTIONS} (default: plugin config, normally 8).`,
+        },
+        maxConnections: {
+          type: 'number',
+          description:
+            `Adaptive concurrency ceiling 1..${MAX_CONNECTIONS} (default: plugin config, ${DEFAULT_MAX_CONNECTIONS}). ` +
+            'Passed to the kernel; the controller may grow from `connections` up to this while throughput is healthy.',
         },
         headers: {
           type: 'json',
@@ -1268,6 +1408,7 @@ export function createRdmTools(kernel: KernelService): ToolDefinition<any, any>[
               ...(args.dir === undefined ? {} : { dir: args.dir }),
               ...(args.fileName === undefined ? {} : { fileName: args.fileName }),
               ...(args.connections === undefined ? {} : { connections: args.connections }),
+              ...(args.maxConnections === undefined ? {} : { maxConnections: args.maxConnections }),
               ...(args.headers === undefined ? {} : { headers: args.headers as Record<string, string> }),
               ...(args.cookie === undefined ? {} : { cookie: args.cookie }),
               ...(args.referer === undefined ? {} : { referer: args.referer }),
@@ -1603,11 +1744,114 @@ export function createRdmTools(kernel: KernelService): ToolDefinition<any, any>[
           }
         }),
     }),
+
+    defineTool<HistoryArgs, HistoryValue>({
+      name: 'rdm_history',
+      description:
+        'Read the persisted per-sample telemetry and event recording for one task (JSONL under the kernel data dir). ' +
+        'Survives kernel restarts; use it to replay a transfer and tune the kernel. ' +
+        'Returns bounded samples/events plus their file paths.',
+      parameters: {
+        taskId: { type: 'string', required: true, description: 'Task id, e.g. "t_9f3a1c2d5e6b7a80".' },
+        limit: {
+          type: 'number',
+          description: `Max samples to return (1..${MAX_HISTORY_SAMPLES}, default ${DEFAULT_HISTORY_SAMPLES}).`,
+        },
+        offset: {
+          type: 'number',
+          description: 'Number of recorded samples to skip before the returned page (default 0).',
+        },
+        includeEvents: {
+          type: 'boolean',
+          description: 'Also return the recorded task events (default true).',
+        },
+      },
+      output: {
+        schema: objectNode({
+          kernel: req(KERNEL_SCHEMA),
+          taskId: str(),
+          samplesPath: nullableNode({ type: 'string' }),
+          eventsPath: nullableNode({ type: 'string' }),
+          samples: arrayNode(HISTORY_SAMPLE_SCHEMA),
+          events: arrayNode(HISTORY_EVENT_SCHEMA),
+          builds: arrayNode({ type: 'string' }),
+          totalSamples: num(),
+          totalEvents: num(),
+          truncated: { type: 'boolean', required: true },
+          error: nullableNode(TOOL_ERROR_SCHEMA),
+          hint: str(),
+        }),
+        render: (args, value) => [
+          {
+            type: 'text',
+            text: renderHistoryReceipt(
+              value,
+              clampInteger(args.offset, 0, 0, MAX_HISTORY_SAMPLES),
+            ).join('\n'),
+          },
+        ],
+      },
+      execute: (args, exec: ToolRunContext) =>
+        runTool(async () => {
+          exec.signal.throwIfAborted()
+          const taskId = normalizeTaskId(args.taskId)
+          const offsetSupplied = args.offset !== undefined
+          const offset = clampInteger(args.offset, 0, 0, MAX_HISTORY_SAMPLES)
+          const limit = clampInteger(args.limit, DEFAULT_HISTORY_SAMPLES, 1, MAX_HISTORY_SAMPLES)
+          const includeEvents = args.includeEvents !== false
+          try {
+            // Only a model-supplied offset means "page the literal recording":
+            // KernelService turns that into `raw: true`. Without it the kernel's
+            // default evenly-downsampled review series is returned.
+            const history = await kernel.history(
+              taskId,
+              {
+                limit,
+                includeEvents,
+                eventsLimit: DEFAULT_HISTORY_EVENTS,
+                ...(offsetSupplied ? { offset } : {}),
+              },
+              exec.signal,
+            )
+            return {
+              kernel: kernel.kernelStatus(),
+              taskId: history.taskId,
+              samplesPath: history.samplesPath,
+              eventsPath: history.eventsPath,
+              samples: history.samples,
+              events: history.events,
+              builds: history.builds,
+              totalSamples: history.totalSamples,
+              totalEvents: history.totalEvents,
+              truncated: history.truncated,
+              error: null,
+              hint: historyHint(history, includeEvents),
+            } satisfies HistoryValue
+          } catch (error) {
+            const recoverable = recoverableError(error)
+            if (recoverable === null) throw error
+            return {
+              kernel: kernel.kernelStatus(),
+              taskId,
+              samplesPath: null,
+              eventsPath: null,
+              samples: [],
+              events: [],
+              builds: [],
+              totalSamples: 0,
+              totalEvents: 0,
+              truncated: false,
+              error: recoverable,
+              hint: historyErrorHint(taskId, recoverable),
+            } satisfies HistoryValue
+          }
+        }),
+    }),
   ]
 }
 
 /**
- * Register the five `rdm_*` tools on the host tool registry.
+ * Register the six `rdm_*` tools on the host tool registry.
  *
  * @param ctx - Host plugin context (must provide `ctx.tools`).
  * @param kernel - The shared kernel service.

@@ -1,4 +1,5 @@
-use crate::engine::{control_error, finalize, prepare_part, Counters, EngineError, Reporter, Slot, SAVE_INTERVAL, STALL_TIMEOUT};
+use crate::controller::{Controller, ControllerEffect, ControllerTick};
+use crate::engine::{control_error, finalize, prepare_part, stall_timeout_for, Counters, EngineError, Reporter, Slot, SAVE_INTERVAL};
 use crate::error::EngineResult;
 use crate::http;
 use crate::klog;
@@ -6,7 +7,7 @@ use crate::plan::{self, ChunkPlan};
 use crate::protocol::{Meta, Spec, Status};
 use crate::rate::TokenBucket;
 use crate::scheduler::{Claim, Scheduler, COALESCE_MAX_BYTES, COALESCE_MIN_BYTES};
-use crate::state::{self, ResumeState};
+use crate::state::{self, ResumeOutcome, ResumeState};
 use crate::task::{Control, StopKind, Task};
 use reqwest::header::{CONTENT_RANGE, IF_RANGE, RANGE};
 use reqwest::{Client, StatusCode};
@@ -17,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout, MissedTickBehavior};
 const WORK_POLL: Duration = Duration::from_millis(100);
 const STEAL_WAIT: Duration = Duration::from_millis(250);
@@ -24,7 +26,9 @@ const GATE_POLL: Duration = Duration::from_millis(10);
 const CONTROL_WINDOW: Duration = Duration::from_secs(1);
 struct Shared {
     total: u64,
-    client: Client,
+    /// Spec snapshot; a collapse recovery needs it to build a fresh client.
+    spec: Spec,
+    client: Mutex<Client>,
     url: String,
     if_range: Option<String>,
     part: PathBuf,
@@ -37,7 +41,15 @@ struct Shared {
     control: Arc<Control>,
     task: Arc<Task>,
     limiter: Option<Arc<TokenBucket>>,
+    /// Controller's current worker target (dynamic; initial = `spec.connections`).
     target_workers: AtomicUsize,
+    /// Upper bound for spawned worker tasks (`spec.max_connections`, capped by
+    /// the number of chunks a transfer actually has).
+    max_worker_tasks: usize,
+    spawned_workers: AtomicUsize,
+    /// Handles of live worker tasks; the controller may append, the engine
+    /// drains and joins them at the end.
+    worker_handles: Mutex<Vec<JoinHandle<()>>>,
     pushback: Mutex<Option<Instant>>,
     pushback_seen: AtomicBool,
     failure: Mutex<Option<EngineError>>,
@@ -46,13 +58,15 @@ struct Shared {
     last_save: Mutex<Instant>,
     save_lock: tokio::sync::Mutex<()>,
     wake: Notify,
-    workers: usize,
     max_attempts: u32,
     started: Instant,
 }
 impl Shared {
     fn stopped(&self) -> bool {
         self.control.is_stopped() || self.failure.lock().map(|slot| slot.is_some()).unwrap_or(false)
+    }
+    fn has_failure(&self) -> bool {
+        self.failure.lock().map(|slot| slot.is_some()).unwrap_or(false)
     }
     fn fail(&self, error: EngineError) {
         let mut slot = self.failure.lock().expect("failure mutex poisoned");
@@ -64,6 +78,9 @@ impl Shared {
     }
     fn take_failure(&self) -> Option<EngineError> {
         self.failure.lock().expect("failure mutex poisoned").take()
+    }
+    fn client(&self) -> Client {
+        self.client.lock().expect("client mutex poisoned").clone()
     }
     fn note_pushback(&self, delay: Duration) {
         let deadline = Instant::now() + delay;
@@ -111,13 +128,19 @@ impl Shared {
         let _guard = self.save_lock.lock().await;
         let ranges = self.scheduler.completed_ranges();
         let downloaded = self.counters.downloaded();
-        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, ranges.clone(), downloaded);
+        // Range count and covered-chunk count are different numbers: 17 merged
+        // ranges can cover 422 chunks (20261109 report confused the two).
+        let covered_chunks = plan::covered_chunks(&plan::ChunkPlan::with_chunk_size(self.total, self.chunk_size), &ranges);
+        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, ranges.clone(), downloaded).with_target_workers(self.target_workers.load(Ordering::SeqCst));
         if let Err(error) = state::save_atomic(&self.state_path, &state, durable).await {
             klog!(warn, "could not save resume state: {error}");
         }
-        self.task.set_resume_stats(ranges.len() as u64, downloaded);
+        self.task.set_resume_stats(covered_chunks, downloaded);
         *self.last_save.lock().expect("save mutex poisoned") = Instant::now();
         self.dirty.store(false, Ordering::SeqCst);
+        if durable && !ranges.is_empty() {
+            self.task.add_event("info", Some(format!("resume state saved: {} ranges / {covered_chunks} chunks / {downloaded} bytes", ranges.len())), None, None, None);
+        }
     }
     async fn save_if_due(&self) {
         if !self.dirty.swap(false, Ordering::SeqCst) {
@@ -133,6 +156,28 @@ impl Shared {
             self.dirty.store(true, Ordering::SeqCst);
         }
     }
+    /// Spawn `count` additional worker tasks (adaptive growth).
+    fn spawn_workers(self: &Arc<Self>, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let limit = self.max_worker_tasks.saturating_sub(self.spawned_workers.load(Ordering::SeqCst));
+        let count = count.min(limit);
+        if count == 0 {
+            return;
+        }
+        self.spawned_workers.fetch_add(count, Ordering::SeqCst);
+        let mut handles = self.worker_handles.lock().expect("worker handles mutex poisoned");
+        for _ in 0..count {
+            let shared = Arc::clone(self);
+            handles.push(tokio::spawn(async move { worker(shared).await }));
+        }
+        drop(handles);
+        self.wake.notify_waiters();
+    }
+    fn drain_handles(&self) -> Vec<JoinHandle<()>> {
+        std::mem::take(&mut *self.worker_handles.lock().expect("worker handles mutex poisoned"))
+    }
 }
 enum ClaimOutcome {
     Done,
@@ -147,26 +192,93 @@ enum BodyResult {
     Retry(u64, String),
     Fatal(EngineError),
 }
+#[allow(clippy::too_many_arguments)]
 pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, total: u64, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
     let control = task.control();
     let plan = ChunkPlan::new(total, spec.connections, spec.chunk_size_bytes);
     let mut done: Vec<(u64, u64)> = Vec::new();
     let mut resumed_chunks = 0u64;
+    // Concurrency learned by a previous run of this task (persisted in the task
+    // record) and by the resume state; both are restored so a fast transfer
+    // does not fall back to the requested count after a restart.
+    let previous_target = task.view().target_workers;
+    let mut resumed_target: Option<usize> = None;
+    // ── Resume decision (0.2.1) ─────────────────────────────────────────────
+    // The recorded state is matched by stable identity, never by the volatile
+    // final URL (CDN tokens like `auth_key` change on every probe). Every
+    // rejected path reports a stable code so the real reason is visible.
+    #[derive(Clone, Copy)]
+    struct ResumeSummary {
+        decision: &'static str,
+        reason: Option<&'static str>,
+    }
+    let resume: ResumeSummary;
     if spec.resume {
-        if let Some(saved) = state::load(state_path).await {
-            let part_ok = tokio::fs::metadata(part).await.map(|shown| shown.len() == total).unwrap_or(false);
-            if saved.is_compatible(&spec.url, meta, total) && part_ok {
-                if let Some(ranges) = saved.completed_ranges() {
-                    resumed_chunks = plan::covered_chunks(&plan, &ranges);
-                    done = ranges;
-                    task.set_validators_matched(true);
-                    task.add_event("info", Some(format!("resuming with {resumed_chunks} completed chunks")), None, None, None);
+        match state::load_outcome(state_path).await {
+            state::LoadOutcome::State(saved) => {
+                let saved = *saved;
+                let outcome = saved.is_compatible(&spec.url, meta, total);
+                let part_len = tokio::fs::metadata(part).await.ok().map(|metadata| metadata.len());
+                let accepted = match &outcome {
+                    ResumeOutcome::Accepted(reason) => {
+                        let ranges = saved.completed_ranges().unwrap_or_default();
+                        let max_end = ranges.last().map(|(_, end)| *end).unwrap_or(0);
+                        match part_len {
+                            None => {
+                                task.set_resume_decision("rejected", Some("part-missing"));
+                                resume = ResumeSummary { decision: "rejected", reason: Some("part-missing") };
+                                task.add_event("info", Some("resume rejected (part-missing): .part file is gone; restarting from zero".to_string()), None, None, None);
+                                false
+                            }
+                            Some(len) if len < max_end => {
+                                task.set_resume_decision("rejected", Some("part-truncated"));
+                                resume = ResumeSummary { decision: "rejected", reason: Some("part-truncated") };
+                                task.add_event("info", Some(format!("resume rejected (part-truncated): .part has {len} bytes but state covers {max_end}; restarting from zero")), None, None, None);
+                                false
+                            }
+                            Some(_) => {
+                                resumed_chunks = plan::covered_chunks(&plan, &ranges);
+                                let resumed_bytes: u64 = ranges.iter().map(|(start, end)| end - start).sum();
+                                resumed_target = saved.target_workers;
+                                done = ranges;
+                                task.set_validators_matched(true);
+                                task.set_resume_decision("accepted", Some(reason));
+                                resume = ResumeSummary { decision: "accepted", reason: Some(reason) };
+                                task.add_event("info", Some(format!("resumed {resumed_chunks} chunks / {resumed_bytes} bytes from .part ({reason})")), None, None, None);
+                                true
+                            }
+                        }
+                    }
+                    ResumeOutcome::Rejected(reason) => {
+                        task.set_validators_matched(false);
+                        task.set_resume_decision("rejected", Some(reason));
+                        resume = ResumeSummary { decision: "rejected", reason: Some(reason) };
+                        task.add_event("info", Some(format!("resume rejected ({reason}); restarting from zero")), None, None, None);
+                        klog!(info, "resume rejected ({reason}); restarting from zero");
+                        false
+                    }
+                };
+                if !accepted {
+                    done.clear();
                 }
-            } else {
+            }
+            state::LoadOutcome::Missing => {
+                // A fresh transfer has nothing to resume; that is not a
+                // rejection, so the decision stays "not-attempted".
+                task.set_resume_decision("not-attempted", None);
+                resume = ResumeSummary { decision: "not-attempted", reason: None };
+            }
+            state::LoadOutcome::Corrupt(reason) => {
                 task.set_validators_matched(false);
-                klog!(info, "resume validators changed; restarting from zero");
+                task.set_resume_decision("rejected", Some(reason));
+                resume = ResumeSummary { decision: "rejected", reason: Some(reason) };
+                task.add_event("info", Some(format!("resume state is unusable ({reason}); restarting from zero")), None, None, None);
+                done.clear();
             }
         }
+    } else {
+        task.set_resume_decision("rejected", Some("disabled"));
+        resume = ResumeSummary { decision: "rejected", reason: Some("disabled") };
     }
     if done.is_empty() {
         let _ = tokio::fs::remove_file(state_path).await;
@@ -177,9 +289,42 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let scheduler = Arc::new(Scheduler::new(total, done, missing, plan.chunk_size));
     let counters = Arc::new(Counters::default());
     counters.downloaded.store(resumed_bytes, Ordering::Relaxed);
-    let workers = spec.connections.min(plan.total_chunks.max(1) as usize).max(1);
+    let chunk_units = plan.total_chunks.max(1) as usize;
+    let base_workers = spec.connections.min(chunk_units).max(1);
+    let max_worker_tasks = spec.max_connections.clamp(base_workers, crate::protocol::MAX_CONNECTIONS).min(chunk_units);
+    // Restore the best known target on resume: previous run's target from the
+    // task record wins over the saved state, both clamped to the legal range.
+    let restore_target = previous_target.max(resumed_target.unwrap_or(0));
+    let workers = if restore_target > base_workers { restore_target.clamp(base_workers, max_worker_tasks) } else { base_workers };
     task.set_plan(workers, Some(plan.chunk_size), resumed_chunks, resumed_bytes);
-    task.add_event("plan", Some(format!("{} bytes, {} chunks of {} bytes, {} workers, {} resumed bytes", total, plan.total_chunks, plan.chunk_size, workers, resumed_bytes)), None, None, None);
+    task.set_controller_target(workers);
+    let resume_suffix = match resume.reason {
+        Some(reason) => format!("{}:{reason}", resume.decision),
+        None => resume.decision.to_string(),
+    };
+    task.add_event("plan", Some(format!("{total} bytes; chunks={} chunk={}; requested={} initial={} ceiling={}; resumed={resumed_bytes} bytes resume={resume_suffix}", plan.total_chunks, plan.chunk_size, spec.connections, workers, max_worker_tasks)), None, None, None);
+    // Build/plan attribution record for the persistent recording: one per run,
+    // so a task spanning several kernel builds keeps an explainable timeline.
+    task.record_history_meta(crate::history::MetaRecord {
+        kind: "meta".to_string(),
+        t: crate::protocol::now_ms(),
+        kernel_version: crate::protocol::VERSION.to_string(),
+        pid: std::process::id(),
+        task_id: task.id.clone(),
+        run: task.run_generation(),
+        phase: "plan".to_string(),
+        url: crate::protocol::redact_url(&spec.url),
+        file_name: meta.file_name.clone(),
+        total_bytes: Some(total),
+        chunk_size: Some(plan.chunk_size),
+        chunks: Some(plan.total_chunks),
+        requested_connections: spec.connections,
+        initial_workers: workers,
+        max_connections: max_worker_tasks,
+        resumed_bytes,
+        resume_decision: resume.decision.to_string(),
+        resume_reason: resume.reason.map(str::to_string),
+    });
     if let Some(error) = control_error(&control) {
         return Err(error);
     }
@@ -191,7 +336,8 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let limiter = (spec.speed_limit_bps > 0).then(|| Arc::new(TokenBucket::new(spec.speed_limit_bps)));
     let shared = Arc::new(Shared {
         total,
-        client: client.clone(),
+        spec: spec.clone(),
+        client: Mutex::new(client.clone()),
         url: meta.final_url.clone(),
         if_range: crate::facts::if_range_etag(meta.etag.as_deref()).map(str::to_string),
         part: part.to_path_buf(),
@@ -205,6 +351,9 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         task: Arc::clone(task),
         limiter,
         target_workers: AtomicUsize::new(workers),
+        max_worker_tasks,
+        spawned_workers: AtomicUsize::new(0),
+        worker_handles: Mutex::new(Vec::with_capacity(max_worker_tasks)),
         pushback: Mutex::new(None),
         pushback_seen: AtomicBool::new(false),
         failure: Mutex::new(None),
@@ -213,11 +362,10 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         last_save: Mutex::new(Instant::now()),
         save_lock: tokio::sync::Mutex::new(()),
         wake: Notify::new(),
-        workers,
         max_attempts: spec.max_attempts.max(1),
         started: Instant::now(),
     });
-    let reporter = Reporter::start(Arc::clone(task), Arc::clone(&counters), Some(total));
+    let reporter = Reporter::start(Arc::clone(task), Arc::clone(&counters), Some(total), resumed_bytes);
     let saver_done = Arc::new(Notify::new());
     let saver = {
         let shared = Arc::clone(&shared);
@@ -240,24 +388,34 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         let done = Arc::clone(&controller_done);
         tokio::spawn(async move { controller_loop(shared, done).await })
     };
-    let mut handles = Vec::with_capacity(workers);
-    for _ in 0..workers {
-        let shared = Arc::clone(&shared);
-        handles.push(tokio::spawn(async move { worker(shared).await }));
-    }
-    for handle in handles {
-        if let Err(error) = handle.await {
-            shared.fail(EngineError::internal(format!("worker task terminated unexpectedly: {error}")));
+    shared.spawn_workers(workers);
+    // Wait until every worker task has drained (the controller may add more
+    // while the transfer is live; stop it before the final drain).
+    loop {
+        let handles = shared.drain_handles();
+        for handle in handles {
+            if let Err(error) = handle.await {
+                shared.fail(EngineError::internal(format!("worker task terminated unexpectedly: {error}")));
+            }
         }
+        if shared.stopped() || shared.scheduler.is_finished() || shared.has_failure() {
+            break;
+        }
+        // No live workers and neither terminal nor failed should not happen;
+        // poll briefly so a spawning controller cannot livelock the loop.
+        tokio::time::sleep(WORK_POLL).await;
     }
     controller_done.notify_waiters();
     let _ = timeout(Duration::from_secs(2), controller).await;
     saver_done.notify_waiters();
     let _ = timeout(Duration::from_secs(2), saver).await;
+    for handle in shared.drain_handles() {
+        let _ = handle.await;
+    }
     reporter.stop().await;
     if let Some(outcome) = control.stop_kind() {
         shared.save_state(true).await;
-        task.report(counters.downloaded(), Some(total), 0, counters.peak());
+        task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(match outcome {
             StopKind::Paused => EngineError::Paused,
             StopKind::Cancelled => EngineError::Cancelled,
@@ -270,26 +428,25 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     if let Some(error) = shared.take_failure() {
         shared.save_state(true).await;
-        task.report(counters.downloaded(), Some(total), 0, counters.peak());
+        task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(error);
     }
     if !scheduler.is_finished() {
         shared.save_state(true).await;
-        task.report(counters.downloaded(), Some(total), 0, counters.peak());
+        task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(EngineError::internal("transfer ended before every byte range completed"));
     }
     counters.downloaded.store(total, Ordering::Relaxed);
-    task.report(total, Some(total), 0, counters.peak());
+    task.report(total, total.saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
     task.add_event("info", Some(format!("finished in {} ms", shared.started.elapsed().as_millis())), None, None, None);
     finalize(task, spec, part, state_path, target, Some(total)).await
 }
 async fn controller_loop(shared: Arc<Shared>, done: Arc<Notify>) {
+    let mut state = Controller::new(shared.target_workers.load(Ordering::SeqCst), shared.max_worker_tasks);
     let mut ticker = interval(CONTROL_WINDOW);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await;
     let mut last_net = shared.counters.net_rx();
-    let mut last_nanos = shared.counters.active_nanos();
-    let mut last_delta = 0u64;
     let mut last_at = Instant::now();
     loop {
         tokio::select! {
@@ -297,31 +454,48 @@ async fn controller_loop(shared: Arc<Shared>, done: Arc<Notify>) {
             _ = ticker.tick() => {}
         }
         let now = Instant::now();
-        let elapsed = now.saturating_duration_since(last_at).as_secs_f64().max(1e-6);
+        let elapsed = now.saturating_duration_since(last_at);
+        let elapsed_secs = elapsed.as_secs_f64().max(1e-6);
         let net = shared.counters.net_rx();
-        let nanos = shared.counters.active_nanos();
         let delta = net.saturating_sub(last_net);
-        let avg_active = nanos.saturating_sub(last_nanos) as f64 / (elapsed * 1e9);
         last_net = net;
-        last_nanos = nanos;
         last_at = now;
-        let cap = shared.workers.min(shared.scheduler.remaining_units()).max(1);
-        let current = shared.target_workers.load(Ordering::SeqCst).clamp(1, cap);
-        let mut target = current;
-        if shared.pushback_seen.swap(false, Ordering::SeqCst) {
-            target = (target / 2).max(1);
-        } else if target < cap && avg_active >= target as f64 * 0.75 && delta >= last_delta {
-            target += 1;
-        } else if target > 1 && last_delta > 0 && delta * 10 < last_delta * 7 {
-            target -= 1;
+        // Sampled active worker count. The cumulative slot-time metric only
+        // advances when a slot is released, so a tick where every worker is
+        // still inside a long range would read 0 and block adaptive growth;
+        // the instantaneous counter is the right busy signal for this decision.
+        let active_avg = shared.counters.active() as f64;
+        let pushback = shared.pushback_seen.swap(false, Ordering::SeqCst);
+        let cap = shared.max_worker_tasks.min(shared.scheduler.remaining_units()).max(1);
+        let tick = ControllerTick { delta_bytes: delta, elapsed_secs, active_avg, pushback, cap, remaining_units: shared.scheduler.remaining_units() };
+        klog!(debug, "controller tick: instant={:.0} B/s active_avg={active_avg:.2} cap={cap} target={} pushback={pushback}", delta as f64 / elapsed_secs, shared.target_workers.load(Ordering::SeqCst));
+        for effect in state.step(&tick) {
+            klog!(debug, "controller effect: {effect:?}");
+            match effect {
+                ControllerEffect::SetTarget { target, message } => {
+                    let target = target.clamp(1, shared.max_worker_tasks);
+                    shared.target_workers.store(target, Ordering::SeqCst);
+                    shared.task.set_controller_target(target);
+                    shared.task.add_event("controller", Some(message), None, None, None);
+                    let spawned = shared.spawned_workers.load(Ordering::SeqCst);
+                    if target > spawned {
+                        shared.spawn_workers(target - spawned);
+                    }
+                }
+                ControllerEffect::RebuildPool { message } => match http::client_for_spec(&shared.spec) {
+                    Ok(fresh) => {
+                        *shared.client.lock().expect("client mutex poisoned") = fresh;
+                        shared.task.add_event("controller", Some(message), None, None, None);
+                    }
+                    Err(error) => klog!(warn, "could not rebuild connection pool: {}", error.info().message),
+                },
+                ControllerEffect::Note { message } => {
+                    shared.task.add_event("controller", Some(message), None, None, None);
+                }
+            }
         }
-        if target != current {
-            shared.target_workers.store(target, Ordering::SeqCst);
-            shared.wake.notify_waiters();
-            shared.task.add_event("controller", Some(format!("active workers -> {target}")), None, None, None);
-        }
-        last_delta = delta;
     }
+    shared.task.set_controller_target(state.target());
 }
 async fn worker(shared: Arc<Shared>) {
     let mut file = match tokio::fs::OpenOptions::new().write(true).open(&shared.part).await {
@@ -331,7 +505,6 @@ async fn worker(shared: Arc<Shared>) {
             return;
         }
     };
-    let keep_pending = shared.workers;
     let max_span = if shared.total >= COALESCE_MIN_BYTES { COALESCE_MAX_BYTES } else { 0 };
     loop {
         if shared.stopped() {
@@ -340,9 +513,16 @@ async fn worker(shared: Arc<Shared>) {
         if !shared.wait_pushback().await {
             break;
         }
+        // Acquire a network slot *before* claiming so the number of reserved
+        // chunks tracks the active worker target instead of the spawned pool.
+        let Some(slot) = shared.acquire_slot().await else {
+            break;
+        };
+        let keep_pending = shared.target_workers.load(Ordering::SeqCst).max(1);
         let claim = match shared.scheduler.claim_with(keep_pending, max_span) {
             Some(claim) => claim,
             None => {
+                drop(slot);
                 if shared.scheduler.is_finished() {
                     break;
                 }
@@ -354,7 +534,7 @@ async fn worker(shared: Arc<Shared>) {
                 continue;
             }
         };
-        match download_claim(&shared, &mut file, claim).await {
+        match download_claim(&shared, &mut file, claim, Some(slot)).await {
             ClaimOutcome::Done => {}
             ClaimOutcome::Stopped => break,
             ClaimOutcome::Downgrade => {
@@ -373,7 +553,7 @@ async fn worker(shared: Arc<Shared>) {
         shared.fail(EngineError::io(format!("flush .part: {error}")));
     }
 }
-async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: Claim) -> ClaimOutcome {
+async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: Claim, mut slot: Option<Slot>) -> ClaimOutcome {
     let mut written: u64 = 0;
     let mut attempt: u32 = 0;
     loop {
@@ -389,14 +569,20 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
             shared.scheduler.complete(claim, written);
             return ClaimOutcome::Stopped;
         }
-        let Some(slot) = shared.acquire_slot().await else {
-            shared.scheduler.complete(claim, written);
-            return ClaimOutcome::Stopped;
+        let slot = match slot.take() {
+            Some(slot) => slot,
+            None => match shared.acquire_slot().await {
+                Some(slot) => slot,
+                None => {
+                    shared.scheduler.complete(claim, written);
+                    return ClaimOutcome::Stopped;
+                }
+            },
         };
         attempt += 1;
         let start = claim.start + written;
         let end_inclusive = claim.end - 1;
-        let mut request = shared.client.get(&shared.url).header(RANGE, format!("bytes={start}-{end_inclusive}"));
+        let mut request = shared.client().get(&shared.url).header(RANGE, format!("bytes={start}-{end_inclusive}"));
         // If-Range is only valid with a strong validator (RFC 9110 §13.1.5);
         // weak ETags and Last-Modified must not be used for conditional ranges.
         if let Some(etag) = shared.if_range.as_deref() {
@@ -442,7 +628,12 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
                 }
                 return ClaimOutcome::Failed;
             }
-            let outcome = stream_body(shared, file, &claim, response, written).await;
+            let is_tail = shared.scheduler.remaining_units() <= shared.target_workers.load(Ordering::SeqCst).max(1);
+            let mut stall_timeout = stall_timeout_for(shared.counters.downloaded(), shared.total);
+            if is_tail {
+                stall_timeout = stall_timeout.min(crate::engine::TAIL_CLAIM_STALL_TIMEOUT);
+            }
+            let outcome = stream_body(shared, file, &claim, response, written, stall_timeout).await;
             drop(slot);
             match outcome {
                 BodyResult::Complete => {
@@ -509,12 +700,15 @@ fn retry_schedule(shared: &Arc<Shared>, claim: &Claim, attempt: u32, written: u6
     }
     shared.counters.note_retry();
     shared.task.note_retry();
-    let delay = http::backoff(attempt);
+    // In the tail (remaining claim units ≤ target workers) every other worker
+    // is already done, so retry quickly instead of sitting out full backoff.
+    let tail = shared.scheduler.remaining_units() <= shared.target_workers.load(Ordering::SeqCst).max(1);
+    let delay = if tail { crate::engine::tail_retry_delay(attempt) } else { http::backoff(attempt) };
     shared.task.add_event("retry", Some(reason), Some(claim.start), Some(attempt), Some(delay.as_millis().min(u128::from(u64::MAX)) as u64));
     shared.dirty.store(true, Ordering::SeqCst);
     Some(delay)
 }
-async fn stream_body(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: &Claim, mut response: reqwest::Response, initial_written: u64) -> BodyResult {
+async fn stream_body(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: &Claim, mut response: reqwest::Response, initial_written: u64, stall_timeout: Duration) -> BodyResult {
     macro_rules! flush1 {
         ($buffer:expr, $file:expr, $written:expr) => {{
             match flush($buffer, $file, &shared.counters, $written).await {
@@ -534,11 +728,11 @@ async fn stream_body(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim: &C
             return BodyResult::Complete;
         }
         let chunk = tokio::select! {
-            result = timeout(STALL_TIMEOUT, response.chunk()) => match result {
+            result = timeout(stall_timeout, response.chunk()) => match result {
                 Ok(result) => result,
                 Err(_) => {
                     let written = flush1!(&mut buffer, file, written);
-                    return BodyResult::Retry(written, format!("no body data for {} s (stalled connection)", STALL_TIMEOUT.as_secs()));
+                    return BodyResult::Retry(written, format!("no body data for {} s (stalled connection)", stall_timeout.as_secs()));
                 }
             },
             _ = shared.control.wait_stopped() => {

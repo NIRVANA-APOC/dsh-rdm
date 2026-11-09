@@ -17,13 +17,49 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout, MissedTickBehavior};
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Near the end of a transfer the remaining claims are long-tail connections,
+/// so a dead one should be retried sooner than mid-transfer (session data: the
+/// finish worker tail was 9→3→2→1). The shorter deadline only applies once the
+/// missing tail is small, so a genuinely slow-but-alive connection is not
+/// killed while there is plenty of work left.
+pub const TAIL_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+pub const FINAL_STALL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Tail claims (remaining work ≤ target workers) get a short deadline and fast
+/// retries: the 20261109 run showed the last chunks waiting 10 s twice at the
+/// very end while the rest of the transfer was already finished.
+pub const TAIL_CLAIM_STALL_TIMEOUT: Duration = Duration::from_secs(3);
+pub const TAIL_RETRY_BASE: Duration = Duration::from_millis(250);
+pub const TAIL_RETRY_MAX: Duration = Duration::from_secs(1);
 /// Largest per-worker write buffer. Writes are dispatched to the blocking pool
 /// one at a time, so a 256 KiB buffer spends a measurable share of a transfer
 /// inside that hand-off; 1 MiB cuts the dispatch count 4x at a bounded memory
-/// cost (1 MiB per worker, 32 MiB at the 32-connection cap).
+/// cost (1 MiB per worker, 128 MiB at the 128-connection cap; the default
+/// 8-connection profile uses 8 MiB).
 pub const WRITE_BUFFER_BYTES: usize = 1024 * 1024;
 pub const MIN_WRITE_BUFFER_BYTES: usize = 256 * 1024;
 pub const SAVE_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Stall deadline for the current fraction of the transfer.
+pub fn stall_timeout_for(written: u64, total: u64) -> Duration {
+    if total == 0 {
+        return STALL_TIMEOUT;
+    }
+    let percent = (written.min(total) as f64 / total as f64) * 100.0;
+    if percent >= 97.0 {
+        FINAL_STALL_TIMEOUT
+    } else if percent >= 90.0 {
+        TAIL_STALL_TIMEOUT
+    } else {
+        STALL_TIMEOUT
+    }
+}
+
+/// Retry delay for a tail claim: 250 ms × attempt, capped at 1 s, so the last
+/// few chunks do not sit through exponential backoff while everything else is
+/// done.
+pub fn tail_retry_delay(attempt: u32) -> Duration {
+    TAIL_RETRY_BASE.saturating_mul(attempt.max(1)).min(TAIL_RETRY_MAX)
+}
 
 /// Write buffer for one claim: a quarter of the chunk size, bounded to
 /// [256 KiB, 1 MiB], so small chunks do not allocate a full megabyte each.
@@ -115,9 +151,11 @@ pub struct Reporter {
 }
 impl Reporter {
     /// Reused reporter tick (≤ 100 ms): samples cumulative bytes into the
-    /// task's bounded speed ring and updates EWMA/peak/telemetry. No extra
+    /// task's bounded speed ring and updates EWMA/peak/telemetry. `baseline` is
+    /// the byte count adopted by resume at run start; rate metrics are computed
+    /// from `downloaded - baseline` so a resumed task starts cold. No extra
     /// timers are created and idle tasks have no reporter running.
-    pub fn start(task: Arc<Task>, counters: Arc<Counters>, total: Option<u64>) -> Self {
+    pub fn start(task: Arc<Task>, counters: Arc<Counters>, total: Option<u64>, baseline: u64) -> Self {
         let stop = Arc::new(Notify::new());
         let wait = Arc::clone(&stop);
         let handle = tokio::spawn(async move {
@@ -129,7 +167,8 @@ impl Reporter {
                     _ = wait.notified() => break,
                     _ = ticker.tick() => {}
                 }
-                task.report(counters.downloaded(), total, counters.active(), counters.peak());
+                let downloaded = counters.downloaded();
+                task.report(downloaded, downloaded.saturating_sub(baseline), total, counters.active(), counters.peak());
             }
         });
         Self { stop, handle }
@@ -240,4 +279,39 @@ pub async fn sha256_file(path: &Path) -> EngineResult<String> {
         hasher.update(&buffer[..read]);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_stall_timeout_shortens_near_completion() {
+        assert_eq!(stall_timeout_for(0, 1000), STALL_TIMEOUT);
+        assert_eq!(stall_timeout_for(500, 1000), STALL_TIMEOUT);
+        assert_eq!(stall_timeout_for(900, 1000), TAIL_STALL_TIMEOUT);
+        assert_eq!(stall_timeout_for(969, 1000), TAIL_STALL_TIMEOUT);
+        assert_eq!(stall_timeout_for(970, 1000), FINAL_STALL_TIMEOUT);
+        assert_eq!(stall_timeout_for(1000, 1000), FINAL_STALL_TIMEOUT);
+        // Unknown total (single stream) keeps the conservative deadline.
+        assert_eq!(stall_timeout_for(0, 0), STALL_TIMEOUT);
+    }
+
+    #[test]
+    fn write_buffer_sizes_follow_the_chunk() {
+        assert_eq!(write_buffer_bytes(crate::protocol::MIN_CHUNK_SIZE), MIN_WRITE_BUFFER_BYTES);
+        assert_eq!(write_buffer_bytes(8 * 1024 * 1024), WRITE_BUFFER_BYTES);
+        assert_eq!(write_buffer_bytes(1024), MIN_WRITE_BUFFER_BYTES);
+    }
+
+    #[test]
+    fn tail_retry_delays_are_fast_and_bounded() {
+        assert_eq!(tail_retry_delay(1), Duration::from_millis(250));
+        assert_eq!(tail_retry_delay(2), Duration::from_millis(500));
+        assert_eq!(tail_retry_delay(3), Duration::from_millis(750));
+        assert_eq!(tail_retry_delay(4), Duration::from_secs(1));
+        assert_eq!(tail_retry_delay(99), Duration::from_secs(1));
+        assert_eq!(tail_retry_delay(0), Duration::from_millis(250));
+        assert_eq!(TAIL_CLAIM_STALL_TIMEOUT, Duration::from_secs(3));
+    }
 }

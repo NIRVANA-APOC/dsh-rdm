@@ -1,0 +1,382 @@
+{
+ "taskId": "t_0c48feb24198fef1",
+ "final": {
+  "activeWorkers": 0,
+  "avgBps": 75907103,
+  "chunkSize": 8388608,
+  "connections": 41,
+  "createdAt": 1794202539237,
+  "dir": "D:\\llm\\models",
+  "downloaded": 31843777504,
+  "elapsedMs": 138471,
+  "error": null,
+  "etaConfidence": "unknown",
+  "etaSecs": null,
+  "expectedSha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+  "fileName": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+  "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/f6/b6/c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484?filename=Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>",
+  "finishedAt": 1794203176179,
+  "host": "www.modelscope.cn",
+  "id": "t_0c48feb24198fef1",
+  "maxConnections": 128,
+  "path": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+  "peakBps": 184254279,
+  "peakWorkers": 128,
+  "percent": 100,
+  "rangeSupported": true,
+  "requestedConnections": 1,
+  "resumable": true,
+  "resumeSafety": "strong",
+  "resumedBytes": 21332844959,
+  "resumedChunks": 2502,
+  "retries": 1,
+  "sessionId": null,
+  "sha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+  "signedUrlExpiresAt": null,
+  "speed1sBps": null,
+  "speed300sBps": 23012271,
+  "speed30sBps": 5667105,
+  "speed5sBps": null,
+  "speedBps": 0,
+  "stalledMs": 0,
+  "startedAt": 1794202539237,
+  "status": "completed",
+  "targetWorkers": 102,
+  "tlsNotAfter": 1803112590000,
+  "total": 31843777504,
+  "transferredBytes": 10510932545,
+  "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+  "verified": true
+ },
+ "detail": {
+  "diagnosis": [],
+  "resumeState": {
+   "bytesDone": 31829305663,
+   "chunksDone": 3771,
+   "resumeDecision": "accepted",
+   "resumeReason": "etag",
+   "resumedBytes": 21332844959,
+   "resumedChunks": 2502,
+   "validatorsMatched": true
+  },
+  "server": {
+   "checksum": {
+    "contentDigest": null,
+    "contentMd5": null,
+    "crc32c": null,
+    "sha256": null
+   },
+   "contentDisposition": "attachment;filename=\"Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf\"",
+   "contentEncoding": null,
+   "contentType": "application/octet-stream",
+   "fileName": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+   "fileNameSource": "content-disposition",
+   "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/f6/b6/c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484?filename=Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>",
+   "headers": {
+    "cacheControl": null,
+    "date": "Sun, 11 Oct 2026 03:59:20 GMT",
+    "expires": null,
+    "server": "Tengine",
+    "vary": null
+   },
+   "host": "www.modelscope.cn",
+   "httpVersion": "HTTP/1.1",
+   "origin": {
+    "attempts": 2,
+    "bestBps": 84821109,
+    "completed": 2,
+    "known": true,
+    "lastAt": 1794203176179,
+    "lastError": null,
+    "medianBps": 75907103
+   },
+   "range": {
+    "acceptRanges": "bytes",
+    "ifRange": true,
+    "probeBytes": 64,
+    "probeStatus": 206,
+    "probedBy": "range-get",
+    "supported": true
+   },
+   "rateLimit": {
+    "limit": null,
+    "remaining": null,
+    "retryAfterSecs": null
+   },
+   "recommendation": {
+    "chunkSizeBytes": 8388608,
+    "connections": 8,
+    "reason": "ranges+strong-etag",
+    "singleStream": false,
+    "start": "now",
+    "verify": "unavailable"
+   },
+   "redirects": [
+    {
+     "status": 302,
+     "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/f6/b6/c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484?filename=Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>"
+    }
+   ],
+   "resume": {
+    "possible": true,
+    "reason": "strong-etag",
+    "safety": "strong"
+   },
+   "signedUrl": {
+    "expiresAt": null,
+    "expiresInSecs": null,
+    "signed": true,
+    "source": "unknown",
+    "state": "unknown"
+   },
+   "status": 200,
+   "timing": {
+    "probeMs": 246,
+    "sampleBps": null,
+    "ttfbMs": 71
+   },
+   "tls": {
+    "expiresInSecs": 8909552,
+    "https": true,
+    "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+    "notAfter": 1803112590000,
+    "state": "valid",
+    "subject": "*.modelscope.cn"
+   },
+   "totalBytes": 31843777504,
+   "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+   "validators": {
+    "etag": "\"1AA171A3A5844271560F47835A31F95D-400\"",
+    "lastModified": "Thu, 16 Apr 2026 17:21:15 GMT",
+    "strongEtag": true
+   },
+   "warnings": [
+    "redirected"
+   ]
+  },
+  "target": {
+   "dir": "D:\\llm\\models",
+   "part": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf.part",
+   "path": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+   "resumeState": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf.part.json"
+  },
+  "telemetry": {
+   "avgBps": 75907103,
+   "etaConfidence": "unknown",
+   "lastSampleAt": 1794203176179,
+   "peakBps": 184254279,
+   "samples": 769,
+   "stalledMs": 0,
+   "trend": "unknown",
+   "windows": {
+    "1s": null,
+    "300s": 23012271,
+    "30s": 5667105,
+    "5s": null
+   }
+  },
+  "timing": {
+   "finalizeMs": 16459,
+   "probeMs": 246,
+   "queuedMs": 0,
+   "transferMs": 229845
+  },
+  "verification": {
+   "expectedSha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+   "serverChecksums": {
+    "contentDigest": null,
+    "contentMd5": null,
+    "crc32c": null,
+    "sha256": null
+   },
+   "sha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+   "verified": true
+  }
+ },
+ "events": [
+  {
+   "at": 1794203037708,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "resumed",
+   "message": "resuming (auto-resume)",
+   "seq": 1
+  },
+  {
+   "at": 1794203037708,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "probe",
+   "message": "probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+   "seq": 2
+  },
+  {
+   "at": 1794203037955,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "probe",
+   "message": "31843777504 bytes, ranges=true, type=application/octet-stream",
+   "seq": 3
+  },
+  {
+   "at": 1794203037955,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "info",
+   "message": "resumed 2502 chunks / 21332844959 bytes from .part (etag)",
+   "seq": 4
+  },
+  {
+   "at": 1794203037956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "plan",
+   "message": "31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=41 ceiling=128; resumed=21332844959 bytes resume=accepted:etag",
+   "seq": 5
+  },
+  {
+   "at": 1794203037956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "started",
+   "message": "transfer started",
+   "seq": 6
+  },
+  {
+   "at": 1794203038958,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 46: aggregate 12.1 MiB/s, per-connection 0.3 MiB/s",
+   "seq": 7
+  },
+  {
+   "at": 1794203042956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 51: aggregate 64.8 MiB/s, per-connection 1.4 MiB/s",
+   "seq": 8
+  },
+  {
+   "at": 1794203046956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 57: aggregate 90.4 MiB/s, per-connection 1.8 MiB/s",
+   "seq": 9
+  },
+  {
+   "at": 1794203050956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 64: aggregate 98.3 MiB/s, per-connection 1.7 MiB/s",
+   "seq": 10
+  },
+  {
+   "at": 1794203054956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 72: aggregate 109.2 MiB/s, per-connection 1.7 MiB/s",
+   "seq": 11
+  },
+  {
+   "at": 1794203058957,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 81: aggregate 102.7 MiB/s, per-connection 1.4 MiB/s",
+   "seq": 12
+  },
+  {
+   "at": 1794203062956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 91: aggregate 109.6 MiB/s, per-connection 1.4 MiB/s",
+   "seq": 13
+  },
+  {
+   "at": 1794203066956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 102: aggregate 111.5 MiB/s, per-connection 1.2 MiB/s",
+   "seq": 14
+  },
+  {
+   "at": 1794203067956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "growth frozen: aggregate gain < 2% at 110.4 MiB/s over 2 probes",
+   "seq": 15
+  },
+  {
+   "at": 1794203128956,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "tail: target frozen at 102 workers (remaining claim units 93)",
+   "seq": 16
+  },
+  {
+   "at": 1794203136377,
+   "attempt": 1,
+   "chunk": 31550272875,
+   "delayMs": 250,
+   "kind": "retry",
+   "message": "no body data for 5 s (stalled connection)",
+   "seq": 17
+  },
+  {
+   "at": 1794203159720,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "info",
+   "message": "finished in 121764 ms",
+   "seq": 18
+  },
+  {
+   "at": 1794203159720,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "verify",
+   "message": "hashing file for sha256",
+   "seq": 19
+  },
+  {
+   "at": 1794203176179,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "completed",
+   "message": "download completed",
+   "seq": 20
+  }
+ ],
+ "fileSize": 31843777504,
+ "sizeOk": true,
+ "sha256": "f6b6c6d5cfa6f00d964eeb7add28eb14ce7481734d506b90681007678cd2c484",
+ "shaOk": true
+}

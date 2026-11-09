@@ -17,6 +17,17 @@
 //   corrupt   serves bytes that do not match the deterministic pattern's sha256.
 //   chunked   no Content-Length / Transfer-Encoding: chunked, no ranges, so the
 //             kernel must fall back to a single unknown-length stream.
+//   volatile  0.3.0 resume fixture: every request for the bare path answers 302
+//             to the SAME path with a fresh `?sig=<random>` query token; the
+//             final path serves ranged content with stable size/etag/bytes. The
+//             final URL therefore changes on every probe while the object
+//             identity does not (real ModelScope `auth_key` behaviour).
+//             `?slow=1` serves the final body through the trickling slow path.
+//   authkey   0.3.0 redaction fixture: every request for the bare path answers
+//             302 to the SAME path with a ModelScope-style `auth_key=<secret>`
+//             (plus `Expires`); the final path serves ranged content. Assertions
+//             use GET /__fixture/health for the secret and /__fixture/state for
+//             redirect/served counters and minted volatile tokens.
 //
 // The server records per-request facts (method, url, Range header, status,
 // timing) plus live connection / range-concurrency counters. Tests filter the
@@ -31,6 +42,14 @@ const MAX_LOG = 40000
 
 const SEED_MAIN = 7
 const SEED_CHANGED_V2 = 99
+
+// Stable validators for the 0.3.0 resume fixtures: the redirect target query
+// token is volatile, but path/size/etag/content/Last-Modified never change.
+const VOLATILE_ETAG = '"volatile-v1"'
+const AUTH_KEY_ETAG = '"authkey-v1"'
+const FIXTURE_LAST_MODIFIED = 'Wed, 21 Oct 2026 07:28:00 GMT'
+/** ModelScope-style `auth_key` bearer token used by the redaction scenarios. */
+const AUTH_KEY_SECRET = '1794154377-c6fc216ba8e4466d89b9af721eb2cf8d-0-cb444b28d3878bfbb67e715a719a58f5'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
@@ -162,6 +181,10 @@ export async function startFixtureServer(options = {}) {
     abortedResponses: 0,
     slowResponses: 0,
     redirects: 0,
+    volatileRedirects: 0,
+    volatileServed: 0,
+    authKeyRedirects: 0,
+    authKeyServed: 0,
     status4xx: 0,
     status5xx: 0,
   }
@@ -177,6 +200,8 @@ export async function startFixtureServer(options = {}) {
     changedVersion: 'v1',
     flakyRemaining: config.flakyFailures,
     flakyRejectedTotal: 0,
+    /** Every random `sig` token minted by the volatile redirect route. */
+    volatileTokens: [],
   }
 
   const sockets = new Set()
@@ -253,6 +278,64 @@ export async function startFixtureServer(options = {}) {
     })
     recordEnd(entry, res)
     finish()
+  }
+
+  /** Recorded 302 hop shared by the 0.3.0 volatile/auth_key fixtures. */
+  function sendRedirect(req, res, mode, location) {
+    const entry = recordStart(req, mode)
+    attachResGuards(req, res)
+    counters.redirects += 1
+    res.writeHead(302, { ...COMMON_HEADERS, Location: location, 'Content-Length': '0' })
+    entry.status = 302
+    recordEnd(entry, res)
+    res.end()
+  }
+
+  /**
+   * 0.3.0 volatile-final-URL bridge route. The bare path always answers 302 to
+   * the same path with a *fresh* `sig` token, so `finalUrl` differs on every
+   * probe while one stable identity (path/size/etag/Last-Modified/bytes) does
+   * not. A kernel that keys resume on `finalUrl` restarts from zero here.
+   */
+  async function serveVolatile(req, res, { size, url, query, pathname }) {
+    if (!query.has('sig')) {
+      const token = crypto.randomBytes(16).toString('hex')
+      state.volatileTokens.push(token)
+      counters.volatileRedirects += 1
+      const params = new URLSearchParams(query)
+      params.set('sig', token)
+      sendRedirect(req, res, 'volatile', `${pathname}?${params.toString()}`)
+      return
+    }
+    counters.volatileServed += 1
+    const buffer = patternBuffer(SEED_MAIN, size)
+    if (query.get('slow') === '1') {
+      await serveSlow(req, res, { size, buffer, url, params: query, etag: VOLATILE_ETAG, lastModified: FIXTURE_LAST_MODIFIED })
+      return
+    }
+    await serveRanged(req, res, { size, buffer, etag: VOLATILE_ETAG, lastModified: FIXTURE_LAST_MODIFIED, url })
+  }
+
+  /**
+   * 0.3.0 redaction route: bare path 302s to the same path carrying a
+   * ModelScope-style `auth_key` (real token material) and `Expires`. The final
+   * path serves ranged content so downloads still complete.
+   */
+  async function serveAuthKey(req, res, { size, url, query, pathname }) {
+    if (!query.has('auth_key')) {
+      counters.authKeyRedirects += 1
+      const params = new URLSearchParams(query)
+      params.set('auth_key', AUTH_KEY_SECRET)
+      sendRedirect(req, res, 'authkey', `${pathname}?${params.toString()}`)
+      return
+    }
+    counters.authKeyServed += 1
+    const buffer = patternBuffer(SEED_MAIN, size)
+    if (query.get('slow') === '1') {
+      await serveSlow(req, res, { size, buffer, url, params: query, etag: AUTH_KEY_ETAG, lastModified: FIXTURE_LAST_MODIFIED })
+      return
+    }
+    await serveRanged(req, res, { size, buffer, etag: AUTH_KEY_ETAG, lastModified: FIXTURE_LAST_MODIFIED, url })
   }
 
   async function serveRanged(req, res, { size, buffer, etag, lastModified, url }) {
@@ -544,10 +627,42 @@ export async function startFixtureServer(options = {}) {
     })
   }
 
+  // ── 0.3.0 route state exposed over HTTP for out-of-process harnesses ──────
+  function volatileState() {
+    const tokens = state.volatileTokens.slice()
+    return {
+      redirects: counters.volatileRedirects,
+      served: counters.volatileServed,
+      tokens,
+      uniqueTokens: new Set(tokens).size,
+      etag: VOLATILE_ETAG,
+    }
+  }
+
+  function authKeyState() {
+    return { redirects: counters.authKeyRedirects, served: counters.authKeyServed, etag: AUTH_KEY_ETAG }
+  }
+
+  function stateSnapshot() {
+    return {
+      counters: { ...counters },
+      volatile: volatileState(),
+      authKey: authKeyState(),
+      requestCount: requestLog.length,
+      changedVersion: state.changedVersion,
+      flakyRemaining: state.flakyRemaining,
+    }
+  }
+
   async function handle(req, res) {
     if (req.method === 'GET' && req.url === '/__fixture/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true }))
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ ok: true, authKeySecret: AUTH_KEY_SECRET, etags: { ranged: '"ranged-v1"', volatile: VOLATILE_ETAG, authkey: AUTH_KEY_ETAG } }))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/__fixture/state') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify(stateSnapshot()))
       return
     }
     const route = parseRoute(req.url)
@@ -606,6 +721,12 @@ export async function startFixtureServer(options = {}) {
       }
       case 'flaky':
         await serveFlaky(req, res, { size, url })
+        return
+      case 'volatile':
+        await serveVolatile(req, res, { size, url, query, pathname })
+        return
+      case 'authkey':
+        await serveAuthKey(req, res, { size, url, query, pathname })
         return
       case 'corrupt':
         await serveRanged(req, res, {
@@ -760,7 +881,22 @@ export async function startFixtureServer(options = {}) {
       for (const key of Object.keys(counters)) counters[key] = 0
       requestLog.length = 0
       rangeIntervals.length = 0
+      state.volatileTokens.length = 0
       requestSeq = 0
+    },
+    /** 0.3.0 resume fixture: minted tokens + redirect/served counters. */
+    volatileState,
+    /** 0.3.0 redaction fixture: redirect/served counters + stable etag. */
+    authKeyState,
+    /** Bearer token served by the `/authkey/` redirect (for leak assertions). */
+    authKeySecret: AUTH_KEY_SECRET,
+    urlForVolatile(size, fileName, query = '') {
+      const q = query ? (query.startsWith('?') ? query : `?${query}`) : ''
+      return `${origin}/volatile/${size}/${encodeURIComponent(fileName)}${q}`
+    },
+    urlForAuthKey(size, fileName, query = '') {
+      const q = query ? (query.startsWith('?') ? query : `?${query}`) : ''
+      return `${origin}/authkey/${size}/${encodeURIComponent(fileName)}${q}`
     },
     overlapFor,
     requestsFor,
@@ -819,4 +955,4 @@ export function fetchText(url, { method = 'GET', headers = {}, timeoutMs = 10000
   })
 }
 
-export const FIXTURE_CONSTANTS = { MIB, SEED_MAIN, SEED_CHANGED_V2 }
+export const FIXTURE_CONSTANTS = { MIB, SEED_MAIN, SEED_CHANGED_V2, AUTH_KEY_SECRET, VOLATILE_ETAG, AUTH_KEY_ETAG }

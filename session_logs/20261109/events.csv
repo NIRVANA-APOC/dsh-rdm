@@ -1,0 +1,74 @@
+task,seq,utc,local,kind,chunk,attempt,delay_ms,message
+t_7359f357ea3922cb,1,04:12:39.550,2026-11-09T12:12:39.550+08:00,resumed,,,,resuming (auto-resume)
+t_7359f357ea3922cb,2,04:12:39.551,2026-11-09T12:12:39.551+08:00,probe,,,,probing https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf
+t_7359f357ea3922cb,3,04:12:39.849,2026-11-09T12:12:39.849+08:00,probe,,,,28800138432 bytes; ranges=true; type=application/octet-stream
+t_7359f357ea3922cb,4,04:12:39.850,2026-11-09T12:12:39.850+08:00,info,,,,resumed 3433 chunks / 28798211398 bytes from .part (etag)
+t_7359f357ea3922cb,5,04:12:39.850,2026-11-09T12:12:39.850+08:00,plan,,,,28800138432 bytes; 3434 chunks of 8388608 bytes; 12 workers (adaptive up to 128); 28798211398 resumed bytes (resume: accepted:etag)
+t_7359f357ea3922cb,6,04:12:39.850,2026-11-09T12:12:39.850+08:00,started,,,,transfer started
+t_7359f357ea3922cb,7,04:12:40.095,2026-11-09T12:12:40.095+08:00,info,,,,finished in 245 ms
+t_7359f357ea3922cb,8,04:12:40.095,2026-11-09T12:12:40.095+08:00,verify,,,,hashing file for sha256
+t_7359f357ea3922cb,9,04:12:54.691,2026-11-09T12:12:54.691+08:00,completed,,,,download completed
+t_6a665d4e17fa3100,1,04:12:39.550,2026-11-09T12:12:39.550+08:00,resumed,,,,resuming (auto-resume)
+t_6a665d4e17fa3100,2,04:12:39.551,2026-11-09T12:12:39.551+08:00,probe,,,,probing https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf
+t_6a665d4e17fa3100,3,04:12:39.817,2026-11-09T12:12:39.817+08:00,probe,,,,29608446496 bytes; ranges=true; type=application/octet-stream
+t_6a665d4e17fa3100,4,04:12:39.817,2026-11-09T12:12:39.817+08:00,info,,,,resumed 276 chunks / 2359836648 bytes from .part (etag)
+t_6a665d4e17fa3100,5,04:12:39.817,2026-11-09T12:12:39.817+08:00,plan,,,,29608446496 bytes; 3530 chunks of 8388608 bytes; 12 workers (adaptive up to 128); 2359836648 resumed bytes (resume: accepted:etag)
+t_6a665d4e17fa3100,6,04:12:39.817,2026-11-09T12:12:39.817+08:00,started,,,,transfer started
+t_6a665d4e17fa3100,7,04:12:40.818,2026-11-09T12:12:40.818+08:00,controller,,,,grow to 13: per-connection 1.1 MiB/s; instant 12.8 MiB/s
+t_6a665d4e17fa3100,8,04:12:41.818,2026-11-09T12:12:41.818+08:00,controller,,,,revert to 12: growth diluted per-connection rate
+t_6a665d4e17fa3100,9,04:12:58.818,2026-11-09T12:12:58.818+08:00,controller,,,,grow to 13: per-connection 0.8 MiB/s; instant 9.6 MiB/s
+t_6a665d4e17fa3100,10,04:13:04.818,2026-11-09T12:13:04.818+08:00,controller,,,,grow to 14: per-connection 0.7 MiB/s; instant 9.5 MiB/s
+t_6a665d4e17fa3100,11,04:13:08.818,2026-11-09T12:13:08.818+08:00,controller,,,,grow to 15: per-connection 0.7 MiB/s; instant 9.4 MiB/s
+t_6a665d4e17fa3100,12,04:13:13.818,2026-11-09T12:13:13.818+08:00,controller,,,,grow to 16: per-connection 1.8 MiB/s; instant 26.8 MiB/s
+t_6a665d4e17fa3100,13,04:13:14.818,2026-11-09T12:13:14.818+08:00,controller,,,,revert to 15: growth diluted per-connection rate
+t_6a665d4e17fa3100,14,04:13:16.819,2026-11-09T12:13:16.819+08:00,controller,,,,pool rebuild #1: 26.8 -> 9.2 MiB/s at 15 workers
+t_6a665d4e17fa3100,15,04:13:16.819,2026-11-09T12:13:16.819+08:00,controller,,,,grow to 16: probe after pool rebuild
+t_6a665d4e17fa3100,16,04:13:30.818,2026-11-09T12:13:30.818+08:00,controller,,,,grow to 18: per-connection 2.4 MiB/s; instant 38.4 MiB/s
+t_6a665d4e17fa3100,17,04:13:35.818,2026-11-09T12:13:35.818+08:00,controller,,,,grow to 20: per-connection 3.1 MiB/s; instant 55.7 MiB/s
+t_6a665d4e17fa3100,18,04:13:36.818,2026-11-09T12:13:36.818+08:00,controller,,,,revert to 18: growth diluted per-connection rate
+t_6a665d4e17fa3100,19,04:13:38.114,2026-11-09T12:13:38.114+08:00,info,,,,resume state saved: 17 chunks / 3676430303 bytes
+t_6a665d4e17fa3100,20,04:13:38.114,2026-11-09T12:13:38.114+08:00,cancelled,,,,download cancelled
+t_ebda50bb99a77a14,1,04:13:42.288,2026-11-09T12:13:42.288+08:00,probe,,,,probing https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf
+t_ebda50bb99a77a14,2,04:13:42.583,2026-11-09T12:13:42.583+08:00,probe,,,,29608446496 bytes; ranges=true; type=application/octet-stream
+t_ebda50bb99a77a14,3,04:13:42.583,2026-11-09T12:13:42.583+08:00,info,,,,resumed 422 chunks / 3676430303 bytes from .part (etag)
+t_ebda50bb99a77a14,4,04:13:42.583,2026-11-09T12:13:42.583+08:00,plan,,,,29608446496 bytes; 3530 chunks of 8388608 bytes; 16 workers (adaptive up to 128); 3676430303 resumed bytes (resume: accepted:etag)
+t_ebda50bb99a77a14,5,04:13:42.583,2026-11-09T12:13:42.583+08:00,started,,,,transfer started
+t_ebda50bb99a77a14,6,04:13:43.584,2026-11-09T12:13:43.584+08:00,controller,,,,grow to 18: per-connection 0.8 MiB/s; instant 12.8 MiB/s
+t_ebda50bb99a77a14,7,04:13:44.584,2026-11-09T12:13:44.584+08:00,controller,,,,revert to 16: growth diluted per-connection rate
+t_ebda50bb99a77a14,8,04:14:14.597,2026-11-09T12:14:14.597+08:00,controller,,,,grow to 18: per-connection 0.6 MiB/s; instant 10.0 MiB/s
+t_ebda50bb99a77a14,9,04:14:15.593,2026-11-09T12:14:15.593+08:00,controller,,,,revert to 16: growth diluted per-connection rate
+t_ebda50bb99a77a14,10,04:14:30.593,2026-11-09T12:14:30.593+08:00,controller,,,,grow to 18: per-connection 0.6 MiB/s; instant 8.8 MiB/s
+t_ebda50bb99a77a14,11,04:14:39.593,2026-11-09T12:14:39.593+08:00,controller,,,,grow to 20: per-connection 0.5 MiB/s; instant 9.3 MiB/s
+t_ebda50bb99a77a14,12,04:14:58.593,2026-11-09T12:14:58.593+08:00,controller,,,,grow to 22: per-connection 0.5 MiB/s; instant 9.4 MiB/s
+t_ebda50bb99a77a14,13,04:15:03.593,2026-11-09T12:15:03.593+08:00,controller,,,,grow to 24: per-connection 1.2 MiB/s; instant 26.9 MiB/s
+t_ebda50bb99a77a14,14,04:15:07.593,2026-11-09T12:15:07.593+08:00,controller,,,,grow to 27: per-connection 1.7 MiB/s; instant 41.8 MiB/s
+t_ebda50bb99a77a14,15,04:15:10.593,2026-11-09T12:15:10.593+08:00,controller,,,,grow to 30: per-connection 3.0 MiB/s; instant 82.3 MiB/s
+t_ebda50bb99a77a14,16,04:15:14.593,2026-11-09T12:15:14.593+08:00,controller,,,,grow to 33: per-connection 2.8 MiB/s; instant 84.7 MiB/s
+t_ebda50bb99a77a14,17,04:15:18.593,2026-11-09T12:15:18.593+08:00,controller,,,,grow to 37: per-connection 3.3 MiB/s; instant 109.7 MiB/s
+t_ebda50bb99a77a14,18,04:16:24.593,2026-11-09T12:16:24.593+08:00,controller,,,,grow to 41: per-connection 3.0 MiB/s; instant 109.2 MiB/s
+t_ebda50bb99a77a14,19,04:16:29.593,2026-11-09T12:16:29.593+08:00,controller,,,,grow to 46: per-connection 2.7 MiB/s; instant 109.0 MiB/s
+t_ebda50bb99a77a14,20,04:16:33.593,2026-11-09T12:16:33.593+08:00,controller,,,,grow to 51: per-connection 2.3 MiB/s; instant 107.4 MiB/s
+t_ebda50bb99a77a14,21,04:16:36.593,2026-11-09T12:16:36.593+08:00,controller,,,,grow to 57: per-connection 2.1 MiB/s; instant 108.9 MiB/s
+t_ebda50bb99a77a14,22,04:16:39.593,2026-11-09T12:16:39.593+08:00,controller,,,,grow to 64: per-connection 1.9 MiB/s; instant 110.9 MiB/s
+t_ebda50bb99a77a14,23,04:16:47.593,2026-11-09T12:16:47.593+08:00,controller,,,,grow to 72: per-connection 1.8 MiB/s; instant 113.3 MiB/s
+t_ebda50bb99a77a14,24,04:16:48.593,2026-11-09T12:16:48.593+08:00,controller,,,,revert to 64: growth diluted per-connection rate
+t_ebda50bb99a77a14,25,04:17:04.593,2026-11-09T12:17:04.593+08:00,controller,,,,grow to 72: per-connection 1.8 MiB/s; instant 114.3 MiB/s
+t_ebda50bb99a77a14,26,04:17:05.593,2026-11-09T12:17:05.593+08:00,controller,,,,revert to 64: growth diluted per-connection rate
+t_ebda50bb99a77a14,27,04:17:21.593,2026-11-09T12:17:21.593+08:00,controller,,,,grow to 72: per-connection 1.8 MiB/s; instant 114.5 MiB/s
+t_ebda50bb99a77a14,28,04:17:22.593,2026-11-09T12:17:22.593+08:00,controller,,,,revert to 64: growth diluted per-connection rate
+t_ebda50bb99a77a14,29,04:17:39.593,2026-11-09T12:17:39.593+08:00,controller,,,,grow to 72: per-connection 1.8 MiB/s; instant 112.8 MiB/s
+t_ebda50bb99a77a14,30,04:17:40.594,2026-11-09T12:17:40.594+08:00,controller,,,,revert to 64: growth diluted per-connection rate
+t_ebda50bb99a77a14,31,04:17:56.615,2026-11-09T12:17:56.615+08:00,controller,,,,grow to 72: per-connection 1.8 MiB/s; instant 113.1 MiB/s
+t_ebda50bb99a77a14,32,04:18:00.615,2026-11-09T12:18:00.615+08:00,controller,,,,grow to 81: per-connection 1.6 MiB/s; instant 113.3 MiB/s
+t_ebda50bb99a77a14,33,04:18:04.615,2026-11-09T12:18:04.615+08:00,controller,,,,grow to 91: per-connection 1.4 MiB/s; instant 114.3 MiB/s
+t_ebda50bb99a77a14,34,04:18:05.615,2026-11-09T12:18:05.615+08:00,controller,,,,revert to 81: growth diluted per-connection rate
+t_ebda50bb99a77a14,35,04:18:27.615,2026-11-09T12:18:27.615+08:00,controller,,,,grow to 91: per-connection 1.4 MiB/s; instant 112.2 MiB/s
+t_ebda50bb99a77a14,36,04:18:34.615,2026-11-09T12:18:34.615+08:00,controller,,,,grow to 102: per-connection 1.2 MiB/s; instant 112.7 MiB/s
+t_ebda50bb99a77a14,37,04:18:45.615,2026-11-09T12:18:45.615+08:00,controller,,,,shrink to 90: average rate falling
+t_ebda50bb99a77a14,38,04:18:46.615,2026-11-09T12:18:46.615+08:00,controller,,,,shrink to 79: average rate falling
+t_ebda50bb99a77a14,39,04:18:50.617,2026-11-09T12:18:50.617+08:00,controller,,,,shrink to 70: average rate falling
+t_ebda50bb99a77a14,40,04:18:56.190,2026-11-09T12:18:56.190+08:00,retry,27331376466,1,1000,no body data for 10 s (stalled connection)
+t_ebda50bb99a77a14,41,04:18:59.762,2026-11-09T12:18:59.762+08:00,retry,27775972690,1,1000,no body data for 10 s (stalled connection)
+t_ebda50bb99a77a14,42,04:19:06.844,2026-11-09T12:19:06.844+08:00,info,,,,finished in 324260 ms
+t_ebda50bb99a77a14,43,04:19:06.844,2026-11-09T12:19:06.844+08:00,verify,,,,hashing file for sha256
+t_ebda50bb99a77a14,44,04:19:21.741,2026-11-09T12:19:21.741+08:00,completed,,,,download completed

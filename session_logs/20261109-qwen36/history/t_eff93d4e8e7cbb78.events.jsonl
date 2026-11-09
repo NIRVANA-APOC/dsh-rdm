@@ -1,0 +1,42 @@
+{"t":1794202239007,"seq":1,"kind":"probe","message":"probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202239394,"seq":2,"kind":"probe","message":"22360456160 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202239411,"seq":3,"kind":"plan","message":"22360456160 bytes, 2666 chunks of 8388608 bytes, 16 workers (adaptive up to 128), 0 resumed bytes (resume: none)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202239411,"seq":4,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202240414,"seq":5,"kind":"controller","message":"grow to 18: per-connection 0.8 MiB/s, instant 12.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202247412,"seq":6,"kind":"controller","message":"grow to 20: per-connection 1.4 MiB/s, instant 24.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202250412,"seq":7,"kind":"controller","message":"grow to 22: per-connection 0.8 MiB/s, instant 16.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202253412,"seq":8,"kind":"controller","message":"grow to 24: per-connection 1.5 MiB/s, instant 32.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202256412,"seq":9,"kind":"controller","message":"grow to 27: per-connection 1.6 MiB/s, instant 38.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202257412,"seq":10,"kind":"controller","message":"revert to 24: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202259412,"seq":11,"kind":"controller","message":"pool rebuild #1: 38.2 -> 11.6 MiB/s at 24 workers","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202259412,"seq":12,"kind":"controller","message":"grow to 27: probe after pool rebuild","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202269412,"seq":13,"kind":"controller","message":"revert to 24: pool rebuild and probe did not recover throughput","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202272412,"seq":14,"kind":"controller","message":"grow to 27: per-connection 0.4 MiB/s, instant 9.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202275412,"seq":15,"kind":"controller","message":"grow to 30: per-connection 0.4 MiB/s, instant 11.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202278411,"seq":16,"kind":"controller","message":"grow to 33: per-connection 2.8 MiB/s, instant 84.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202283411,"seq":17,"kind":"controller","message":"grow to 37: per-connection 2.7 MiB/s, instant 90.6 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202288411,"seq":18,"kind":"controller","message":"grow to 41: per-connection 3.0 MiB/s, instant 110.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202293411,"seq":19,"kind":"controller","message":"grow to 46: per-connection 2.7 MiB/s, instant 109.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202301411,"seq":20,"kind":"controller","message":"grow to 51: per-connection 2.4 MiB/s, instant 109.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202307411,"seq":21,"kind":"controller","message":"grow to 57: per-connection 2.2 MiB/s, instant 110.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202311411,"seq":22,"kind":"controller","message":"grow to 64: per-connection 1.9 MiB/s, instant 108.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202314411,"seq":23,"kind":"controller","message":"grow to 72: per-connection 1.7 MiB/s, instant 111.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202317411,"seq":24,"kind":"controller","message":"grow to 81: per-connection 1.6 MiB/s, instant 112.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202324411,"seq":25,"kind":"controller","message":"grow to 91: per-connection 1.4 MiB/s, instant 111.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202327411,"seq":26,"kind":"controller","message":"grow to 102: per-connection 1.3 MiB/s, instant 113.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202328411,"seq":27,"kind":"controller","message":"revert to 91: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202343411,"seq":28,"kind":"controller","message":"grow to 102: per-connection 1.3 MiB/s, instant 114.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202351411,"seq":29,"kind":"controller","message":"grow to 114: per-connection 1.1 MiB/s, instant 113.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202352412,"seq":30,"kind":"controller","message":"revert to 102: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202367411,"seq":31,"kind":"controller","message":"grow to 114: per-connection 1.1 MiB/s, instant 114.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202370411,"seq":32,"kind":"controller","message":"grow to 128: per-connection 1.0 MiB/s, instant 112.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202410221,"seq":33,"kind":"retry","message":"no body data for 30 s (stalled connection)","chunk":8942256128,"attempt":1,"delayMs":1000}
+{"t":1794202463411,"seq":34,"kind":"controller","message":"shrink to 112: average rate falling","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202464411,"seq":35,"kind":"controller","message":"shrink to 98: average rate falling","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202465412,"seq":36,"kind":"controller","message":"shrink to 86: average rate falling","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202468413,"seq":37,"kind":"controller","message":"shrink to 76: average rate falling","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202475329,"seq":38,"kind":"retry","message":"no body data for 10 s (stalled connection)","chunk":21088960512,"attempt":1,"delayMs":1000}
+{"t":1794202478162,"seq":39,"kind":"retry","message":"no body data for 10 s (stalled connection)","chunk":22045261824,"attempt":1,"delayMs":1000}
+{"t":1794202491151,"seq":40,"kind":"info","message":"finished in 251739 ms","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202491151,"seq":41,"kind":"verify","message":"hashing file for sha256","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202502628,"seq":42,"kind":"completed","message":"download completed","chunk":null,"attempt":null,"delayMs":null}

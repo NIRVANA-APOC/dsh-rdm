@@ -13,7 +13,8 @@ import z from '@deepseek-ai/schemastery'
 // ── Limits mirrored from PROTOCOL.md ────────────────────────────────────────
 
 const MIN_CONNECTIONS = 1
-const MAX_CONNECTIONS = 32
+const MAX_CONNECTIONS = 128
+const DEFAULT_MAX_CONNECTIONS = 128
 const MAX_CHUNK_SIZE_MIB = 64
 const MAX_ATTEMPTS = 100
 const MIN_ATTEMPTS = 1
@@ -32,8 +33,14 @@ export type LogLevel = (typeof LOG_LEVELS)[number]
 export interface RdmConfig {
   /** Default download directory. Empty = kernel process cwd (the DSH host's cwd). */
   defaultDir?: string
-  /** Default worker cap for new tasks (1..32). */
+  /** Default worker cap for new tasks (1..128). */
   connections?: number
+  /**
+   * Adaptive worker ceiling for new tasks (1..128, default 128).
+   * Resolved as `clamp(maxConnections, connections, 128)`, so it can never be
+   * below `connections`.
+   */
+  maxConnections?: number
   /** Default chunk size in MiB (0 = auto, else 0.25..64). */
   chunkSizeMiB?: number
   /** Flush each completed file to stable storage before renaming it (slower). */
@@ -58,6 +65,7 @@ export interface RdmConfig {
 export interface ResolvedRdmConfig {
   defaultDir: string
   connections: number
+  maxConnections: number
   chunkSizeMiB: number
   speedLimitBps: number
   maxAttempts: number
@@ -73,6 +81,7 @@ export interface ResolvedRdmConfig {
 export const CONFIG_DEFAULTS: ResolvedRdmConfig = {
   defaultDir: '',
   connections: 8,
+  maxConnections: DEFAULT_MAX_CONNECTIONS,
   // 0 = automatic chunk sizing in the kernel (four chunks per connection,
   // bounded to 0.25..8 MiB). A fixed 4 MiB default under-uses the connection
   // pool for files below ~32 MiB: a 10 MiB download then runs three ranges
@@ -101,8 +110,18 @@ export const Config = z.object({
     .step(1)
     .min(MIN_CONNECTIONS)
     .max(MAX_CONNECTIONS)
-    .description('Default connection count for new downloads (1..32).')
+    .description('Default connection count for new downloads (1..128).')
     .default(CONFIG_DEFAULTS.connections),
+  maxConnections: z
+    .number()
+    .step(1)
+    .min(1)
+    .max(MAX_CONNECTIONS)
+    .description(
+      'Adaptive concurrency ceiling for new downloads (1..128; resolved to at least connections). ' +
+        'The controller may grow from connections up to this while throughput is healthy.',
+    )
+    .default(CONFIG_DEFAULTS.maxConnections),
   chunkSizeMiB: z
     .number()
     .min(0)
@@ -187,13 +206,22 @@ function logLevelOr(value: unknown, fallback: LogLevel): LogLevel {
  */
 export function resolveConfig(config: RdmConfig | undefined): ResolvedRdmConfig {
   const raw = config ?? {}
+  const connections = clampInt(
+    numberOr(raw.connections, CONFIG_DEFAULTS.connections),
+    MIN_CONNECTIONS,
+    MAX_CONNECTIONS,
+  )
+  // The adaptive ceiling can never sit below the planned connection count; an
+  // old config that only sets `connections` keeps working with the 128 default.
+  const maxConnections = clampInt(
+    numberOr(raw.maxConnections, CONFIG_DEFAULTS.maxConnections),
+    connections,
+    MAX_CONNECTIONS,
+  )
   return {
     defaultDir: stringOr(raw.defaultDir, CONFIG_DEFAULTS.defaultDir),
-    connections: clampInt(
-      numberOr(raw.connections, CONFIG_DEFAULTS.connections),
-      MIN_CONNECTIONS,
-      MAX_CONNECTIONS,
-    ),
+    connections,
+    maxConnections,
     chunkSizeMiB: clampInt(numberOr(raw.chunkSizeMiB, CONFIG_DEFAULTS.chunkSizeMiB), 0, MAX_CHUNK_SIZE_MIB),
     speedLimitBps: Math.max(0, Math.round(numberOr(raw.speedLimitBps, CONFIG_DEFAULTS.speedLimitBps))),
     maxAttempts: clampInt(numberOr(raw.maxAttempts, CONFIG_DEFAULTS.maxAttempts), MIN_ATTEMPTS, MAX_ATTEMPTS),

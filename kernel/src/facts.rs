@@ -93,10 +93,16 @@ fn parse_absolute_expiry(raw: &str) -> Option<u64> {
     None
 }
 
-const SIGNATURE_PARAMS: [&str; 8] = ["x-amz-signature", "x-amz-credential", "signature", "sig", "x-goog-signature", "awsaccesskeyid", "googleaccessid", "key-pair-id"];
+/// Query parameters that identify a signed (credential-bearing) URL.
+///
+/// `auth_key` is the Tengine/ModelScope signed-URL parameter observed in the
+/// real session logs: `...?filename=…&auth_key=<ts>-<hex>-<n>-<hex>`. Its first
+/// segment is a generation timestamp, not a parsable expiry, so presence marks
+/// the URL signed while `expiresAt` stays `null` (no `now + TTL` guessing).
+const SIGNATURE_PARAMS: [&str; 9] = ["x-amz-signature", "x-amz-credential", "signature", "sig", "x-goog-signature", "awsaccesskeyid", "googleaccessid", "key-pair-id", "auth_key"];
 
 fn carries_signing_or_expiry(url: &url::Url) -> bool {
-    SIGNATURE_PARAMS.iter().any(|name| query_present(url, name)) || ["expires", "exp", "se", "x-amz-date", "x-goog-date"].iter().any(|name| query_present(url, name))
+    SIGNATURE_PARAMS.iter().any(|name| query_present(url, name)) || ["expires", "exp", "se", "x-amz-date", "x-goog-date", "auth_key"].iter().any(|name| query_present(url, name))
 }
 
 /// Parse the expiry of a request URL. The expiry is derived from the *final*
@@ -490,6 +496,21 @@ mod tests {
         let facts = signed_url_facts(&expired, &expired, at("20261108T120000Z") + 120_000);
         assert_eq!(facts.state, ValidityState::Expired);
         assert!(facts.expires_in_secs.unwrap_or(0) < 0);
+    }
+
+    /// Real data (session_logs, 2026-11-09): ModelScope redirect URLs carry
+    /// `auth_key=<unix-ts>-<hex>-<0>-<hex>`. It is a signed-URL credential even
+    /// though no absolute expiry can be derived from it.
+    #[test]
+    fn modelscope_auth_key_is_a_signed_url() {
+        let signed = url("https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/x?filename=a.gguf&namespace=ukisai&repository=r&revision=master&tag=model&auth_key=1794154377-c6fc216ba8e4466d89b9af721eb2cf8d-0-cb444b28d3878bfbb67e715a719a58f5");
+        let facts = signed_url_facts(&signed, &signed, 1_794_154_000_000);
+        assert!(facts.signed);
+        assert_eq!(facts.expires_at, None);
+        assert_eq!(facts.source, SignedUrlSource::Unknown);
+        // Plain CDN paths without a token stay unsigned.
+        let plain = url("https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/x?filename=a.gguf");
+        assert!(!signed_url_facts(&plain, &plain, 1_000).signed);
     }
 
     #[test]

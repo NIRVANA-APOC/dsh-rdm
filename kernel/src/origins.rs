@@ -231,10 +231,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("rdm-kernel-origins-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::test_temp::dir(&format!("origins-{tag}"))
     }
 
     #[test]

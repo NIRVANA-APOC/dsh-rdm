@@ -14,7 +14,9 @@ use rdm_kernel::state::{merge_ranges, missing_ranges, ResumeState};
 const MB: u64 = 1024 * 1024;
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("rdm-kernel-unit-{tag}-{}", std::process::id()));
+    // Workspace-owned scratch dir: the DSH Windows sandbox can deny child
+    // processes writes under %LOCALAPPDATA%\Temp (os error 5).
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("tmp").join(format!("rdm-kernel-unit-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -160,13 +162,15 @@ fn resume_state_ranges_are_validated_and_merged() {
         http_version: None,
     };
     let mut state = ResumeState::new("https://example.com/file.bin", &meta, 32, 8, vec![(0, 8), (16, 32)], 24);
-    assert!(state.is_compatible("https://example.com/file.bin", &meta, 32));
+    // 0.3.0 replaced the boolean compatibility check with a decision/reason
+    // outcome; the unit-level contract is unchanged (accepted iff compatible).
+    assert!(state.is_compatible("https://example.com/file.bin", &meta, 32).is_accepted());
     assert_eq!(state.completed_ranges(), Some(vec![(0, 8), (16, 32)]));
     state.completed_ranges = vec![[0, 33]];
     assert_eq!(state.completed_ranges(), None);
     state.completed_ranges = vec![[0, 8]];
     state.etag = Some("\"v2\"".to_string());
-    assert!(!state.is_compatible("https://example.com/file.bin", &meta, 32));
+    assert!(!state.is_compatible("https://example.com/file.bin", &meta, 32).is_accepted());
 }
 
 // ---------------------------------------------------------------------------

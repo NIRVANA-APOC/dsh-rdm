@@ -1,0 +1,79 @@
+{
+  "exported_at": "2026-11-09T00:40:00+08:00",
+  "kernel": { "version": "1.1.0", "pid": 49308, "scope": "session" },
+  "session": "session-a08c6850-3225-4d5a-ba90-bcdd232acd9c",
+  "note": "Records captured live from rdm_tasks before/while the tasks settled. Event timestamps are UTC; local time is UTC+08:00.",
+  "tasks": [
+    {
+      "id": "t_c613ac4273c89aa9",
+      "name": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf",
+      "state": "cancelled",
+      "source": "modelscope",
+      "connections_requested": 16,
+      "progress": { "done_bytes": 11596411699, "total_bytes": 39788473344, "done_gib": 10.8, "total_gib": 37.1, "pct": 29 },
+      "telemetry": { "trend": "unknown", "samples": 1907, "peak_mib_s": 34.7, "avg_mib_s": 20.9, "stalled_ms": 0, "w1": null, "w5": null, "w30": null, "w300": null },
+      "last_live_telemetry_before_cancel": { "w1": 22.8, "w5": 25.3, "w30": 24.7, "w300": 22.6, "peak_mib_s": 32.3, "workers": "16/16" },
+      "server": { "host": "modelscope.cn", "status": 200, "http": "HTTP/1.1", "range": true, "resume": "strong", "signed": false, "tls_days": 103 },
+      "plan": { "chunk_bytes": 8388608, "chunks": 4744, "workers": 16, "resumed_bytes": 0 },
+      "timing": { "queued_ms": 1, "probe_ms": 210, "transfer_ms": 531000, "finalize_ms": 0 },
+      "verify": { "state": "not-compared", "expected_sha256": "ca3b302d3d1eb6eddce3ea4acc79854e6cc5fdc0583e374a6a8b6bb67327743b" }
+    },
+    {
+      "id": "t_3c58544c69a91edd",
+      "name": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf",
+      "state": "running (restart after t_c613ac42)",
+      "source": "modelscope",
+      "connections_requested": 32,
+      "progress_at_last_sample": { "done_gib": 33.4, "total_gib": 37.1, "pct": 90 },
+      "telemetry_phases": [
+        { "utc": "16:22:54", "avg_mib_s": 56.5, "peak_mib_s": 70.4, "w1": 54.9, "w5": 56.4, "w30": 56.9, "workers": "32/32", "trend": "steady" },
+        { "utc": "16:35:xx", "avg_mib_s": 38.4, "peak_mib_s": 71.2, "w1": 8.7, "w5": 9.4, "w30": 9.3, "w300": 10.3, "workers": "32/32", "stalled_ms": 130, "trend": "steady" },
+        { "utc": "16:39:xx", "avg_mib_s": 31.2, "peak_mib_s": 71.2, "w1": 11.1, "w5": 9.6, "w30": 9.4, "w300": 9.3, "workers": "32/32", "stalled_ms": 177, "trend": "rising" }
+      ],
+      "server": { "host": "modelscope.cn", "status": 200, "http": "HTTP/1.1", "range": true, "resume": "strong", "signed": false },
+      "plan": { "chunk_bytes": 8388608, "chunks": 4744, "workers": 32, "resumed_bytes": 0 },
+      "timing": { "queued_ms": 1, "probe_ms": 239, "transfer_ms": 1096000, "finalize_ms": 0 },
+      "verify": { "state": "not-compared", "expected_sha256": "ca3b302d3d1eb6eddce3ea4acc79854e6cc5fdc0583e374a6a8b6bb67327743b" }
+    },
+    {
+      "id": "t_b977f4fe08ce3e60",
+      "name": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf",
+      "state": "completed",
+      "source": "modelscope",
+      "connections_requested": 16,
+      "progress": { "done_bytes": 28363693824, "total_bytes": 28363693824, "total_gib": 26.4, "pct": 100 },
+      "telemetry": { "trend": "unknown", "samples": 1793, "peak_mib_s": 84.4, "avg_mib_s": 68.5, "stalled_ms": 0, "w300_at_finish": 67.2 },
+      "server": { "host": "modelscope.cn", "status": 200, "http": "HTTP/1.1", "range": true, "resume": "strong", "signed": false },
+      "plan": { "chunk_bytes": 8388608, "chunks": 3382, "workers": 16, "resumed_bytes": 0 },
+      "timing": { "queued_ms": 1, "probe_ms": 248, "transfer_ms": 378721, "finalize_ms": 16000 },
+      "verify": { "state": "verified", "sha256": "e4996a6de18fd49c58d9a0040fcfd73787db6407c51973f29884bee7b14c9dbb" },
+      "finish_worker_tail": [9, 3, 2, 1]
+    },
+    {
+      "id": "t_c6914cfa1ae9873d",
+      "name": "mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
+      "state": "completed",
+      "source": "modelscope",
+      "connections_requested": 8,
+      "progress": { "done_bytes": 907543520, "total_bytes": 907543520, "total_mib": 866, "pct": 100 },
+      "telemetry": { "samples": 106, "peak_mib_s": 61.2, "avg_mib_s": 49.6, "stalled_ms": 0 },
+      "server": { "host": "modelscope.cn", "status": 200, "http": "HTTP/1.1", "range": true, "resume": "strong", "signed": false },
+      "plan": { "chunk_bytes": 8388608, "chunks": 109, "workers": 8, "resumed_bytes": 0 },
+      "timing": { "queued_ms": 1, "probe_ms": 592, "transfer_ms": 16281, "finalize_ms": 577 },
+      "verify": { "state": "verified", "sha256": "cd1140f4abba943ce8d9fa92fed8407e389954d26907efde7b72153c75bd8a60" }
+    }
+  ],
+  "control_probe": {
+    "id": "t_0765376c12799bbb",
+    "purpose": "source comparison probe before switching from huggingface.co to modelscope.cn",
+    "result": "866 MiB in <=60 s, w5=31.7 MiB/s, HTTP/1.1, Tengine CDN cdn-lfs-cn-1.modelscope.cn"
+  },
+  "huggingface_baseline_same_machine": {
+    "note": "Measured earlier the same day against huggingface.co for the same class of object; every plan reported resumed_bytes=0 as well.",
+    "single_connection_curl_shell": { "bytes": 16777216, "seconds": 56.1, "mb_per_s": 0.29 },
+    "rdm_8_workers": { "mib_s": "1.8-2.4" },
+    "rdm_12_workers": { "mib_s": "2.6-3.3" },
+    "rdm_24_workers": { "mib_s": "3.6-6.5" },
+    "aggregate_three_tasks": { "mib_s": "9-10", "note": "line ceiling estimate ~95-100 MiB/s observed once during a modelscope overlap" }
+  }
+}

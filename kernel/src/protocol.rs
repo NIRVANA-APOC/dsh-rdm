@@ -7,10 +7,16 @@ use std::path::PathBuf;
 /// docs/design/0.2.0-agent-native.md §2.
 pub const PROTOCOL: u32 = 2;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const DEFAULT_USER_AGENT: &str = "dsh-rdm/1.1";
+pub const DEFAULT_USER_AGENT: &str = "dsh-rdm/0.2.2";
 pub const DEFAULT_CONNECTIONS: usize = 8;
 pub const MIN_CONNECTIONS: usize = 1;
-pub const MAX_CONNECTIONS: usize = 32;
+/// Hard ceiling for one task's worker pool. 0.2.1 raises it from 32 to 128 so
+/// large objects on high-capacity origins (and the adaptive controller) can use
+/// more connections; the HTTP pool, host config, tools and docs share this cap.
+pub const MAX_CONNECTIONS: usize = 128;
+/// Default adaptive ceiling: the controller may grow from `Spec::connections`
+/// up to this value while per-connection throughput shows headroom.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 128;
 pub const DEFAULT_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 pub const MIN_CHUNK_SIZE: u64 = 256 * 1024;
 pub const MAX_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
@@ -45,20 +51,21 @@ impl KernelInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
-    pub default_dir: Option<String>, pub connections: usize, pub chunk_size_bytes: u64,
+    pub default_dir: Option<String>, pub connections: usize, pub max_connections: usize, pub chunk_size_bytes: u64,
     pub speed_limit_bps: u64, pub max_attempts: u32, pub auto_resume: bool, pub log_level: String,
     pub fsync_on_complete: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { default_dir: None, connections: DEFAULT_CONNECTIONS, chunk_size_bytes: 0, speed_limit_bps: 0, max_attempts: DEFAULT_MAX_ATTEMPTS, auto_resume: true, log_level: "warn".to_string(), fsync_on_complete: false }
+        Self { default_dir: None, connections: DEFAULT_CONNECTIONS, max_connections: DEFAULT_MAX_CONNECTIONS, chunk_size_bytes: 0, speed_limit_bps: 0, max_attempts: DEFAULT_MAX_ATTEMPTS, auto_resume: true, log_level: "warn".to_string(), fsync_on_complete: false }
     }
 }
 
 impl Config {
     pub fn normalized(mut self) -> Self {
         self.connections = self.connections.clamp(MIN_CONNECTIONS, MAX_CONNECTIONS);
+        self.max_connections = self.max_connections.clamp(self.connections, MAX_CONNECTIONS);
         self.chunk_size_bytes = normalize_chunk_size(self.chunk_size_bytes);
         self.max_attempts = self.max_attempts.max(1);
         self
@@ -105,7 +112,7 @@ pub struct Meta {
 #[serde(rename_all = "camelCase", default)]
 pub struct RequestSpec {
     pub url: String, pub dir: Option<PathBuf>, pub file_name: Option<String>,
-    pub connections: Option<usize>, pub chunk_size_bytes: Option<u64>,
+    pub connections: Option<usize>, pub max_connections: Option<usize>, pub chunk_size_bytes: Option<u64>,
     pub headers: BTreeMap<String, String>, pub cookie: Option<String>, pub referer: Option<String>,
     pub user_agent: Option<String>, pub expected_sha256: Option<String>,
     pub speed_limit_bps: Option<u64>, pub resume: Option<bool>,
@@ -121,11 +128,20 @@ pub struct RequestSpec {
 #[serde(rename_all = "camelCase")]
 pub struct Spec {
     pub url: String, pub dir: PathBuf, pub file_name: Option<String>, pub connections: usize,
+    /// Adaptive worker ceiling for this task (`connections..=MAX_CONNECTIONS`).
+    /// Older task records predate it, so a missing value falls back to the
+    /// protocol default instead of failing deserialization.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
     pub chunk_size_bytes: u64, pub headers: BTreeMap<String, String>, pub cookie: Option<String>,
     pub referer: Option<String>, pub user_agent: Option<String>, pub expected_sha256: Option<String>,
     pub speed_limit_bps: u64, pub resume: bool, pub single_stream: bool, pub proxy: Option<String>,
     pub insecure: bool, pub max_attempts: u32, #[serde(default)] pub fsync_on_complete: bool,
     #[serde(default)] pub session_id: Option<String>,
+}
+
+fn default_max_connections() -> usize {
+    DEFAULT_MAX_CONNECTIONS
 }
 
 impl Spec {
@@ -144,6 +160,9 @@ impl Spec {
         let dir = if dir.is_absolute() { dir } else { cwd()?.join(dir) };
         let single_stream = raw.single_stream;
         let connections = if single_stream { 1 } else { raw.connections.unwrap_or(config.connections).clamp(MIN_CONNECTIONS, MAX_CONNECTIONS) };
+        // The adaptive cap can never be below the initial population and never
+        // above the protocol ceiling. A single stream always stays at one worker.
+        let max_connections = if single_stream { 1 } else { raw.max_connections.unwrap_or(config.max_connections).clamp(connections, MAX_CONNECTIONS) };
         let chunk_size_bytes = if single_stream { 0 } else { normalize_chunk_size(raw.chunk_size_bytes.unwrap_or(config.chunk_size_bytes)) };
         let expected_sha256 = match raw.expected_sha256.map(|value| value.trim().to_string()) {
             Some(value) if value.is_empty() => None,
@@ -165,6 +184,7 @@ impl Spec {
             dir,
             file_name,
             connections,
+            max_connections,
             chunk_size_bytes,
             headers: raw.headers,
             cookie: raw.cookie.filter(|v| !v.is_empty()),
@@ -482,6 +502,11 @@ impl ServerFacts {
     pub fn redacted(mut self) -> Self {
         self.url = redact_url(&self.url);
         self.final_url = redact_url(&self.final_url);
+        // Redirect hops can carry signed query material too (e.g. ModelScope's
+        // `auth_key` on the CDN hop); they are part of the same projection.
+        for hop in &mut self.redirects {
+            hop.url = redact_url(&hop.url);
+        }
         self
     }
 }
@@ -518,9 +543,20 @@ pub struct TaskView {
     pub stalled_ms: u64,
     pub active_workers: usize,
     pub peak_workers: usize,
+    /// Controller's current worker target (0 before the plan phase).
+    pub target_workers: usize,
     pub connections: usize,
+    /// Connection count requested by the caller (before chunk/worker clamping).
+    /// `connections` reports the initial worker population instead.
+    pub requested_connections: usize,
+    /// Adaptive ceiling for this task (`connections..=MAX_CONNECTIONS`).
+    pub max_connections: usize,
     pub chunk_size: Option<u64>,
     pub resumed_chunks: u64,
+    pub resumed_bytes: u64,
+    /// Bytes transferred by the current run only (excludes resumed bytes), so a
+    /// resumed task's rate/avg never inherits the adopted `.part` bytes.
+    pub transferred_bytes: u64,
     pub range_supported: Option<bool>,
     pub resumable: bool,
     pub resume_safety: ResumeSafety,
@@ -564,9 +600,14 @@ impl Default for TaskView {
             stalled_ms: 0,
             active_workers: 0,
             peak_workers: 0,
+            target_workers: 0,
             connections: 1,
+            requested_connections: 0,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
             chunk_size: None,
             resumed_chunks: 0,
+            resumed_bytes: 0,
+            transferred_bytes: 0,
             range_supported: None,
             resumable: false,
             resume_safety: ResumeSafety::None,
@@ -642,6 +683,11 @@ pub struct ResumeStateFacts {
     pub resumed_chunks: u64,
     pub resumed_bytes: u64,
     pub validators_matched: bool,
+    /// `accepted` | `rejected` | `not-attempted`.
+    pub resume_decision: String,
+    /// Stable code explaining the decision (see PROTOCOL.md "Resume reasons");
+    /// `null` when no decision was made.
+    pub resume_reason: Option<String>,
 }
 
 #[rustfmt::skip]
@@ -745,8 +791,13 @@ pub fn percent_of(downloaded: u64, total: Option<u64>) -> Option<u32> {
 pub const REDACTED_VALUE: &str = "<redacted>";
 
 /// Query parameters whose values are credentials or bearer material; matched
-/// case-insensitively.
-const CREDENTIAL_QUERY_PARAMS: [&str; 12] = ["x-amz-signature", "x-amz-credential", "x-amz-security-token", "signature", "sig", "token", "access_token", "key", "api_key", "secret", "key-pair-id", "x-goog-signature"];
+/// case-insensitively. 0.2.1 adds the Tengine/ModelScope `auth_key` family and
+/// the OSS SigV1 parameters after real ModelScope/HF logs exposed them in
+/// `finalUrl` and redirect-hop projections.
+const CREDENTIAL_QUERY_PARAMS: [&str; 18] = [
+    "x-amz-signature", "x-amz-credential", "x-amz-security-token", "signature", "sig", "token", "access_token", "key", "api_key", "secret", "key-pair-id", "x-goog-signature",
+    "auth_key", "x-oss-signature", "x-oss-credential", "x-oss-security-token", "osssaccesskeyid", "ossaccesskeyid",
+];
 
 pub fn is_credential_param(name: &str) -> bool {
     CREDENTIAL_QUERY_PARAMS.iter().any(|candidate| name.eq_ignore_ascii_case(candidate))
@@ -754,8 +805,8 @@ pub fn is_credential_param(name: &str) -> bool {
 
 /// Replace credential-bearing query values with the literal `<redacted>` while
 /// leaving every other byte of the URL untouched. Used for protocol
-/// projections (`ServerFacts.url/finalUrl`, `TaskView.url/finalUrl`); the raw
-/// URL is kept internally for requests, resume state and task records.
+/// projections (`ServerFacts.url/finalUrl/redirects`, `TaskView.url/finalUrl`);
+/// the raw URL is kept internally for requests, resume state and task records.
 pub fn redact_url(raw: &str) -> String {
     let Some((base, rest)) = raw.split_once('?') else { return raw.to_string() };
     let (query, fragment) = match rest.split_once('#') {
@@ -785,6 +836,20 @@ pub fn redact_url(raw: &str) -> String {
         out.push_str(fragment);
     }
     out
+}
+
+/// Stable URL identity for resume matching: scheme, host (lowercased), optional
+/// port and path. Query and fragment are dropped because CDN/LFS URLs mint a
+/// fresh `auth_key`/`Expires`/`Policy` token on every probe — the real-data
+/// reason resume was rejected (`.part.json` keyed on the volatile final URL).
+/// A URL that cannot be parsed falls back to its raw string, which keeps the
+/// exact-match behaviour for unusual inputs.
+pub fn url_identity(raw: &str) -> String {
+    let Ok(parsed) = url::Url::parse(raw) else { return raw.to_string() };
+    let Some(host) = parsed.host_str().filter(|host| !host.is_empty()) else { return raw.to_string() };
+    let port = parsed.port().map(|port| format!(":{port}")).unwrap_or_default();
+    let path = if parsed.path().is_empty() { "/" } else { parsed.path() };
+    format!("{}://{}{}{}", parsed.scheme().to_ascii_lowercase(), host.to_ascii_lowercase(), port, path)
 }
 
 fn redact_token(token: &str) -> String {
@@ -859,9 +924,38 @@ mod redaction_tests {
         let mut facts = ServerFacts::default();
         facts.url = "https://cdn.example.com/app.zip?token=secret".into();
         facts.final_url = "https://cdn.example.com/app.zip?Signature=abc&expires=1".into();
+        facts.redirects = vec![RedirectHop { status: 302, url: "https://cdn.example.com/app.zip?auth_key=1794154377-deadbeef-0-cafe".into() }];
         let projected = facts.redacted();
         assert!(!projected.url.contains("secret"), "{}", projected.url);
         assert!(!projected.final_url.contains("abc"), "{}", projected.final_url);
         assert!(projected.url.contains("<redacted>"));
+        assert!(!projected.redirects[0].url.contains("deadbeef"), "{}", projected.redirects[0].url);
+        assert!(projected.redirects[0].url.contains("auth_key=<redacted>"));
+    }
+
+    /// Real data (session_logs/tasks.json, 2026-11-09): ModelScope redirects to
+    /// `cdn-lfs-cn-1.modelscope.cn/...?auth_key=1794154377-...`. The token must
+    /// never reach the host projection.
+    #[test]
+    fn redacts_modelscope_auth_key_but_keeps_the_stable_path() {
+        let raw = "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/302d?filename=a.gguf&namespace=ukisai&repository=r&revision=master&tag=model&auth_key=1794154377-c6fc216ba8e4466d89b9af721eb2cf8d-0-cb444b28d3878bfbb67e715a719a58f5";
+        let redacted = redact_url(raw);
+        assert!(!redacted.contains("c6fc216ba8e4466d89b9af721eb2cf8d"), "{redacted}");
+        assert!(redacted.contains("auth_key=<redacted>"), "{redacted}");
+        assert!(redacted.contains("filename=a.gguf"), "{redacted}");
+        assert_eq!(url_identity(raw), "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/302d");
+    }
+
+    /// Two probes of the same object return different volatile tokens; their
+    /// identities must still match so `.part.json` can resume.
+    #[test]
+    fn url_identity_ignores_volatile_query_tokens() {
+        let first = "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/302d?auth_key=1794154377-aa-0-bb&filename=a.gguf";
+        let second = "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ca/3b/302d?auth_key=1794154910-cc-0-dd&filename=a.gguf";
+        assert_eq!(url_identity(first), url_identity(second));
+        assert_ne!(url_identity(first), url_identity("https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/ff/ff/other"));
+        // Host casing / default port / empty path normalize.
+        assert_eq!(url_identity("HTTPS://Example.COM:443"), "https://example.com/");
+        assert_eq!(url_identity("not a url"), "not a url");
     }
 }

@@ -120,7 +120,9 @@ fn ready(kernel: &KernelProcess) -> Value {
     let ready = kernel.next_line(Duration::from_secs(20)).expect("ready line");
     assert_eq!(ready["event"], "ready");
     assert_eq!(ready["protocol"], 2, "{ready}");
-    assert!(ready["kernel"]["version"].as_str().unwrap_or_default().starts_with("1.1."), "{ready}");
+    // 0.2.2 unifies the kernel and package versions: the ready frame reports
+    // 0.2.2, and the history meta line records the same identity.
+    assert_eq!(ready["kernel"]["version"], "0.2.2", "{ready}");
     assert!(ready["kernel"]["pid"].as_u64().unwrap_or(0) > 0);
     ready
 }
@@ -485,7 +487,13 @@ fn malformed_and_unknown_requests_are_reported() {
 
     let response = kernel.request("bad", "nope", json!({}));
     assert_eq!(response["ok"], false);
-    assert_eq!(response["error"]["code"], "invalid_request");
+    // 0.2.2: an unknown method is a stable, actionable `unsupported_method`
+    // error naming the method and the kernel build instead of a generic
+    // `invalid_request` (the 20261109 session hit `unknown method history`).
+    assert_eq!(response["error"]["code"], "unsupported_method");
+    let message = response["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("nope"), "message must name the method: {message}");
+    assert!(message.contains("0.2.2"), "message must name the kernel version: {message}");
 
     let response = kernel.request("get", "get", json!({"id": "t_missing"}));
     assert_eq!(response["ok"], false);

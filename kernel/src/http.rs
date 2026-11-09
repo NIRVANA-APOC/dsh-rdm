@@ -41,7 +41,7 @@ pub fn build_client(options: ClientOptions<'_>) -> EngineResult<Client> {
         .default_headers(headers)
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
-        .pool_max_idle_per_host(options.connections.clamp(1, 32))
+        .pool_max_idle_per_host(options.connections.clamp(1, crate::protocol::MAX_CONNECTIONS))
         .redirect(redirect)
         // Needed by probe to read the leaf certificate for `tls.notAfter`.
         .tls_info(true);

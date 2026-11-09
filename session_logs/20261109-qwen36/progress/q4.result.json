@@ -1,0 +1,578 @@
+{
+ "taskId": "t_eff93d4e8e7cbb78",
+ "final": {
+  "activeWorkers": 0,
+  "avgBps": 84820788,
+  "chunkSize": 8388608,
+  "connections": 16,
+  "createdAt": 1794202239007,
+  "dir": "D:\\llm\\models",
+  "downloaded": 22360456160,
+  "elapsedMs": 263620,
+  "error": null,
+  "etaConfidence": "unknown",
+  "etaSecs": null,
+  "expectedSha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+  "fileName": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+  "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/70/7a/55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450?filename=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>",
+  "finishedAt": 1794202502628,
+  "host": "www.modelscope.cn",
+  "id": "t_eff93d4e8e7cbb78",
+  "maxConnections": 128,
+  "path": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+  "peakBps": 138096155,
+  "peakWorkers": 128,
+  "percent": 100,
+  "rangeSupported": true,
+  "resumable": true,
+  "resumeSafety": "strong",
+  "resumedBytes": 0,
+  "resumedChunks": 0,
+  "retries": 3,
+  "sessionId": null,
+  "sha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+  "signedUrlExpiresAt": null,
+  "speed1sBps": null,
+  "speed300sBps": 84820859,
+  "speed30sBps": 7148582,
+  "speed5sBps": null,
+  "speedBps": 0,
+  "stalledMs": 0,
+  "startedAt": 1794202239007,
+  "status": "completed",
+  "targetWorkers": 76,
+  "tlsNotAfter": 1803112590000,
+  "total": 22360456160,
+  "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+  "verified": true
+ },
+ "detail": {
+  "diagnosis": [],
+  "resumeState": {
+   "bytesDone": 22358130634,
+   "chunksDone": 2,
+   "resumeDecision": "not-attempted",
+   "resumeReason": null,
+   "resumedBytes": 0,
+   "resumedChunks": 0,
+   "validatorsMatched": true
+  },
+  "server": {
+   "checksum": {
+    "contentDigest": null,
+    "contentMd5": null,
+    "crc32c": null,
+    "sha256": null
+   },
+   "contentDisposition": "attachment;filename=\"Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf\"",
+   "contentEncoding": null,
+   "contentType": "application/octet-stream",
+   "fileName": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+   "fileNameSource": "content-disposition",
+   "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/70/7a/55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450?filename=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>",
+   "headers": {
+    "cacheControl": null,
+    "date": "Fri, 26 Jun 2026 16:41:16 GMT",
+    "expires": null,
+    "server": "Tengine",
+    "vary": null
+   },
+   "host": "www.modelscope.cn",
+   "httpVersion": "HTTP/1.1",
+   "origin": {
+    "attempts": 1,
+    "bestBps": 84821109,
+    "completed": 1,
+    "known": true,
+    "lastAt": 1794202502627,
+    "lastError": null,
+    "medianBps": 84821109
+   },
+   "range": {
+    "acceptRanges": "bytes",
+    "ifRange": true,
+    "probeBytes": 64,
+    "probeStatus": 206,
+    "probedBy": "range-get",
+    "supported": true
+   },
+   "rateLimit": {
+    "limit": null,
+    "remaining": null,
+    "retryAfterSecs": null
+   },
+   "recommendation": {
+    "chunkSizeBytes": 8388608,
+    "connections": 8,
+    "reason": "ranges+strong-etag",
+    "singleStream": false,
+    "start": "now",
+    "verify": "unavailable"
+   },
+   "redirects": [
+    {
+     "status": 302,
+     "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/70/7a/55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450?filename=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf&namespace=unsloth&repository=Qwen3.6-35B-A3B-GGUF&revision=master&tag=model&auth_key=<redacted>"
+    }
+   ],
+   "resume": {
+    "possible": true,
+    "reason": "strong-etag",
+    "safety": "strong"
+   },
+   "signedUrl": {
+    "expiresAt": null,
+    "expiresInSecs": null,
+    "signed": true,
+    "source": "unknown",
+    "state": "unknown"
+   },
+   "status": 200,
+   "timing": {
+    "probeMs": 377,
+    "sampleBps": null,
+    "ttfbMs": 193
+   },
+   "tls": {
+    "expiresInSecs": 8910350,
+    "https": true,
+    "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+    "notAfter": 1803112590000,
+    "state": "valid",
+    "subject": "*.modelscope.cn"
+   },
+   "totalBytes": 22360456160,
+   "url": "https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+   "validators": {
+    "etag": "\"41074971C0D2080CCD9422562920B781-400\"",
+    "lastModified": "Fri, 17 Apr 2026 11:13:39 GMT",
+    "strongEtag": true
+   },
+   "warnings": [
+    "redirected"
+   ]
+  },
+  "target": {
+   "dir": "D:\\llm\\models",
+   "part": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf.part",
+   "path": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+   "resumeState": "D:\\llm\\models\\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf.part.json"
+  },
+  "telemetry": {
+   "avgBps": 84820788,
+   "etaConfidence": "unknown",
+   "lastSampleAt": 1794202502628,
+   "peakBps": 138096155,
+   "samples": 1606,
+   "stalledMs": 0,
+   "trend": "unknown",
+   "windows": {
+    "1s": null,
+    "300s": 84820859,
+    "30s": 7148582,
+    "5s": null
+   }
+  },
+  "timing": {
+   "finalizeMs": 11475,
+   "probeMs": 377,
+   "queuedMs": 0,
+   "transferMs": 251739
+  },
+  "verification": {
+   "expectedSha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+   "serverChecksums": {
+    "contentDigest": null,
+    "contentMd5": null,
+    "crc32c": null,
+    "sha256": null
+   },
+   "sha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+   "verified": true
+  }
+ },
+ "events": [
+  {
+   "at": 1794202239007,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "probe",
+   "message": "probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+   "seq": 1
+  },
+  {
+   "at": 1794202239394,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "probe",
+   "message": "22360456160 bytes, ranges=true, type=application/octet-stream",
+   "seq": 2
+  },
+  {
+   "at": 1794202239411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "plan",
+   "message": "22360456160 bytes, 2666 chunks of 8388608 bytes, 16 workers (adaptive up to 128), 0 resumed bytes (resume: none)",
+   "seq": 3
+  },
+  {
+   "at": 1794202239411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "started",
+   "message": "transfer started",
+   "seq": 4
+  },
+  {
+   "at": 1794202240414,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 18: per-connection 0.8 MiB/s, instant 12.4 MiB/s",
+   "seq": 5
+  },
+  {
+   "at": 1794202247412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 20: per-connection 1.4 MiB/s, instant 24.7 MiB/s",
+   "seq": 6
+  },
+  {
+   "at": 1794202250412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 22: per-connection 0.8 MiB/s, instant 16.4 MiB/s",
+   "seq": 7
+  },
+  {
+   "at": 1794202253412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 24: per-connection 1.5 MiB/s, instant 32.2 MiB/s",
+   "seq": 8
+  },
+  {
+   "at": 1794202256412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 27: per-connection 1.6 MiB/s, instant 38.2 MiB/s",
+   "seq": 9
+  },
+  {
+   "at": 1794202257412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "revert to 24: growth diluted per-connection rate",
+   "seq": 10
+  },
+  {
+   "at": 1794202259412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "pool rebuild #1: 38.2 -> 11.6 MiB/s at 24 workers",
+   "seq": 11
+  },
+  {
+   "at": 1794202259412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 27: probe after pool rebuild",
+   "seq": 12
+  },
+  {
+   "at": 1794202269412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "revert to 24: pool rebuild and probe did not recover throughput",
+   "seq": 13
+  },
+  {
+   "at": 1794202272412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 27: per-connection 0.4 MiB/s, instant 9.2 MiB/s",
+   "seq": 14
+  },
+  {
+   "at": 1794202275412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 30: per-connection 0.4 MiB/s, instant 11.2 MiB/s",
+   "seq": 15
+  },
+  {
+   "at": 1794202278411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 33: per-connection 2.8 MiB/s, instant 84.9 MiB/s",
+   "seq": 16
+  },
+  {
+   "at": 1794202283411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 37: per-connection 2.7 MiB/s, instant 90.6 MiB/s",
+   "seq": 17
+  },
+  {
+   "at": 1794202288411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 41: per-connection 3.0 MiB/s, instant 110.4 MiB/s",
+   "seq": 18
+  },
+  {
+   "at": 1794202293411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 46: per-connection 2.7 MiB/s, instant 109.9 MiB/s",
+   "seq": 19
+  },
+  {
+   "at": 1794202301411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 51: per-connection 2.4 MiB/s, instant 109.9 MiB/s",
+   "seq": 20
+  },
+  {
+   "at": 1794202307411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 57: per-connection 2.2 MiB/s, instant 110.3 MiB/s",
+   "seq": 21
+  },
+  {
+   "at": 1794202311411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 64: per-connection 1.9 MiB/s, instant 108.7 MiB/s",
+   "seq": 22
+  },
+  {
+   "at": 1794202314411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 72: per-connection 1.7 MiB/s, instant 111.3 MiB/s",
+   "seq": 23
+  },
+  {
+   "at": 1794202317411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 81: per-connection 1.6 MiB/s, instant 112.7 MiB/s",
+   "seq": 24
+  },
+  {
+   "at": 1794202324411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 91: per-connection 1.4 MiB/s, instant 111.4 MiB/s",
+   "seq": 25
+  },
+  {
+   "at": 1794202327411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 102: per-connection 1.3 MiB/s, instant 113.8 MiB/s",
+   "seq": 26
+  },
+  {
+   "at": 1794202328411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "revert to 91: growth diluted per-connection rate",
+   "seq": 27
+  },
+  {
+   "at": 1794202343411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 102: per-connection 1.3 MiB/s, instant 114.2 MiB/s",
+   "seq": 28
+  },
+  {
+   "at": 1794202351411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 114: per-connection 1.1 MiB/s, instant 113.2 MiB/s",
+   "seq": 29
+  },
+  {
+   "at": 1794202352412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "revert to 102: growth diluted per-connection rate",
+   "seq": 30
+  },
+  {
+   "at": 1794202367411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 114: per-connection 1.1 MiB/s, instant 114.7 MiB/s",
+   "seq": 31
+  },
+  {
+   "at": 1794202370411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "grow to 128: per-connection 1.0 MiB/s, instant 112.8 MiB/s",
+   "seq": 32
+  },
+  {
+   "at": 1794202410221,
+   "attempt": 1,
+   "chunk": 8942256128,
+   "delayMs": 1000,
+   "kind": "retry",
+   "message": "no body data for 30 s (stalled connection)",
+   "seq": 33
+  },
+  {
+   "at": 1794202463411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "shrink to 112: average rate falling",
+   "seq": 34
+  },
+  {
+   "at": 1794202464411,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "shrink to 98: average rate falling",
+   "seq": 35
+  },
+  {
+   "at": 1794202465412,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "shrink to 86: average rate falling",
+   "seq": 36
+  },
+  {
+   "at": 1794202468413,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "controller",
+   "message": "shrink to 76: average rate falling",
+   "seq": 37
+  },
+  {
+   "at": 1794202475329,
+   "attempt": 1,
+   "chunk": 21088960512,
+   "delayMs": 1000,
+   "kind": "retry",
+   "message": "no body data for 10 s (stalled connection)",
+   "seq": 38
+  },
+  {
+   "at": 1794202478162,
+   "attempt": 1,
+   "chunk": 22045261824,
+   "delayMs": 1000,
+   "kind": "retry",
+   "message": "no body data for 10 s (stalled connection)",
+   "seq": 39
+  },
+  {
+   "at": 1794202491151,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "info",
+   "message": "finished in 251739 ms",
+   "seq": 40
+  },
+  {
+   "at": 1794202491151,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "verify",
+   "message": "hashing file for sha256",
+   "seq": 41
+  },
+  {
+   "at": 1794202502628,
+   "attempt": null,
+   "chunk": null,
+   "delayMs": null,
+   "kind": "completed",
+   "message": "download completed",
+   "seq": 42
+  }
+ ],
+ "fileSize": 22360456160,
+ "sizeOk": true,
+ "sha256": "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+ "shaOk": true
+}

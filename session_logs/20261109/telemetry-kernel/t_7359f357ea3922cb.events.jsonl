@@ -1,0 +1,9 @@
+{"t":1794197559550,"seq":1,"kind":"resumed","message":"resuming (auto-resume)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559551,"seq":2,"kind":"probe","message":"probing https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559849,"seq":3,"kind":"probe","message":"28800138432 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559850,"seq":4,"kind":"info","message":"resumed 3433 chunks / 28798211398 bytes from .part (etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559850,"seq":5,"kind":"plan","message":"28800138432 bytes, 3434 chunks of 8388608 bytes, 12 workers (adaptive up to 128), 28798211398 resumed bytes (resume: accepted:etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559850,"seq":6,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197560095,"seq":7,"kind":"info","message":"finished in 245 ms","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197560095,"seq":8,"kind":"verify","message":"hashing file for sha256","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197574691,"seq":9,"kind":"completed","message":"download completed","chunk":null,"attempt":null,"delayMs":null}

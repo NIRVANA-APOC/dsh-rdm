@@ -2,7 +2,7 @@
  * TypeScript mirrors of `dsh-rdm/PROTOCOL.md` — the NDJSON contract between
  * this plugin (parent) and the resident `rdm-kernel` child process.
  *
- * Protocol 2 (kernel 1.1.0) is the agent-native revision: tasks carry session
+ * Protocol 2 (kernel 0.2.2) is the agent-native revision: tasks carry session
  * attribution and live telemetry windows, `probe`/`get` return a full
  * `ServerFacts` / `TaskDetail`, and the hot path (`list` / notifications) stays
  * a flat, cheap `TaskView`.
@@ -131,6 +131,36 @@ export type SignedUrlSource =
 
 /** Why resume is safe, weak or impossible. */
 export type ResumeReason = 'strong-etag' | 'last-modified-only' | 'no-validators' | 'no-range-support'
+
+/** What the kernel decided about existing `.part` state at plan time (0.3.0). */
+export type ResumeDecision = 'accepted' | 'rejected' | 'not-attempted'
+
+/**
+ * Why the kernel accepted/rejected resume state (0.3.0).
+ *
+ * Accepted codes: `etag`, `last-modified`, `url`, `final-url`.
+ * Rejected codes: `disabled`, `size-mismatch`, `validators-mismatch`,
+ * `url-mismatch`, `file-name-mismatch`, `ranges-invalid`, `version-mismatch`,
+ * `state-corrupt`, `part-missing`, `part-truncated`.
+ *
+ * Fresh/absent state is `resumeDecision: "not-attempted"` with a `null` reason;
+ * `no-state` is not a reason code.
+ */
+export type ResumeDecisionReason =
+  | 'etag'
+  | 'last-modified'
+  | 'url'
+  | 'final-url'
+  | 'disabled'
+  | 'size-mismatch'
+  | 'validators-mismatch'
+  | 'url-mismatch'
+  | 'file-name-mismatch'
+  | 'ranges-invalid'
+  | 'version-mismatch'
+  | 'state-corrupt'
+  | 'part-missing'
+  | 'part-truncated'
 
 /** Start recommendation derived from the server facts. */
 export type StartAdvice = 'now' | 'later' | 'avoid'
@@ -338,6 +368,8 @@ export interface TaskView {
   status: TaskStatus
   /** Bytes written to the `.part` file. */
   downloaded: number
+  /** Bytes transferred in this run (excludes bytes adopted from `.part`, 0.2.2). */
+  transferredBytes: number
   /** Expected total bytes, `null` until known. */
   total: number | null
   /** Integer 0..100 (kernel floor); `null` when `total` is unknown. */
@@ -359,9 +391,17 @@ export interface TaskView {
   peakWorkers: number
   /** Planned connection cap. */
   connections: number
+  /** Connections requested for this task (`Spec.connections`, 0.2.2). */
+  requestedConnections: number
+  /** Adaptive concurrency ceiling for this task (1..128, 0.3.0). */
+  maxConnections: number
+  /** Controller's current target worker count (`0` before the plan, 0.3.0). */
+  targetWorkers: number
   /** Chunk size in bytes, `null` for single-stream/auto transfers. */
   chunkSize: number | null
   resumedChunks: number
+  /** Bytes adopted from `.part` at plan time (0.3.0). */
+  resumedBytes: number
   rangeSupported: boolean | null
   /** Ranges plus usable validators. */
   resumable: boolean
@@ -389,6 +429,113 @@ export interface TaskEvent {
   chunk: number | null
   attempt: number | null
   delayMs: number | null
+}
+
+// ── Task history (persisted JSONL recording, 0.3.0) ─────────────────────────
+
+/** One telemetry sample recorded by the kernel's per-task JSONL writer. */
+export interface TaskHistorySample {
+  /** Milliseconds since epoch. */
+  t: number
+  /** Bytes downloaded at the sample. */
+  bytes: number
+  /** Instantaneous EWMA transfer rate in bytes/second. */
+  bps: number
+  /** Trailing 1 s rate. */
+  w1Bps: number
+  /** Trailing 5 s rate. */
+  w5Bps: number
+  /** Trailing 30 s rate. */
+  w30Bps: number
+  /** Trailing 300 s rate. */
+  w300Bps: number
+  /** Active workers at the sample. */
+  workers: number
+  peakWorkers: number
+  /** Milliseconds since the last byte landed. */
+  stalledMs: number
+}
+
+/** One recorded task event (same events the `get` path returns). */
+export interface TaskHistoryEvent {
+  /** Milliseconds since epoch. */
+  t: number
+  seq: number
+  kind: TaskEventKind
+  message: string | null
+  chunk: number | null
+  attempt: number | null
+  delayMs: number | null
+}
+
+/**
+ * One history meta record: written once per run at plan time (0.2.2), before
+ * the first sample, so a sample series can be attributed to a kernel build.
+ */
+export interface HistoryMeta {
+  /** Record discriminator; only meta records have it. */
+  kind: 'meta'
+  /** Milliseconds since epoch. */
+  t: number
+  /** Kernel build that wrote this record (e.g. `0.2.2`). */
+  kernelVersion: string
+  /** Kernel process id of that build. */
+  pid: number
+  taskId: string
+  /** 1-based run number within the task (resume/retry increments it). */
+  run: number
+  /** Recording phase that opened the run (e.g. `plan`). */
+  phase: string
+  /** Redacted request URL. */
+  url: string
+  fileName: string
+  /** Expected total bytes, `null` when unknown. */
+  totalBytes: number | null
+  /** Planned chunk size in bytes, `null` for single-stream/auto transfers. */
+  chunkSize: number | null
+  /** Chunk count of the plan. */
+  chunks: number
+  requestedConnections: number
+  initialWorkers: number
+  maxConnections: number
+  resumedBytes: number
+  resumeDecision: ResumeDecision
+  resumeReason: ResumeDecisionReason | null
+}
+
+/**
+ * Persisted per-task recording returned by the kernel `history` method: one
+ * bounded page of samples/events, the JSONL paths, the per-run meta records and
+ * the full recorded totals (meta records are not counted as samples).
+ *
+ * Every field is always present after host normalization (`samplesPath` /
+ * `eventsPath` are `null` when the task was never recorded, `meta` is empty).
+ */
+export interface HistoryResult {
+  taskId: string
+  /** Absolute JSONL path, `null` when never recorded. */
+  samplesPath: string | null
+  /** Absolute JSONL path, `null` when never recorded. */
+  eventsPath: string | null
+  samples: TaskHistorySample[]
+  events: TaskHistoryEvent[]
+  /** Per-run plan meta records, bounded to the last {@link MAX_HISTORY_META}. */
+  meta: HistoryMeta[]
+  /** Total samples recorded on disk (not just the returned page). */
+  totalSamples: number
+  /** Total events recorded on disk (not just the returned page). */
+  totalEvents: number
+  /** The recording hit the kernel's `MAX_RECORDED_SAMPLES` cap. */
+  truncated: boolean
+}
+
+/**
+ * Host-normalized persisted recording: {@link HistoryResult} plus the compact
+ * build tags derived from `meta` (deduped `"<kernelVersion>@<pid>"`).
+ */
+export interface TaskHistory extends HistoryResult {
+  /** Deduped `"<kernelVersion>@<pid>"` build tags, in recording order (0.2.2). */
+  builds: string[]
 }
 
 // ── Task detail (one-shot `get` path) ───────────────────────────────────────
@@ -436,6 +583,10 @@ export interface ResumeStateDetail {
   resumedChunks: number
   resumedBytes: number
   validatorsMatched: boolean | null
+  /** What the kernel decided about existing `.part` state at plan time (0.3.0). */
+  resumeDecision: ResumeDecision
+  /** Why it decided that; a documented code, `null` when not-attempted (0.3.0). */
+  resumeReason: ResumeDecisionReason | null
 }
 
 /** Per-task timing decomposition. */
@@ -503,8 +654,10 @@ export interface RequestSpec {
   dir?: string
   /** Optional file-name override (sanitized by the kernel). */
   fileName?: string
-  /** 1..32; defaults to the initialized session value. */
+  /** 1..128; defaults to the initialized session value. */
   connections?: number
+  /** Adaptive concurrency ceiling 1..128; defaults to the initialized value (0.3.0). */
+  maxConnections?: number
   /** 0 = auto, otherwise 262144..67108864. */
   chunkSizeBytes?: number
   /** Extra request headers. */
@@ -547,8 +700,9 @@ export const CONTROL_ACTIONS: readonly ControlAction[] = ['pause', 'resume', 'ca
 // ── Limits shared by tools / route / client ─────────────────────────────────
 
 export const MIN_CONNECTIONS = 1
-export const MAX_CONNECTIONS = 32
+export const MAX_CONNECTIONS = 128
 export const DEFAULT_CONNECTIONS = 8
+export const DEFAULT_MAX_CONNECTIONS = 128
 export const MIN_CHUNK_BYTES = 256 * KIB
 export const MAX_CHUNK_BYTES = 64 * MIB
 export const DEFAULT_MAX_ATTEMPTS = 6
@@ -571,6 +725,15 @@ export const DEFAULT_EVENTS = 50
 export const TOOL_MAX_EVENTS = 30
 /** Browser-route cap for one `get` action. */
 export const ROUTE_MAX_EVENTS = 200
+
+/** `history` tool page cap for samples (0.3.0). */
+export const MAX_HISTORY_SAMPLES = 2000
+/** `rdm_history` default sample page size (0.3.0). */
+export const DEFAULT_HISTORY_SAMPLES = 300
+/** `rdm_history` default recorded-event page size (0.3.0). */
+export const DEFAULT_HISTORY_EVENTS = 200
+/** Kernel `history` keeps at most this many run-meta records, newest last (0.2.2). */
+export const MAX_HISTORY_META = 20
 
 /** `rdm_download` preflight server-facts wait. */
 export const DEFAULT_WAIT_PROBE_MS = 2_000
@@ -648,6 +811,8 @@ export type KernelResponse<Result = unknown> =
 export interface InitializeParams {
   defaultDir?: string
   connections?: number
+  /** Adaptive concurrency ceiling 1..128 (0.3.0). */
+  maxConnections?: number
   chunkSizeBytes?: number
   speedLimitBps?: number
   maxAttempts?: number
@@ -662,6 +827,8 @@ export interface InitializeParams {
 export interface InitializeConfig {
   defaultDir: string
   connections: number
+  /** Adaptive concurrency ceiling for new tasks (1..128, 0.3.0). */
+  maxConnections: number
   chunkSizeBytes: number
   speedLimitBps: number
   maxAttempts: number
@@ -724,6 +891,25 @@ export interface GetResult {
   task: TaskView
   detail: TaskDetail
   events: TaskEvent[]
+}
+
+/** Params of `history` (0.3.0 recording reader). */
+export interface HistoryParams {
+  /** Task id (`t_...`). */
+  id: string
+  /** Sample offset, >= 0; defaults to 0. Only the raw series honors it literally. */
+  offset?: number
+  /** Sample page size 1..5000 (kernel clamp); defaults to 500. */
+  limit?: number
+  /** Include recorded events; defaults to true. */
+  includeEvents?: boolean
+  /** Event page size 1..2000 (kernel clamp); defaults to 200. */
+  eventsLimit?: number
+  /**
+   * Return the literal recorded series instead of the kernel's default
+   * evenly-downsampled review series; `offset`/`limit` page it literally.
+   */
+  raw?: boolean
 }
 
 /** Params of `wait`. */

@@ -24,6 +24,8 @@ import {
 
 const MIB = 1024 * 1024
 const TERMINAL = ['completed', 'failed', 'cancelled']
+// NDJSON protocol generation spoken by the shipped kernel (PROTOCOL.md §1).
+const PROTOCOL = 2
 const TASK_STATUSES = ['queued', 'probing', 'running', 'paused', 'completed', 'failed', 'cancelled', 'interrupted']
 const EVENT_KINDS = ['info', 'probe', 'plan', 'started', 'retry', 'controller', 'paused', 'resumed', 'verify', 'completed', 'failed', 'cancelled']
 
@@ -221,7 +223,7 @@ scenario('lifecycle: ready / initialize / stats', 'ready notification fields, in
   const { kernel, dataDir } = await makeKernel(t, ctx, { initialize: false })
   const ready = kernel.ready
   t.assert('ready notification received before launch() resolves', Boolean(ready), 'kernel.ready is null')
-  t.eq('ready.protocol', ready?.protocol, 1)
+  t.eq('ready.protocol', ready?.protocol, PROTOCOL)
   t.assert('ready.kernel.version is a non-empty string', typeof ready?.kernel?.version === 'string' && ready.kernel.version.length > 0, ready?.kernel?.version)
   t.eq('ready.kernel.pid matches spawned child pid', ready?.kernel?.pid, kernel.pid)
   t.assert('ready.kernel.dataDir matches --data-dir', samePath(ready?.kernel?.dataDir, dataDir), `${ready?.kernel?.dataDir} vs ${dataDir}`)
@@ -235,7 +237,7 @@ scenario('lifecycle: ready / initialize / stats', 'ready notification fields, in
     autoResume: false,
     logLevel: 'warn',
   })
-  t.eq('initialize.protocol', init?.protocol, 1)
+  t.eq('initialize.protocol', init?.protocol, PROTOCOL)
   t.eq('initialize.kernel.pid', init?.kernel?.pid, kernel.pid)
   t.assert('initialize.kernel.dataDir matches', samePath(init?.kernel?.dataDir, dataDir), init?.kernel?.dataDir)
   t.eq('initialize.config.connections', init?.config?.connections, 4)
@@ -243,7 +245,7 @@ scenario('lifecycle: ready / initialize / stats', 'ready notification fields, in
   t.assert('initialize.config.defaultDir echoed', samePath(init?.config?.defaultDir, t.downloadDir), init?.config?.defaultDir)
 
   const stats = await kernel.stats()
-  t.eq('stats.protocol', stats?.protocol, 1)
+  t.eq('stats.protocol', stats?.protocol, PROTOCOL)
   t.eq('stats.kernel.pid', stats?.kernel?.pid, kernel.pid)
   t.assert('stats.kernel.uptimeMs is a non-negative number', typeof stats?.kernel?.uptimeMs === 'number' && stats.kernel.uptimeMs >= 0, stats?.kernel?.uptimeMs)
   t.assert('stats.kernel.version is a non-empty string', typeof stats?.kernel?.version === 'string' && stats.kernel.version.length > 0, stats?.kernel?.version)
@@ -268,41 +270,45 @@ scenario('probe: ranged / no-range / redirect / chunked metadata', 'probe fields
 
   // — ranged origin
   const rangedUrl = ctx.fixture.urlFor('ranged', size, 'probe-ranged.bin')
-  const ranged = (await kernel.probe({ url: rangedUrl }))?.meta
-  t.assert('probe ranged returned meta', Boolean(ranged), 'meta missing')
-  t.eq('ranged meta.fileName', ranged?.fileName, 'probe-ranged.bin')
-  t.eq('ranged meta.totalBytes', ranged?.totalBytes, size)
-  t.eq('ranged meta.supportsRanges', ranged?.supportsRanges, true)
-  t.eq('ranged meta.contentType', ranged?.contentType, 'application/octet-stream')
-  t.assert('ranged meta.finalUrl equals requested url', sameUrl(ranged?.finalUrl, rangedUrl), ranged?.finalUrl)
-  t.eq('ranged probe issued no GET (HEAD only)', ctx.fixture.requestsFor('probe-ranged.bin', { method: 'GET' }).length, 0)
+  const ranged = (await kernel.probe({ url: rangedUrl }))?.server
+  t.assert('probe ranged returned server facts', Boolean(ranged), 'server facts missing')
+  t.eq('ranged server.fileName', ranged?.fileName, 'probe-ranged.bin')
+  t.eq('ranged server.totalBytes', ranged?.totalBytes, size)
+  t.eq('ranged server.range.supported', ranged?.range?.supported, true)
+  t.eq('ranged server.contentType', ranged?.contentType, 'application/octet-stream')
+  t.assert('ranged server.finalUrl equals requested url', sameUrl(ranged?.finalUrl, rangedUrl), ranged?.finalUrl)
+  // Protocol 2 proves ranges with one 64-byte ranged GET after the HEAD.
+  const rangedGets = ctx.fixture.requestsFor('probe-ranged.bin', { method: 'GET' })
+  t.eq('ranged probe issued one range proof GET', rangedGets.length, 1)
+  t.eq('ranged range proof is bytes=0-63', rangedGets[0]?.rangeHeader, 'bytes=0-63')
+  t.eq('ranged range proof answered 206', rangedGets[0]?.status, 206)
 
-  // — no-range origin: probe may prove ranges with one ranged GET, never a body download.
+  // — no-range origin: probe proves ranges with one ranged GET, never a body download.
   const norangeUrl = ctx.fixture.urlFor('norange', size, 'probe-norange.bin')
-  const norange = (await kernel.probe({ url: norangeUrl }))?.meta
-  t.assert('probe no-range returned meta', Boolean(norange), 'meta missing')
-  t.eq('no-range meta.fileName', norange?.fileName, 'probe-norange.bin')
-  t.eq('no-range meta.totalBytes', norange?.totalBytes, size)
-  t.eq('no-range meta.supportsRanges', norange?.supportsRanges, false)
+  const norange = (await kernel.probe({ url: norangeUrl }))?.server
+  t.assert('probe no-range returned server facts', Boolean(norange), 'server facts missing')
+  t.eq('no-range server.fileName', norange?.fileName, 'probe-norange.bin')
+  t.eq('no-range server.totalBytes', norange?.totalBytes, size)
+  t.eq('no-range server.range.supported', norange?.range?.supported, false)
 
   // — redirect chain (2 hops)
   const redirectUrl = ctx.fixture.urlFor('redirect', size, 'probe-redir.bin')
-  const redirect = (await kernel.probe({ url: redirectUrl }))?.meta
-  t.assert('probe redirect returned meta', Boolean(redirect), 'meta missing')
+  const redirect = (await kernel.probe({ url: redirectUrl }))?.server
+  t.assert('probe redirect returned server facts', Boolean(redirect), 'server facts missing')
   const expectedFinal = ctx.fixture.urlFor('ranged', size, 'probe-redir.bin')
-  t.assert('redirect meta.finalUrl differs from requested url', redirect?.finalUrl !== redirectUrl, `${redirect?.finalUrl}`)
-  t.assert('redirect meta.finalUrl is the final ranged url', sameUrl(redirect?.finalUrl, expectedFinal), `${redirect?.finalUrl} vs ${expectedFinal}`)
-  t.eq('redirect meta.fileName', redirect?.fileName, 'probe-redir.bin')
-  t.eq('redirect meta.totalBytes', redirect?.totalBytes, size)
-  t.eq('redirect meta.supportsRanges', redirect?.supportsRanges, true)
+  t.assert('redirect server.finalUrl differs from requested url', redirect?.finalUrl !== redirectUrl, `${redirect?.finalUrl}`)
+  t.assert('redirect server.finalUrl is the final ranged url', sameUrl(redirect?.finalUrl, expectedFinal), `${redirect?.finalUrl} vs ${expectedFinal}`)
+  t.eq('redirect server.fileName', redirect?.fileName, 'probe-redir.bin')
+  t.eq('redirect server.totalBytes', redirect?.totalBytes, size)
+  t.eq('redirect server.range.supported', redirect?.range?.supported, true)
 
   // — unknown-length chunked origin
   const chunkedUrl = ctx.fixture.urlFor('chunked', size, 'probe-chunked.bin')
-  const chunked = (await kernel.probe({ url: chunkedUrl }))?.meta
-  t.assert('probe chunked returned meta', Boolean(chunked), 'meta missing')
-  t.eq('chunked meta.totalBytes is null (unknown)', chunked?.totalBytes, null)
-  t.eq('chunked meta.supportsRanges', chunked?.supportsRanges, false)
-  t.eq('chunked meta.fileName', chunked?.fileName, 'probe-chunked.bin')
+  const chunked = (await kernel.probe({ url: chunkedUrl }))?.server
+  t.assert('probe chunked returned server facts', Boolean(chunked), 'server facts missing')
+  t.eq('chunked server.totalBytes is null (unknown)', chunked?.totalBytes, null)
+  t.eq('chunked server.range.supported', chunked?.range?.supported, false)
+  t.eq('chunked server.fileName', chunked?.fileName, 'probe-chunked.bin')
 
   // — a full download through the redirect chain also works end to end
   const downloadRedirectUrl = ctx.fixture.urlFor('redirect', size, 'probe-redir-download.bin')
@@ -379,7 +385,8 @@ scenario('multi-connection: 12 MiB with connections=8 + singleStream control', '
   t.assert('kernel reported peakWorkers > 1', task?.peakWorkers > 1, task?.peakWorkers)
   t.assert('kernel stats activeWorkers back to 0 after completion', (await kernel.stats()).tasks.running === 0, 'running != 0')
 
-  // singleStream=true: exactly one GET, and it must be rangeless.
+  // singleStream=true: the probe still proves range support with one 64-byte
+  // ranged GET, then the transfer itself is exactly one rangeless GET.
   const singleSize = 512 * 1024
   const singleName = 'mc-single.bin'
   const singleUrl = ctx.fixture.urlFor('ranged', singleSize, singleName)
@@ -390,10 +397,13 @@ scenario('multi-connection: 12 MiB with connections=8 + singleStream control', '
   await assertFileBytes(t, singleTask?.path, ctx.fixture.expected(singleSize), 'singleStream download')
   t.eq('singleStream: chunkSize is null', singleTask?.chunkSize, null)
   const singleGets = ctx.fixture.requestsFor(singleName, { method: 'GET' })
-  t.eq('singleStream: exactly one GET issued', singleGets.length, 1)
-  t.assert('singleStream: the GET carried no Range header', singleGets[0]?.rangeHeader === null, singleGets[0]?.rangeHeader)
-  t.eq('singleStream: GET answered 200', singleGets[0]?.status, 200)
-  t.eq('no 206 responses for singleStream download', singleGets.filter((entry) => entry.status === 206).length, 0)
+  const singleStreamGets = singleGets.filter((entry) => entry.rangeHeader === null)
+  t.eq('singleStream: exactly one rangeless GET issued', singleStreamGets.length, 1)
+  t.eq('singleStream: the GET answered 200', singleStreamGets[0]?.status, 200)
+  const singleProofGets = singleGets.filter((entry) => entry.rangeHeader === 'bytes=0-63')
+  t.eq('singleStream: exactly one 64-byte range proof GET', singleProofGets.length, 1)
+  t.eq('singleStream: range proof answered 206', singleProofGets[0]?.status, 206)
+  t.eq('no other 206 responses for singleStream download', singleGets.filter((entry) => entry.status === 206).length, 1)
 })
 
 scenario('no-range fallback: single-stream download', 'no range support -> single GET, rangeSupported=false, byte equality', async (t, ctx) => {

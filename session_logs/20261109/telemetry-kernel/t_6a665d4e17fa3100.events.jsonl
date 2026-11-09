@@ -1,0 +1,20 @@
+{"t":1794197559550,"seq":1,"kind":"resumed","message":"resuming (auto-resume)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559551,"seq":2,"kind":"probe","message":"probing https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559817,"seq":3,"kind":"probe","message":"29608446496 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559817,"seq":4,"kind":"info","message":"resumed 276 chunks / 2359836648 bytes from .part (etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559817,"seq":5,"kind":"plan","message":"29608446496 bytes, 3530 chunks of 8388608 bytes, 12 workers (adaptive up to 128), 2359836648 resumed bytes (resume: accepted:etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197559817,"seq":6,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197560818,"seq":7,"kind":"controller","message":"grow to 13: per-connection 1.1 MiB/s, instant 12.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197561818,"seq":8,"kind":"controller","message":"revert to 12: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197578818,"seq":9,"kind":"controller","message":"grow to 13: per-connection 0.8 MiB/s, instant 9.6 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197584818,"seq":10,"kind":"controller","message":"grow to 14: per-connection 0.7 MiB/s, instant 9.5 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197588818,"seq":11,"kind":"controller","message":"grow to 15: per-connection 0.7 MiB/s, instant 9.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197593818,"seq":12,"kind":"controller","message":"grow to 16: per-connection 1.8 MiB/s, instant 26.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197594818,"seq":13,"kind":"controller","message":"revert to 15: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197596819,"seq":14,"kind":"controller","message":"pool rebuild #1: 26.8 -> 9.2 MiB/s at 15 workers","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197596819,"seq":15,"kind":"controller","message":"grow to 16: probe after pool rebuild","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197610818,"seq":16,"kind":"controller","message":"grow to 18: per-connection 2.4 MiB/s, instant 38.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197615818,"seq":17,"kind":"controller","message":"grow to 20: per-connection 3.1 MiB/s, instant 55.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197616818,"seq":18,"kind":"controller","message":"revert to 18: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197618114,"seq":19,"kind":"info","message":"resume state saved: 17 chunks / 3676430303 bytes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794197618114,"seq":20,"kind":"cancelled","message":"download cancelled","chunk":null,"attempt":null,"delayMs":null}

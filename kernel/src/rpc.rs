@@ -82,11 +82,28 @@ struct ControlParams {
     #[serde(default)]
     delete_part: bool,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryParams {
+    id: String,
+    #[serde(default)]
+    offset: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+    /// `true` selects a literal page from `offset` instead of the evenly
+    /// downsampled review series.
+    #[serde(default)]
+    raw: bool,
+    #[serde(default)]
+    include_events: Option<bool>,
+    #[serde(default)]
+    events_limit: Option<usize>,
+}
 pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Value, ApiError> {
     match method {
         "initialize" => {
             // The host sends `protocol` in its initialize params; a stale host
-            // talking to a 1.1.0 kernel is refused with a stable code (§5.7).
+            // talking to a protocol-1 kernel is refused with a stable code (§5.7).
             let protocol = params.get("protocol").and_then(Value::as_u64).map(|value| value as u32);
             let config = parse(params, method)?;
             kernel.initialize(config, protocol).await
@@ -127,12 +144,21 @@ pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Va
             let params: ControlParams = parse(params, method)?;
             kernel.control(&params.id, &params.action, params.delete_part).await
         }
+        "history" => {
+            let params: HistoryParams = parse(params, method)?;
+            let limit = params.limit.unwrap_or(500).clamp(1, 5000);
+            let events_limit = params.events_limit.unwrap_or(200).clamp(1, 2000);
+            kernel.history(&params.id, params.offset.unwrap_or(0), limit, params.raw, params.include_events.unwrap_or(true), events_limit)
+        }
         "stats" => Ok(kernel.stats()),
         "shutdown" => {
             kernel.shutdown().await;
             Ok(json!({}))
         }
-        other => Err(ApiError::invalid(format!("unknown method `{other}`"))),
+        other => Err(ApiError::new(
+            "unsupported_method",
+            format!("kernel {} does not implement `{other}`; upgrade the kernel binary (dsh-rdm 0.2.2+)", crate::protocol::VERSION),
+        )),
     }
 }
 const EVENT_LIMIT: usize = 500;

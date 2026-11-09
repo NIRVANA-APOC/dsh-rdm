@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import {
   PROMPT_SECTION_TEXT,
   PROTOCOL_VERSION,
+  KernelError,
   createRdmTools,
   formatBytes,
   formatClock,
@@ -23,10 +24,12 @@ import {
   normalizeAggregate,
   normalizeServerFacts,
   normalizeTaskDetail,
+  normalizeTaskHistory,
   normalizeTaskView,
   protocolMismatchMessage,
   renderControlReceipt,
   renderDownloadReceipt,
+  renderHistoryReceipt,
   renderProbeReceipt,
   renderTaskDetailReceipt,
   renderTaskRecord,
@@ -74,6 +77,7 @@ function taskFixture(overrides = {}) {
     path: null,
     status: 'probing',
     downloaded: 21184000,
+    transferredBytes: 21184000,
     total: 50406400,
     percent: 42,
     speedBps: 1468006,
@@ -89,8 +93,12 @@ function taskFixture(overrides = {}) {
     activeWorkers: 8,
     peakWorkers: 8,
     connections: 8,
+    requestedConnections: 16,
+    maxConnections: 128,
+    targetWorkers: 16,
     chunkSize: 1572864,
     resumedChunks: 0,
+    resumedBytes: 0,
     rangeSupported: true,
     resumable: true,
     resumeSafety: 'strong',
@@ -186,14 +194,22 @@ function detailFixture(overrides = {}) {
       verified: null,
       serverChecksums: { contentDigest: null, contentMd5: null, sha256: null, crc32c: null },
     },
-    resumeState: { chunksDone: 0, bytesDone: 0, resumedChunks: 0, resumedBytes: 0, validatorsMatched: true },
+    resumeState: {
+      chunksDone: 0,
+      bytesDone: 0,
+      resumedChunks: 0,
+      resumedBytes: 0,
+      validatorsMatched: true,
+      resumeDecision: 'accepted',
+      resumeReason: 'etag',
+    },
     timing: { queuedMs: 100, probeMs: 84, transferMs: 17400, finalizeMs: 0 },
     diagnosis: [{ code: 'on-track', advice: 'wait', message: 'ETA 20s at 5s rate' }],
     ...overrides,
   }
 }
 
-const kernelStatus = { running: true, starting: false, version: '1.1.0', pid: 1234, dataDir: 'C:\\data', error: null }
+const kernelStatus = { running: true, starting: false, version: '0.2.2', pid: 1234, dataDir: 'C:\\data', error: null }
 
 // ── Protocol pin ────────────────────────────────────────────────────────────
 
@@ -203,16 +219,43 @@ check('protocol mismatch error is actionable', () => {
   assert.match(message, /protocol 1/)
   assert.match(message, /requires protocol 2/)
   assert.match(message, /build-kernel/)
+  // 0.2.2 versioning: the plugin/kernel versions named in the hint are current.
+  assert.match(message, /dsh-rdm 0\.2\.2/)
+  assert.match(message, /0\.2\.2 kernel/)
 })
 
 // ── Tool surface ────────────────────────────────────────────────────────────
 
 const tools = createRdmTools({})
-check('five tools with the expected names', () => {
+check('six tools with the expected names', () => {
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['rdm_download', 'rdm_probe', 'rdm_tasks', 'rdm_wait', 'rdm_control'],
+    ['rdm_download', 'rdm_probe', 'rdm_tasks', 'rdm_wait', 'rdm_control', 'rdm_history'],
   )
+})
+check('download parameters expose the 0.3.0 concurrency surface', () => {
+  const download = tools.find((tool) => tool.name === 'rdm_download')
+  assert.ok(download !== undefined, 'missing rdm_download')
+  const properties = download.parameters.properties
+  assert.equal(properties.connections.type, 'number')
+  assert.match(properties.connections.description, /1\.\.128/)
+  assert.equal(properties.maxConnections.type, 'number')
+  assert.match(properties.maxConnections.description, /1\.\.128/)
+  assert.match(properties.maxConnections.description, /controller may grow/)
+})
+check('history parameters match the 0.3.0 tool contract', () => {
+  const history = tools.find((tool) => tool.name === 'rdm_history')
+  assert.ok(history !== undefined, 'missing rdm_history')
+  const properties = history.parameters.properties
+  assert.equal(properties.taskId.type, 'string')
+  assert.ok((history.parameters.required ?? []).includes('taskId'))
+  assert.equal(properties.limit.type, 'number')
+  assert.match(properties.limit.description, /1\.\.2000, default 300/)
+  assert.equal(properties.offset.type, 'number')
+  assert.equal(properties.includeEvents.type, 'boolean')
+  assert.ok(!('eventsLimit' in properties), 'eventsLimit is host-side, not a tool parameter')
+  assert.match(history.description, /persisted per-sample telemetry/)
+  assert.match(history.description, /file paths/)
 })
 check('policy is stated only in the system-prompt section', () => {
   for (const tool of tools) {
@@ -222,6 +265,7 @@ check('policy is stated only in the system-prompt section', () => {
   }
   assert.match(PROMPT_SECTION_TEXT, /every HTTP\(S\) file download/)
   assert.match(PROMPT_SECTION_TEXT, /rdm_probe first/)
+  assert.match(PROMPT_SECTION_TEXT, /rdm_history/)
   assert.match(PROMPT_SECTION_TEXT, /structured key=value/)
 })
 check('first-turn schema cost stays under 6000 characters', () => {
@@ -269,6 +313,63 @@ check('progress pair shares one binary unit', () => {
 // ── Download receipt ────────────────────────────────────────────────────────
 
 const downloadValue = { task: taskFixture(), server: serverFixture(), preflightTimedOut: false, terminal: false, hint: 'x' }
+
+function historyFixture(overrides = {}) {
+  return {
+    kernel: kernelStatus,
+    taskId: 't_9f3a1c2d5e6b7a80',
+    samplesPath: 'C:\\data\\history\\t_9f3a1c2d5e6b7a80.samples.jsonl',
+    eventsPath: 'C:\\data\\history\\t_9f3a1c2d5e6b7a80.events.jsonl',
+    samples: [
+      {
+        t: 1762990000000,
+        bytes: 11596411699,
+        bps: 1048576,
+        w1Bps: 1048576,
+        w5Bps: 900000,
+        w30Bps: 800000,
+        w300Bps: 700000,
+        workers: 16,
+        peakWorkers: 16,
+        stalledMs: 0,
+      },
+    ],
+    events: [
+      { t: 1762990000000, seq: 3, kind: 'plan', message: '8 connections', chunk: null, attempt: null, delayMs: null },
+    ],
+    builds: ['0.2.1@53520', '0.2.2@59852'],
+    totalSamples: 1907,
+    totalEvents: 42,
+    truncated: false,
+    error: null,
+    hint: 'x',
+    ...overrides,
+  }
+}
+
+function historyMetaFixture(overrides = {}) {
+  return {
+    kind: 'meta',
+    t: 1762990000000,
+    kernelVersion: '0.2.2',
+    pid: 59852,
+    taskId: 't_h',
+    run: 2,
+    phase: 'plan',
+    url: 'https://cdn.example.com/app.zip?sig=abc',
+    fileName: 'app.zip',
+    totalBytes: 50406400,
+    chunkSize: 1572864,
+    chunks: 32,
+    requestedConnections: 16,
+    initialWorkers: 8,
+    maxConnections: 128,
+    resumedBytes: 0,
+    resumeDecision: 'not-attempted',
+    resumeReason: null,
+    ...overrides,
+  }
+}
 
 check('download receipt matches the §3.4 shape and order', () => {
   const lines = renderDownloadReceipt(downloadValue)
@@ -366,7 +467,7 @@ check('list receipt: kernel, scope, aggregate, task lines', () => {
     aggregate,
     scope: 'session',
   }).join('\n')
-  assert.match(text, /^kernel state=running version=1\.1\.0 pid=1234$/m)
+  assert.match(text, /^kernel state=running version=0\.2\.2 pid=1234$/m)
   assert.match(text, /^scope=session count=1$/m)
   assert.match(
     text,
@@ -390,12 +491,59 @@ check('detail receipt has header, telemetry, server, target, verify, timing, dia
   }).join('\n')
   assert.match(text, /^task t_9f3a1c2d5e6b7a80 state=probing session=sess_abc$/m)
   assert.match(text, /^telemetry trend=rising samples=78 peak=2\.2MiB\/s avg=1\.1MiB\/s stalled=0ms w1=1\.5MiB\/s w5=1\.3MiB\/s w30=1\.2MiB\/s w300=-$/m)
+  // 0.3.0 headline evidence: the resume verdict follows telemetry, before the
+  // server/target blocks, and names the reason code.
+  assert.match(text, /^resume decision=accepted reason=etag$/m)
+  assert.ok(text.indexOf('resume decision=') > text.indexOf('telemetry trend='), 'resume line follows telemetry')
+  assert.ok(text.indexOf('resume decision=') < text.indexOf('server host='), 'resume line precedes server block')
   assert.match(text, /^server host=cdn\.example\.com status=200 size=48\.1MiB http=HTTP\/2\.0$/m)
   assert.match(text, /^target part=C:\\Downloads\\app\.zip\.part resume=C:\\Downloads\\app\.zip\.part\.json$/m)
   assert.match(text, /^verify state=not-compared checksums=-$/m)
   assert.match(text, /^timing queued=100ms probe=84ms transfer=17s finalize=0ms$/m)
   assert.match(text, /^diagnosis code=on-track advice=wait msg="ETA 20s at 5s rate"$/m)
   assert.match(text, /^event seq=1 at=23:26:40 kind=plan msg="8 connections"$/m)
+  assertReceiptLines(text)
+})
+check('detail receipt renders a rejected resume verdict with a null reason', () => {
+  const text = renderTaskDetailReceipt({
+    kernel: kernelStatus,
+    task: taskFixture({ status: 'interrupted' }),
+    detail: detailFixture({
+      resumeState: {
+        chunksDone: 0,
+        bytesDone: 0,
+        resumedChunks: 0,
+        resumedBytes: 0,
+        validatorsMatched: false,
+        resumeDecision: 'rejected',
+        resumeReason: null,
+      },
+    }),
+    events: [],
+    hint: 'x',
+  }).join('\n')
+  assert.match(text, /^resume decision=rejected reason=-$/m)
+  assertReceiptLines(text)
+})
+check('detail receipt omits the resume line when not attempted', () => {
+  const text = renderTaskDetailReceipt({
+    kernel: kernelStatus,
+    task: taskFixture({ status: 'running' }),
+    detail: detailFixture({
+      resumeState: {
+        chunksDone: 0,
+        bytesDone: 0,
+        resumedChunks: 0,
+        resumedBytes: 0,
+        validatorsMatched: null,
+        resumeDecision: 'not-attempted',
+        resumeReason: null,
+      },
+    }),
+    events: [],
+    hint: 'x',
+  }).join('\n')
+  assert.ok(!text.includes('resume decision='), 'not-attempted must not add a resume line')
   assertReceiptLines(text)
 })
 
@@ -434,6 +582,67 @@ check('control receipts', () => {
   assertReceiptLines(lines.join('\n'))
 })
 
+// ── History (0.3.0 recording reader, 0.2.2 build tags) ──────────────────────
+
+check('history receipt: summary, paths, range and build tags', () => {
+  const lines = renderHistoryReceipt(historyFixture(), 0)
+  assert.equal(
+    lines[0],
+    'history task=t_9f3a1c2d5e6b7a80 samples=1907 peak=1MiB/s avg=1MiB/s',
+  )
+  assert.equal(lines[1], 'samples C:\\data\\history\\t_9f3a1c2d5e6b7a80.samples.jsonl')
+  assert.equal(lines[2], 'events C:\\data\\history\\t_9f3a1c2d5e6b7a80.events.jsonl')
+  assert.equal(lines[3], 'range 0..1 of 1907')
+  // 0.2.2: one build= segment line when the recording spans kernel builds.
+  assert.equal(lines[4], 'build=0.2.1@53520,0.2.2@59852')
+  assert.equal(lines.length, 5)
+  assertReceiptLines(lines.join('\n'))
+})
+check('history receipt omits the build line when no meta exists', () => {
+  const lines = renderHistoryReceipt(historyFixture({ builds: [] }), 0)
+  assert.equal(lines.length, 4)
+  assert.ok(!lines.some((line) => line.startsWith('build=')), 'no build line without meta')
+  assertReceiptLines(lines.join('\n'))
+})
+check('history receipt renders a later page and unknown paths', () => {
+  const lines = renderHistoryReceipt(historyFixture({ samplesPath: null, eventsPath: null }), 900)
+  assert.equal(lines[1], 'samples -')
+  assert.equal(lines[2], 'events -')
+  assert.equal(lines[3], 'range 900..901 of 1907')
+  assert.equal(lines[4], 'build=0.2.1@53520,0.2.2@59852')
+  assertReceiptLines(lines.join('\n'))
+})
+check('history failure renders as an error receipt (not a throw)', () => {
+  const lines = renderHistoryReceipt({
+    ...historyFixture(),
+    samplesPath: null,
+    eventsPath: null,
+    samples: [],
+    events: [],
+    builds: [],
+    totalSamples: 0,
+    totalEvents: 0,
+    truncated: false,
+    error: { code: 'not_found', message: 'No RDM task with id "t_x" exists.' },
+    hint: 'rdm_tasks without taskId lists the existing ids.',
+  })
+  assert.equal(lines[0], 'history task=t_9f3a1c2d5e6b7a80 samples=0 peak=- avg=-')
+  assert.equal(lines[4], 'error code=not_found message=No RDM task with id "t_x" exists.')
+  assert.match(lines[5], /^next rdm_tasks without taskId lists the existing ids\.$/)
+  assert.ok(lines.length >= 3 && lines.length <= 6, `history receipt has ${lines.length} lines`)
+  assertReceiptLines(lines.join('\n'))
+})
+check('history tool render passes the requested page offset', () => {
+  const tool = tools.find((entry) => entry.name === 'rdm_history')
+  const text = tool.output
+    .render({ taskId: 't_9f3a1c2d5e6b7a80', offset: 600 }, historyFixture())
+    .map((block) => block.text)
+    .join('\n')
+  assert.match(text, /^range 600\.\.601 of 1907$/m)
+  assert.match(text, /^build=0\.2\.1@53520,0\.2\.2@59852$/m)
+  assertReceiptLines(text)
+})
+
 // ── Session attribution ─────────────────────────────────────────────────────
 
 check('session id comes from exec.agent.session.id', () => {
@@ -467,9 +676,33 @@ check('normalizers are defensive', () => {
   assert.equal(task.percent, 100)
   assert.equal(task.host, 'x.example')
   assert.equal(task.sessionId, null)
+  // 0.3.0 view fields are always present with bounded defaults.
+  assert.equal(task.maxConnections, 128)
+  assert.equal(task.targetWorkers, 0)
+  assert.equal(task.resumedBytes, 0)
+  assert.equal(normalizeTaskView({ id: 't_2', maxConnections: 999 }).maxConnections, 128)
+  assert.equal(normalizeTaskView({ id: 't_3', maxConnections: 0 }).maxConnections, 1)
+  // 0.2.2 view fields: this-run bytes and requested connections.
+  assert.equal(task.transferredBytes, 10, 'completed fallback derives downloaded - resumedBytes')
+  assert.equal(task.requestedConnections, 0)
+  const resumed = normalizeTaskView({ id: 't_4', downloaded: 100, resumedBytes: 40, connections: 8 })
+  assert.equal(resumed.transferredBytes, 60)
+  assert.equal(resumed.requestedConnections, 8)
+  const explicit = normalizeTaskView({
+    id: 't_5',
+    transferredBytes: 50,
+    resumedBytes: 40,
+    requestedConnections: 16,
+  })
+  assert.equal(explicit.transferredBytes, 50)
+  assert.equal(explicit.requestedConnections, 16)
   const detail = normalizeTaskDetail({})
   assert.equal(detail.server, null)
   assert.deepEqual(detail.diagnosis, [])
+  // 0.3.0 resume verdict defaults: not-attempted with no reason.
+  assert.equal(detail.resumeState.resumeDecision, 'not-attempted')
+  assert.equal(detail.resumeState.resumeReason, null)
+  assert.equal(normalizeTaskDetail({ resumeState: { resumeDecision: 'accepted', resumeReason: 'etag' } }).resumeState.resumeDecision, 'accepted')
   assert.deepEqual(normalizeAggregate({ total: 3 }), {
     total: 3,
     active: 0,
@@ -483,6 +716,67 @@ check('normalizers are defensive', () => {
     w300Bps: null,
     riskCount: 0,
   })
+})
+check('history normalizer always returns bounded arrays and null paths', () => {
+  const empty = normalizeTaskHistory(null, 't_fallback')
+  assert.equal(empty.taskId, 't_fallback')
+  assert.equal(empty.samplesPath, null)
+  assert.equal(empty.eventsPath, null)
+  assert.deepEqual(empty.samples, [])
+  assert.deepEqual(empty.events, [])
+  assert.deepEqual(empty.meta, [])
+  assert.deepEqual(empty.builds, [])
+  assert.equal(empty.totalSamples, 0)
+  assert.equal(empty.totalEvents, 0)
+  assert.equal(empty.truncated, false)
+  const history = normalizeTaskHistory(
+    {
+      taskId: 't_h',
+      samplesPath: 'C:\\d\\t_h.samples.jsonl',
+      samples: [
+        { t: 1762990000000, bytes: 2, bps: 3 },
+        // The writer's cap marker is not a telemetry sample.
+        { t: 1762990001000, truncated: true },
+      ],
+      events: [{ t: 1762990000000, kind: 'controller', message: 'active workers -> 24', seq: 3 }],
+      meta: [
+        historyMetaFixture({ kernelVersion: '0.2.1', pid: 53520, run: 1 }),
+        historyMetaFixture({ kernelVersion: '0.2.2', pid: 59852, run: 2 }),
+        // A third run on the same build must not duplicate the build tag.
+        historyMetaFixture({ kernelVersion: '0.2.2', pid: 59852, run: 3 }),
+      ],
+      totalSamples: 1907,
+      totalEvents: 42,
+      truncated: true,
+    },
+    't_ignored',
+  )
+  assert.equal(history.taskId, 't_h')
+  assert.equal(history.samples.length, 1)
+  assert.equal(history.samples[0].w5Bps, 0)
+  assert.equal(history.events.length, 1)
+  assert.equal(history.events[0].kind, 'controller')
+  assert.equal(history.events[0].seq, 3)
+  assert.equal(history.meta.length, 3)
+  assert.equal(history.meta[0].kernelVersion, '0.2.1')
+  assert.equal(history.meta[0].kind, 'meta')
+  assert.deepEqual(history.builds, ['0.2.1@53520', '0.2.2@59852'])
+  assert.equal(history.totalSamples, 1907)
+  assert.equal(history.truncated, true)
+  // Meta records are bounded to the last 20 (kernel-side bound mirrored).
+  const many = normalizeTaskHistory({
+    meta: Array.from({ length: 22 }, (_, index) =>
+      historyMetaFixture({ pid: index + 1, run: index + 1 }),
+    ),
+  })
+  assert.equal(many.meta.length, 20)
+  assert.equal(many.meta[0].pid, 3)
+  assert.equal(many.builds.length, 20)
+  // A 0.2.1-format recording (no meta) stays readable: empty meta/builds.
+  const old = normalizeTaskHistory({ taskId: 't_old', samples: [{ t: 1762990000000, bytes: 1 }] })
+  assert.deepEqual(old.meta, [])
+  assert.deepEqual(old.builds, [])
+  assert.equal(old.samples.length, 1)
 })
 
 // ── Recoverable failures are canonical values (design §3.5) ─────────────────
@@ -602,6 +896,7 @@ check('receipts never print headers/cookie/referer values', () => {
     },
     rdm_wait: { tasks: [taskFixture()], timedOut: false, error: null, hint: 'x' },
     rdm_control: { action: 'pause', task: taskFixture(), removedId: null, deletePart: false, error: null, hint: 'x' },
+    rdm_history: historyFixture(),
   }
   for (const tool of tools) {
     const text = tool.output
@@ -784,7 +1079,105 @@ check('canonical values validate against their output schemas', () => {
     error: { code: 'conflict', message: 'completed' },
     hint: 'x',
   })
+  assertCanonical('rdm_history', historyFixture())
+  assertCanonical('rdm_history', {
+    ...historyFixture(),
+    samplesPath: null,
+    eventsPath: null,
+    samples: [],
+    events: [],
+    totalSamples: 0,
+    totalEvents: 0,
+    truncated: false,
+    error: { code: 'not_found', message: 'missing' },
+    hint: 'x',
+  })
 })
+
+// ── rdm_history execution (stub kernel, no child process) ───────────────────
+
+{
+  const calls = []
+  const stubKernel = {
+    kernelStatus: () => kernelStatus,
+    history: async (id, params) => {
+      calls.push({ id, params })
+      return historyFixture({ taskId: id })
+    },
+  }
+  const stubTools = createRdmTools(stubKernel)
+  const tool = stubTools.find((entry) => entry.name === 'rdm_history')
+  try {
+    const explicit = await tool.execute(
+      { taskId: 't_9f3a1c2d5e6b7a80', limit: 500, offset: 100, includeEvents: false },
+      { signal: new AbortController().signal },
+    )
+    assertCanonical('rdm_history', explicit)
+    assert.deepEqual(explicit.builds, ['0.2.1@53520', '0.2.2@59852'])
+    assert.equal(calls[0].id, 't_9f3a1c2d5e6b7a80')
+    assert.equal(calls[0].params.limit, 500)
+    assert.equal(calls[0].params.offset, 100)
+    assert.equal(calls[0].params.includeEvents, false)
+    assert.equal(calls[0].params.eventsLimit, 200)
+    const defaults = await tool.execute(
+      { taskId: 't_9f3a1c2d5e6b7a80' },
+      { signal: new AbortController().signal },
+    )
+    assertCanonical('rdm_history', defaults)
+    assert.equal(calls[1].params.limit, 300)
+    // No model-supplied offset: omit it so KernelService keeps the kernel's
+    // default evenly-downsampled review series (raw paging only on request).
+    assert.equal('offset' in calls[1].params, false)
+    assert.equal(calls[1].params.includeEvents, true)
+    // An explicit offset — including 0 — is forwarded; KernelService turns it
+    // into `raw: true`, which makes offset/limit page the literal recording.
+    const explicitZero = await tool.execute(
+      { taskId: 't_9f3a1c2d5e6b7a80', offset: 0 },
+      { signal: new AbortController().signal },
+    )
+    assertCanonical('rdm_history', explicitZero)
+    assert.equal(calls[2].params.offset, 0)
+    passed += 1
+  } catch (error) {
+    failures.push(`rdm_history execute: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+// ── 0.2.2 §1.7: old-kernel unknown method is a recoverable value ────────────
+
+{
+  const oldKernel = {
+    kernelStatus: () => ({ ...kernelStatus, version: '1.1.0', pid: 53520 }),
+    history: async () => {
+      throw new KernelError(
+        'unsupported_method',
+        'kernel 1.1.0 does not implement `history`; upgrade the kernel binary (dsh-rdm 0.2.2+)',
+      )
+    },
+  }
+  const tool = createRdmTools(oldKernel).find((entry) => entry.name === 'rdm_history')
+  try {
+    const value = await tool.execute(
+      { taskId: 't_9f3a1c2d5e6b7a80' },
+      { signal: new AbortController().signal },
+    )
+    assertCanonical('rdm_history', value)
+    assert.equal(value.error.code, 'unsupported_method')
+    assert.equal(value.samplesPath, null)
+    assert.deepEqual(value.builds, [])
+    const text = tool.output
+      .render({ taskId: 't_9f3a1c2d5e6b7a80' }, value)
+      .map((block) => block.text)
+      .join('\n')
+    assert.match(text, /^error code=unsupported_method message=/m)
+    assert.match(text, /^next upgrade the kernel binary to 0\.2\.2 \(dsh-rdm 0\.2\.2\+\)/m)
+    assert.ok(text.split('\n').length <= 6, 'error receipt stays bounded to 6 lines')
+    assertReceiptLines(text)
+    passed += 1
+  } catch (error) {
+    failures.push(`rdm_history unsupported_method: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
 
 // ── Report ──────────────────────────────────────────────────────────────────
 

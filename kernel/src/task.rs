@@ -1,5 +1,6 @@
 use crate::diagnosis::{diagnose, DiagnosisInput};
 use crate::filename;
+use crate::history::{EventRecord, HistoryWriter, SampleRecord};
 use crate::protocol::{
     now_ms, percent_of, ErrorInfo, ResumeSafety, ResumeStateFacts, ServerFacts, Spec, Status, TargetFacts, TaskDetail, TaskEvent, TaskRecord, TaskView, Telemetry, TimingDetail, Trend, VerificationFacts, EVENT_RING_CAPACITY,
 };
@@ -88,7 +89,8 @@ pub struct ViewState {
     pub status: Status, pub final_url: Option<String>, pub file_name: String, pub dir: String,
     pub path: Option<String>, pub downloaded: u64, pub total: Option<u64>, pub speed_bps: u64,
     pub eta_secs: Option<u64>, pub active_workers: usize, pub peak_workers: usize,
-    pub connections: usize, pub chunk_size: Option<u64>, pub resumed_chunks: u64,
+    pub target_workers: usize, pub connections: usize, pub requested_connections: usize, pub max_connections: usize,
+    pub chunk_size: Option<u64>, pub resumed_chunks: u64, pub resumed_bytes: u64, pub transferred_bytes: u64,
     pub range_supported: Option<bool>, pub sha256: Option<String>, pub error: Option<ErrorInfo>,
     pub retries: u32, pub created_at: u64, pub started_at: Option<u64>, pub finished_at: Option<u64>,
     pub peak_bps: u64, pub resume_safety: ResumeSafety, pub verified: Option<bool>,
@@ -96,8 +98,8 @@ pub struct ViewState {
     pub server: Option<ServerFacts>,
     pub ewma: f64, pub last_byte_at: Option<Instant>, pub last_retry_at: Option<Instant>,
     pub last_throttle_at: Option<Instant>,
-    pub resumed_bytes: u64, pub resume_chunks_done: u64, pub resume_bytes_done: u64,
-    pub validators_matched: bool,
+    pub resume_chunks_done: u64, pub resume_bytes_done: u64,
+    pub validators_matched: bool, pub resume_decision: String, pub resume_reason: Option<String>,
     pub probe_ms: u64, pub transfer_ms: u64, pub finalize_ms: u64,
     pub transfer_started: Option<Instant>, pub finalize_started: Option<Instant>,
 }
@@ -125,6 +127,8 @@ pub struct Task {
     status_notify: Arc<Notify>,
     control: Mutex<Option<Arc<Control>>>,
     running: AtomicBool,
+    /// Persisted download-data recorder (0.2.1); attached by the kernel.
+    history: Mutex<Option<Arc<HistoryWriter>>>,
     pub persist_wake: Notify,
 }
 
@@ -168,9 +172,13 @@ impl Task {
             eta_secs: None,
             active_workers: 0,
             peak_workers: 0,
+            target_workers: 0,
             connections: spec.connections,
+            requested_connections: spec.connections,
+            max_connections: spec.max_connections,
             chunk_size: None,
             resumed_chunks: 0,
+            transferred_bytes: 0,
             range_supported: None,
             sha256: None,
             error: None,
@@ -192,6 +200,8 @@ impl Task {
             resume_chunks_done: 0,
             resume_bytes_done: 0,
             validators_matched: true,
+            resume_decision: "not-attempted".to_string(),
+            resume_reason: None,
             probe_ms: 0,
             transfer_ms: 0,
             finalize_ms: 0,
@@ -225,6 +235,7 @@ impl Task {
             status_notify,
             control: Mutex::new(None),
             running: AtomicBool::new(false),
+            history: Mutex::new(None),
             persist_wake: Notify::new(),
         })
     }
@@ -233,6 +244,18 @@ impl Task {
         let TaskRecord { spec, view: stored, server } = record;
         let status = if stored.status.is_active() { Status::Interrupted } else { stored.status };
         let changed = status != stored.status;
+        // Legacy records persisted `elapsedMs: 0` (the value was computed at
+        // serialization time after a restart). Fall back to the created/finished
+        // wall-clock for terminal records so a reloaded completed task still has
+        // a meaningful elapsedMs/avgBps; interrupted records have no finishedAt.
+        let restored_elapsed = if stored.elapsed_ms > 0 {
+            stored.elapsed_ms
+        } else {
+            match (stored.created_at, stored.finished_at) {
+                (created, Some(finished)) if finished > created => finished - created,
+                _ => 0,
+            }
+        };
         let view = ViewState {
             status,
             final_url: stored.final_url,
@@ -245,9 +268,16 @@ impl Task {
             eta_secs: None,
             active_workers: 0,
             peak_workers: stored.peak_workers,
+            target_workers: stored.target_workers,
             connections: stored.connections,
+            // 0.2.1/early-0.2.2 records have no `requestedConnections` (serde
+            // default) or were persisted as 1 before the field existed; fall
+            // back to the recorded initial population for multi-worker tasks.
+            requested_connections: if stored.requested_connections <= 1 && stored.connections > 1 { stored.connections } else { stored.requested_connections },
+            max_connections: if stored.max_connections == 0 { crate::protocol::DEFAULT_MAX_CONNECTIONS } else { stored.max_connections },
             chunk_size: stored.chunk_size,
             resumed_chunks: stored.resumed_chunks,
+            transferred_bytes: stored.transferred_bytes,
             range_supported: stored.range_supported,
             sha256: stored.sha256,
             error: stored.error,
@@ -265,12 +295,14 @@ impl Task {
             last_byte_at: None,
             last_retry_at: None,
             last_throttle_at: None,
-            resumed_bytes: 0,
+            resumed_bytes: stored.resumed_bytes,
             resume_chunks_done: 0,
             resume_bytes_done: stored.downloaded,
             validators_matched: true,
+            resume_decision: "not-attempted".to_string(),
+            resume_reason: None,
             probe_ms: 0,
-            transfer_ms: stored.elapsed_ms,
+            transfer_ms: restored_elapsed,
             finalize_ms: 0,
             transfer_started: None,
             finalize_started: None,
@@ -278,7 +310,11 @@ impl Task {
         let task = Self::assemble(stored.id, spec, view, VecDeque::new(), 0, status_notify);
         {
             let mut inner = task.inner.lock().expect("task mutex poisoned");
-            inner.accumulated_ms = 0;
+            // Resume elapsed accounting across kernel generations: a restored
+            // task keeps its accumulated wall time so `elapsedMs`/`avgBps` do
+            // not restart from zero (0.2.2 live data showed both as 0 after a
+            // restart even though the transfer was complete).
+            inner.accumulated_ms = restored_elapsed;
             inner.dirty = changed;
             inner.persisted_status = Status::Queued;
             inner.notify_pending = true;
@@ -322,9 +358,11 @@ impl Task {
             inner.ring.reset();
             // Run-boundary baseline: makes the first reporter sample (or the
             // terminal sample of a sub-100 ms transfer) a real measured rate.
-            let downloaded = inner.view.downloaded;
-            inner.ring.push(now, downloaded);
+            // This-run transferred bytes restart at 0 even for a pause/resume of
+            // the same task, so the view never shows the previous run's value.
+            inner.ring.push(now, 0);
             let view = &mut inner.view;
+            view.transferred_bytes = 0;
             view.speed_bps = 0;
             view.ewma = 0.0;
             view.active_workers = 0;
@@ -350,10 +388,10 @@ impl Task {
         // Terminal sample: a download shorter than the reporter cadence still
         // gets one measured end point, so peak/window telemetry is not empty.
         let now = Instant::now();
-        let downloaded = inner.view.downloaded;
+        let transferred = inner.view.transferred_bytes;
         if let Some(last) = inner.ring.last() {
-            if downloaded > last.bytes {
-                inner.ring.push(now, downloaded);
+            if transferred > last.bytes {
+                inner.ring.push(now, transferred);
                 if let Some(rate_1s) = inner.ring.window_rate(now, Duration::from_secs(1)) {
                     inner.view.peak_bps = inner.view.peak_bps.max(rate_1s);
                 }
@@ -453,6 +491,7 @@ impl Task {
             |inner| {
                 let view = &mut inner.view;
                 view.connections = connections;
+                view.target_workers = connections;
                 view.chunk_size = chunk_size;
                 view.resumed_chunks = resumed_chunks;
                 view.resumed_bytes = resumed_bytes;
@@ -476,15 +515,76 @@ impl Task {
         self.mutate(|inner| inner.view.validators_matched = matched, false);
     }
 
+    /// Record the plan-phase resume decision (`accepted`/`rejected` + stable code).
+    pub fn set_resume_decision(&self, decision: &str, reason: Option<&str>) {
+        self.mutate(
+            |inner| {
+                inner.view.resume_decision = decision.to_string();
+                inner.view.resume_reason = reason.map(str::to_string);
+            },
+            false,
+        );
+    }
+
+    /// Controller worker target (called once per target change).
+    pub fn set_controller_target(&self, target: usize) {
+        self.mutate(|inner| inner.view.target_workers = target, false);
+    }
+
+    /// Attach the persisted download-data recorder for this task.
+    pub fn attach_history(&self, writer: Arc<HistoryWriter>) {
+        *self.history.lock().expect("history mutex poisoned") = Some(writer);
+    }
+
+    pub fn history_writer(&self) -> Option<Arc<HistoryWriter>> {
+        self.history.lock().expect("history mutex poisoned").clone()
+    }
+
+    /// Flush recorded samples/events (forced at terminal transitions/shutdown).
+    pub fn flush_history(&self) {
+        if let Some(writer) = self.history_writer() {
+            writer.flush();
+        }
+    }
+
+    /// Append this run's plan/build attribution record to the recording.
+    pub fn record_history_meta(&self, meta: crate::history::MetaRecord) {
+        if let Some(writer) = self.history_writer() {
+            writer.record_meta(&meta);
+        }
+    }
+
+    /// Monotonic run generation inside this kernel process (1-based).
+    pub fn run_generation(&self) -> u64 {
+        self.lock().run_gen
+    }
+
+    fn record_sample(&self, sample: SampleRecord) {
+        if let Some(writer) = self.history_writer() {
+            writer.record_sample(&sample);
+        }
+    }
+
+    fn record_event(&self, event: EventRecord) {
+        if let Some(writer) = self.history_writer() {
+            writer.record_event(&event);
+        }
+    }
+
     /// Reporter tick (≤ 100 ms): sample the cumulative byte counter and update
-    /// the EWMA rate, peak and per-window telemetry.
-    pub fn report(&self, downloaded: u64, total: Option<u64>, active_workers: usize, peak_workers: usize) {
+    /// the EWMA rate, peak and per-window telemetry. `transferred` counts bytes
+    /// written by *this run* (resumed bytes excluded) and is what all rate
+    /// metrics use, so a resumed task never inherits a 8 GiB/s first sample.
+    /// Every measured sample is also appended to the persistent recording.
+    pub fn report(&self, downloaded: u64, transferred: u64, total: Option<u64>, active_workers: usize, peak_workers: usize) {
         let now = Instant::now();
+        let mut sample: Option<SampleRecord> = None;
         self.mutate(
             |inner| {
                 let view = &mut inner.view;
-                let advanced = downloaded > view.downloaded;
+                let advanced = transferred > view.transferred_bytes;
                 view.downloaded = downloaded;
+                view.transferred_bytes = transferred;
                 view.total = total.or(view.total);
                 view.active_workers = active_workers;
                 view.peak_workers = view.peak_workers.max(peak_workers);
@@ -493,10 +593,10 @@ impl Task {
                 }
                 let previous = inner.ring.last();
                 if inner.ring.should_sample(now) {
-                    inner.ring.push(now, downloaded);
+                    inner.ring.push(now, transferred);
                     if let Some(previous) = previous {
                         let elapsed = now.saturating_duration_since(previous.at);
-                        let instant = downloaded.saturating_sub(previous.bytes) as f64 / elapsed.as_secs_f64().max(1e-6);
+                        let instant = transferred.saturating_sub(previous.bytes) as f64 / elapsed.as_secs_f64().max(1e-6);
                         view.ewma = telemetry::ewma_step(view.ewma, instant, elapsed);
                     } else {
                         view.ewma = 0.0;
@@ -504,6 +604,20 @@ impl Task {
                     if let Some(rate_1s) = inner.ring.window_rate(now, Duration::from_secs(1)) {
                         view.peak_bps = view.peak_bps.max(rate_1s);
                     }
+                    let windows = inner.ring.windows(now);
+                    sample = Some(SampleRecord {
+                        t: crate::protocol::now_ms(),
+                        bytes: downloaded,
+                        transferred,
+                        bps: view.ewma.round().max(0.0) as u64,
+                        w1_bps: windows.w1s,
+                        w5_bps: windows.w5s,
+                        w30_bps: windows.w30s,
+                        w300_bps: windows.w300s,
+                        workers: view.active_workers,
+                        peak_workers: view.peak_workers,
+                        stalled_ms: view.last_byte_at.map(|at| now.saturating_duration_since(at).as_millis() as u64).unwrap_or(0),
+                    });
                 }
                 view.speed_bps = view.ewma.round().max(0.0) as u64;
                 view.eta_secs = match (view.total, view.speed_bps) {
@@ -514,6 +628,9 @@ impl Task {
             },
             false,
         );
+        if let Some(sample) = sample {
+            self.record_sample(sample);
+        }
     }
 
     pub fn note_retry(&self) {
@@ -574,14 +691,18 @@ impl Task {
     }
 
     pub fn add_event(&self, kind: &str, message: Option<String>, chunk: Option<u64>, attempt: Option<u32>, delay_ms: Option<u64>) {
-        let mut inner = self.lock();
-        inner.seq += 1;
-        let message = message.map(|message| crate::protocol::redact_text(&message));
-        let event = TaskEvent { seq: inner.seq, at: now_ms(), kind: kind.to_string(), message, chunk, attempt, delay_ms };
-        inner.events.push_back(event);
-        if inner.events.len() > EVENT_RING_CAPACITY {
-            inner.events.pop_front();
-        }
+        let event = {
+            let mut inner = self.lock();
+            inner.seq += 1;
+            let message = message.map(|message| crate::protocol::redact_text(&message));
+            let event = TaskEvent { seq: inner.seq, at: now_ms(), kind: kind.to_string(), message, chunk, attempt, delay_ms };
+            inner.events.push_back(event.clone());
+            if inner.events.len() > EVENT_RING_CAPACITY {
+                inner.events.pop_front();
+            }
+            event
+        };
+        self.record_event(EventRecord { t: event.at, seq: event.seq, kind: event.kind, message: event.message, chunk: event.chunk, attempt: event.attempt, delay_ms: event.delay_ms });
     }
 
     pub fn events(&self, limit: usize) -> Vec<TaskEvent> {
@@ -610,6 +731,9 @@ impl Task {
         let trend = if running { telemetry::trend_of(&windows, stalled_ms, samples) } else { Trend::Unknown };
         let eta_confidence = telemetry::eta_confidence_of(view.total.is_some(), !running, stalled_ms, samples, cv);
         let elapsed = Self::elapsed_ms(inner);
+        // Overall average: whole-file progress over the task's accumulated
+        // lifetime (persisted across restarts). Speed windows/EWMA/peak remain
+        // this-run rates from the transferred-bytes ring.
         let avg_bps = if elapsed > 0 { (view.downloaded as u128 * 1000 / elapsed as u128) as u64 } else { 0 };
         Snapshot { windows, stalled_ms, trend, eta_confidence, samples: samples as u64, last_sample_at, avg_bps }
     }
@@ -645,9 +769,14 @@ impl Task {
             stalled_ms: snapshot.stalled_ms,
             active_workers: view.active_workers,
             peak_workers: view.peak_workers,
+            target_workers: view.target_workers,
             connections: view.connections,
+            requested_connections: view.requested_connections,
+            max_connections: view.max_connections,
             chunk_size: view.chunk_size,
             resumed_chunks: view.resumed_chunks,
+            resumed_bytes: view.resumed_bytes,
+            transferred_bytes: view.transferred_bytes,
             range_supported: view.range_supported,
             resumable,
             resume_safety: view.resume_safety,
@@ -723,7 +852,7 @@ impl Task {
             server: view.server.clone().map(|facts| facts.redacted()),
             target,
             verification,
-            resume_state: ResumeStateFacts { chunks_done: view.resume_chunks_done, bytes_done: view.resume_bytes_done, resumed_chunks: view.resumed_chunks, resumed_bytes: view.resumed_bytes, validators_matched: view.validators_matched },
+            resume_state: ResumeStateFacts { chunks_done: view.resume_chunks_done, bytes_done: view.resume_bytes_done, resumed_chunks: view.resumed_chunks, resumed_bytes: view.resumed_bytes, validators_matched: view.validators_matched, resume_decision: view.resume_decision.clone(), resume_reason: view.resume_reason.clone() },
             timing: TimingDetail { queued_ms, probe_ms: view.probe_ms, transfer_ms: view.transfer_ms.saturating_add(live_transfer), finalize_ms: view.finalize_ms.saturating_add(live_finalize) },
             diagnosis,
         }
@@ -784,7 +913,10 @@ impl Task {
                 view.eta_secs = None;
                 view.active_workers = 0;
                 view.peak_workers = 0;
+                view.target_workers = view.connections;
                 view.resumed_chunks = 0;
+                view.resumed_bytes = 0;
+                view.transferred_bytes = 0;
                 view.range_supported = None;
                 view.chunk_size = None;
                 view.final_url = None;
@@ -807,6 +939,8 @@ impl Task {
                 view.resume_chunks_done = 0;
                 view.resume_bytes_done = 0;
                 view.validators_matched = true;
+                view.resume_decision = "not-attempted".to_string();
+                view.resume_reason = None;
                 view.probe_ms = 0;
                 view.transfer_ms = 0;
                 view.finalize_ms = 0;
@@ -843,7 +977,7 @@ mod tests {
     fn pump(task: &Task, samples: usize) {
         let _ = task.begin_run();
         for index in 1..=samples {
-            task.report(index as u64 * 100 * 1024, Some(50_000_000), 2, 2);
+            task.report(index as u64 * 100 * 1024, index as u64 * 100 * 1024, Some(50_000_000), 2, 2);
             std::thread::sleep(Duration::from_millis(110));
         }
     }
@@ -860,7 +994,7 @@ mod tests {
         facts.signed_url = crate::protocol::SignedUrlFacts { signed: true, expires_at: Some(123), ..crate::protocol::SignedUrlFacts::default() };
         facts.file_name = "file.bin".into();
         task.set_server(&facts);
-        task.report(25, Some(100), 2, 2);
+        task.report(25, 25, Some(100), 2, 2);
         let view = task.view();
         assert_eq!(view.session_id.as_deref(), Some("sess_abc"));
         assert_eq!(view.host, "cdn.example.com");
@@ -898,7 +1032,7 @@ mod tests {
         task.set_status(Status::Probing);
         task.set_probe_ms(84);
         task.set_status(Status::Running);
-        task.report(1_000, Some(10_000), 1, 1);
+        task.report(1_000, 1_000, Some(10_000), 1, 1);
         std::thread::sleep(Duration::from_millis(3));
         task.begin_finalize();
         std::thread::sleep(Duration::from_millis(1));
@@ -932,5 +1066,39 @@ mod tests {
         assert_eq!(view.peak_bps, 0);
         assert_eq!(view.downloaded, 0);
         assert!(view.speed1s_bps.is_none());
+    }
+
+    #[test]
+    fn report_and_events_are_recorded_when_history_is_attached() {
+        let task = task();
+        let dir = crate::test_temp::dir("task-history");
+        task.attach_history(std::sync::Arc::new(crate::history::HistoryWriter::new(&dir, &task.id)));
+        task.set_status(Status::Probing);
+        task.set_status(Status::Running);
+        task.add_event("plan", Some("100 bytes, 1 chunk".to_string()), None, None, None);
+        pump(&task, 2);
+        task.flush_history();
+        let page = crate::history::read_page(&dir, &task.id, 0, 500, false, 20);
+        assert!(page.total_samples >= 1, "{page:?}");
+        assert!(page.total_events >= 1);
+        assert_eq!(page.events[0].kind, "plan");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn controller_target_and_resume_decision_are_visible() {
+        let task = task();
+        task.set_controller_target(24);
+        task.set_resume_decision("rejected", Some("validators-mismatch"));
+        task.set_plan(8, Some(1024), 0, 0);
+        let view = task.view();
+        assert_eq!(view.target_workers, 8);
+        assert_eq!(view.connections, 8);
+        assert_eq!(view.max_connections, crate::protocol::DEFAULT_MAX_CONNECTIONS);
+        task.set_controller_target(24);
+        assert_eq!(task.view().target_workers, 24);
+        let detail = task.detail(None);
+        assert_eq!(detail.resume_state.resume_decision, "rejected");
+        assert_eq!(detail.resume_state.resume_reason.as_deref(), Some("validators-mismatch"));
     }
 }

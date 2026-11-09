@@ -1,0 +1,58 @@
+{
+  "t_248a5911009cc18d": {
+    "samples": 0,
+    "events": 0,
+    "span_s": null,
+    "first_sample": null,
+    "last_sample": null,
+    "bps_mean_MiB_s": null,
+    "bps_p50_MiB_s": null,
+    "bps_p95_MiB_s": null,
+    "bps_max_MiB_s": null,
+    "workers_min": null,
+    "workers_max": null,
+    "stalled_max_ms": 0
+  },
+  "t_7359f357ea3922cb": {
+    "samples": 2,
+    "events": 9,
+    "span_s": 0.1,
+    "first_sample": "2026-11-09T12:12:39.951+08:00",
+    "last_sample": "2026-11-09T12:12:40.051+08:00",
+    "bps_mean_MiB_s": 4.68,
+    "bps_p50_MiB_s": 4.68,
+    "bps_p95_MiB_s": 8.89,
+    "bps_max_MiB_s": 9.36,
+    "workers_min": 1,
+    "workers_max": 1,
+    "stalled_max_ms": 100
+  },
+  "t_6a665d4e17fa3100": {
+    "samples": 376,
+    "events": 20,
+    "span_s": 58.2,
+    "first_sample": "2026-11-09T12:12:39.918+08:00",
+    "last_sample": "2026-11-09T12:13:38.092+08:00",
+    "bps_mean_MiB_s": 20.5,
+    "bps_p50_MiB_s": 10.91,
+    "bps_p95_MiB_s": 51.38,
+    "bps_max_MiB_s": 55.33,
+    "workers_min": 12,
+    "workers_max": 20,
+    "stalled_max_ms": 500
+  },
+  "t_ebda50bb99a77a14": {
+    "samples": 2097,
+    "events": 44,
+    "span_s": 324.1,
+    "first_sample": "2026-11-09T12:13:42.684+08:00",
+    "last_sample": "2026-11-09T12:19:06.767+08:00",
+    "bps_mean_MiB_s": 106.32,
+    "bps_p50_MiB_s": 107.45,
+    "bps_p95_MiB_s": 114.07,
+    "bps_max_MiB_s": 8862.39,
+    "workers_min": 1,
+    "workers_max": 102,
+    "stalled_max_ms": 599
+  }
+}

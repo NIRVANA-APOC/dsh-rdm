@@ -12,3 +12,7 @@ reports/
 bin/*/*.old-*
 *.log
 .DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc

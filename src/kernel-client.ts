@@ -29,12 +29,17 @@ import {
   CONTROL_ACTIONS,
   DEFAULT_CONNECTIONS,
   DEFAULT_EVENTS,
+  DEFAULT_HISTORY_EVENTS,
+  DEFAULT_HISTORY_SAMPLES,
   DEFAULT_LIST_LIMIT,
   DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_MAX_CONNECTIONS,
   DEFAULT_WAIT_MS,
   MAX_CHUNK_BYTES,
   MAX_CONNECTIONS,
   MAX_EVENTS,
+  MAX_HISTORY_META,
+  MAX_HISTORY_SAMPLES,
   MAX_LIST_LIMIT,
   MAX_SESSION_ID_LENGTH,
   MAX_TASK_IDS,
@@ -63,6 +68,9 @@ import {
   type FileNameSource,
   type GetResult,
   type HeaderFacts,
+  type HistoryMeta,
+  type HistoryParams,
+  type HistoryResult,
   type InitializeConfig,
   type InitializeParams,
   type InitializeResult,
@@ -81,6 +89,8 @@ import {
   type Recommendation,
   type RedirectHop,
   type RequestSpec,
+  type ResumeDecision,
+  type ResumeDecisionReason,
   type ResumeFacts,
   type ResumeReason,
   type ResumeSafety,
@@ -97,6 +107,9 @@ import {
   type TaskDetail,
   type TaskEvent,
   type TaskEventKind,
+  type TaskHistory,
+  type TaskHistoryEvent,
+  type TaskHistorySample,
   type TaskStatus,
   type TaskTargetDetail,
   type TaskTrend,
@@ -122,6 +135,8 @@ const MAX_STDERR_BUFFER = 64 * 1024
 const STDERR_RING_LINES = 50
 /** Bounded in-memory task mirror fed by `task` notifications. */
 const MAX_TASK_MIRROR = 500
+/** Kernel `history` eventsLimit clamp (spec §1.6). */
+const MAX_HISTORY_EVENT_LIMIT = 2000
 /** A kernel that stayed ready this long resets the rapid-crash counter. */
 const STABLE_UPTIME_MS = 10_000
 
@@ -150,6 +165,7 @@ const DEFAULT_TIMINGS: KernelTimings = {
     start: 30_000,
     list: 30_000,
     get: 30_000,
+    history: 30_000,
     control: 30_000,
     stats: 30_000,
     shutdown: 5_000,
@@ -375,6 +391,23 @@ const RESUME_REASONS: readonly ResumeReason[] = [
   'no-validators',
   'no-range-support',
 ]
+const RESUME_DECISIONS: readonly ResumeDecision[] = ['accepted', 'rejected', 'not-attempted']
+const RESUME_DECISION_REASONS: readonly ResumeDecisionReason[] = [
+  'etag',
+  'last-modified',
+  'url',
+  'final-url',
+  'disabled',
+  'size-mismatch',
+  'validators-mismatch',
+  'url-mismatch',
+  'file-name-mismatch',
+  'ranges-invalid',
+  'version-mismatch',
+  'state-corrupt',
+  'part-missing',
+  'part-truncated',
+]
 const SIGNED_URL_SOURCES: readonly SignedUrlSource[] = [
   'aws-sigv4',
   'aws-sigv2',
@@ -404,7 +437,7 @@ function pickOrNull<T extends string>(value: unknown, allowed: readonly T[]): T 
 
 /**
  * The actionable error shown when a kernel reports a protocol this plugin does
- * not speak. Protocol 1 binaries are not compatible with 0.2.0.
+ * not speak. Protocol 1 binaries are not compatible with 0.2.2.
  */
 export function protocolMismatchMessage(
   reported: number,
@@ -417,9 +450,9 @@ export function protocolMismatchMessage(
     : ''
   return (
     `The RDM kernel at "${binaryPath}" reported ${seen} in its ready frame${version}, ` +
-    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.2.0). ` +
+    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.2.2). ` +
     'Rebuild the kernel for this plugin with "bash scripts/dev-build.sh kernel" ' +
-    '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a 0.2.0 kernel.'
+    '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a 0.2.2 kernel.'
   )
 }
 
@@ -605,6 +638,10 @@ export function normalizeRequestSpec(input: unknown): RequestSpec {
   if (connections !== undefined) {
     spec.connections = clampInt(connections, MIN_CONNECTIONS, MAX_CONNECTIONS)
   }
+  const maxConnections = optionalNumber(raw.maxConnections, 'maxConnections')
+  if (maxConnections !== undefined) {
+    spec.maxConnections = clampInt(maxConnections, MIN_CONNECTIONS, MAX_CONNECTIONS)
+  }
   const chunkSizeBytes = optionalNumber(raw.chunkSizeBytes, 'chunkSizeBytes')
   if (chunkSizeBytes !== undefined) {
     spec.chunkSizeBytes =
@@ -746,6 +783,15 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     rawSessionId !== null && rawSessionId !== '' && rawSessionId.length <= MAX_SESSION_ID_LENGTH
       ? rawSessionId
       : null
+  const connections = uint(record.connections, 0)
+  const resumedBytes = uint(record.resumedBytes, 0)
+  // 0.2.2: this-run bytes exclude what was adopted from `.part`. Older kernels
+  // do not report the field; their rates are absolute progress, so fall back to
+  // `downloaded - resumedBytes` (the same baseline the kernel uses).
+  const transferredBytes = uint(record.transferredBytes, Math.max(0, downloaded - resumedBytes))
+  // 0.2.2: the requested worker count, distinct from `connections` (the initial
+  // worker population); older kernels only know the planned connections value.
+  const requestedConnections = uint(record.requestedConnections, connections)
   return {
     id,
     sessionId,
@@ -757,6 +803,7 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     path: maybeStr(record.path),
     status,
     downloaded,
+    transferredBytes,
     total,
     percent,
     speedBps: num(record.speedBps, 0),
@@ -771,9 +818,13 @@ export function normalizeTaskView(raw: unknown): TaskView | null {
     stalledMs: uint(record.stalledMs, 0),
     activeWorkers: uint(record.activeWorkers, 0),
     peakWorkers: uint(record.peakWorkers, 0),
-    connections: uint(record.connections, 0),
+    connections,
+    requestedConnections,
+    maxConnections: clampInt(uint(record.maxConnections, DEFAULT_MAX_CONNECTIONS), MIN_CONNECTIONS, MAX_CONNECTIONS),
+    targetWorkers: uint(record.targetWorkers, 0),
     chunkSize: maybeNum(record.chunkSize),
     resumedChunks: uint(record.resumedChunks, 0),
+    resumedBytes,
     rangeSupported: maybeBool(record.rangeSupported),
     resumable: bool(record.resumable, false),
     resumeSafety: pickOrNull(record.resumeSafety, RESUME_SAFETIES),
@@ -812,6 +863,125 @@ export function normalizeTaskEvent(raw: unknown): TaskEvent | null {
     chunk: maybeNum(record.chunk),
     attempt: maybeNum(record.attempt),
     delayMs: maybeNum(record.delayMs),
+  }
+}
+
+/** Normalize one recorded telemetry sample (0.3.0). */
+export function normalizeTaskHistorySample(raw: unknown): TaskHistorySample | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  // The writer appends one `{"t":...,"truncated":true}` marker when it hits the
+  // kernel sample cap; the reader reports `truncated` separately, so the marker
+  // itself is not a usable sample.
+  if (record.truncated === true) return null
+  const at = maybeNum(record.t)
+  if (at === null) return null
+  return {
+    t: uint(at, 0),
+    bytes: uint(record.bytes, 0),
+    bps: num(record.bps, 0),
+    w1Bps: num(record.w1Bps, 0),
+    w5Bps: num(record.w5Bps, 0),
+    w30Bps: num(record.w30Bps, 0),
+    w300Bps: num(record.w300Bps, 0),
+    workers: uint(record.workers, 0),
+    peakWorkers: uint(record.peakWorkers, 0),
+    stalledMs: uint(record.stalledMs, 0),
+  }
+}
+
+/** Normalize one recorded task event (0.3.0). */
+export function normalizeTaskHistoryEvent(raw: unknown): TaskHistoryEvent | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  const at = maybeNum(record.t)
+  if (at === null) return null
+  const kind = TASK_EVENT_KINDS.includes(record.kind as TaskEventKind)
+    ? (record.kind as TaskEventKind)
+    : 'info'
+  return {
+    t: uint(at, 0),
+    seq: uint(record.seq, 0),
+    kind,
+    message: maybeStr(record.message),
+    chunk: maybeNum(record.chunk),
+    attempt: maybeNum(record.attempt),
+    delayMs: maybeNum(record.delayMs),
+  }
+}
+
+/** Normalize one run-meta record from the persisted history (0.2.2). */
+export function normalizeHistoryMeta(raw: unknown): HistoryMeta | null {
+  const record = asRecord(raw)
+  if (record === null) return null
+  // Only meta records carry a kind; anything else is not a meta record.
+  if (record.kind !== undefined && record.kind !== 'meta') return null
+  return {
+    kind: 'meta',
+    t: uint(record.t, 0),
+    kernelVersion: str(record.kernelVersion),
+    pid: uint(record.pid, 0),
+    taskId: str(record.taskId),
+    run: uint(record.run, 0),
+    phase: str(record.phase),
+    url: str(record.url),
+    fileName: str(record.fileName),
+    totalBytes: maybeNum(record.totalBytes),
+    chunkSize: maybeNum(record.chunkSize),
+    chunks: uint(record.chunks, 0),
+    requestedConnections: uint(record.requestedConnections, 0),
+    initialWorkers: uint(record.initialWorkers, 0),
+    maxConnections: clampInt(uint(record.maxConnections, DEFAULT_MAX_CONNECTIONS), MIN_CONNECTIONS, MAX_CONNECTIONS),
+    resumedBytes: uint(record.resumedBytes, 0),
+    resumeDecision: pick(record.resumeDecision, RESUME_DECISIONS, 'not-attempted'),
+    resumeReason: pickOrNull(record.resumeReason, RESUME_DECISION_REASONS),
+  }
+}
+
+/** Deduped `"<kernelVersion>@<pid>"` build tags from the meta records (0.2.2). */
+function historyBuilds(meta: HistoryMeta[]): string[] {
+  const builds: string[] = []
+  for (const entry of meta) {
+    if (entry.kernelVersion === '') continue
+    const build = `${entry.kernelVersion}@${entry.pid}`
+    if (!builds.includes(build)) builds.push(build)
+  }
+  return builds
+}
+
+/**
+ * Normalize a `history` result: every field always present (including `meta`
+ * and the derived `builds`), arrays bounded, and paths/values coerced
+ * defensively for older kernels (a 0.2.1 recording has no meta records).
+ */
+export function normalizeTaskHistory(raw: unknown, fallbackTaskId = ''): TaskHistory {
+  const record = asRecord(raw) ?? {}
+  const rawSamples = Array.isArray(record.samples) ? record.samples : []
+  const samples = rawSamples
+    .map((entry) => normalizeTaskHistorySample(entry))
+    .filter((entry): entry is TaskHistorySample => entry !== null)
+    .slice(0, MAX_HISTORY_SAMPLES)
+  const rawEvents = Array.isArray(record.events) ? record.events : []
+  const events = rawEvents
+    .map((entry) => normalizeTaskHistoryEvent(entry))
+    .filter((entry): entry is TaskHistoryEvent => entry !== null)
+    .slice(0, MAX_HISTORY_EVENT_LIMIT)
+  const rawMeta = Array.isArray(record.meta) ? record.meta : []
+  const meta = rawMeta
+    .map((entry) => normalizeHistoryMeta(entry))
+    .filter((entry): entry is HistoryMeta => entry !== null)
+    .slice(-MAX_HISTORY_META)
+  return {
+    taskId: str(record.taskId) !== '' ? str(record.taskId) : fallbackTaskId,
+    samplesPath: maybeStr(record.samplesPath),
+    eventsPath: maybeStr(record.eventsPath),
+    samples,
+    events,
+    meta,
+    builds: historyBuilds(meta),
+    totalSamples: uint(record.totalSamples, samples.length),
+    totalEvents: uint(record.totalEvents, events.length),
+    truncated: bool(record.truncated, false),
   }
 }
 
@@ -1051,6 +1221,8 @@ function normalizeResumeStateDetail(raw: unknown): ResumeStateDetail {
     resumedChunks: uint(record.resumedChunks, 0),
     resumedBytes: uint(record.resumedBytes, 0),
     validatorsMatched: maybeBool(record.validatorsMatched),
+    resumeDecision: pick(record.resumeDecision, RESUME_DECISIONS, 'not-attempted'),
+    resumeReason: pickOrNull(record.resumeReason, RESUME_DECISION_REASONS),
   }
 }
 
@@ -1139,6 +1311,7 @@ function normalizeInitializeConfig(raw: unknown): InitializeConfig {
   return {
     defaultDir: str(record.defaultDir),
     connections: uint(record.connections, DEFAULT_CONNECTIONS),
+    maxConnections: clampInt(uint(record.maxConnections, DEFAULT_MAX_CONNECTIONS), MIN_CONNECTIONS, MAX_CONNECTIONS),
     chunkSizeBytes: uint(record.chunkSizeBytes, 0),
     speedLimitBps: uint(record.speedLimitBps, 0),
     maxAttempts: uint(record.maxAttempts, DEFAULT_MAX_ATTEMPTS),
@@ -1490,6 +1663,7 @@ export class KernelService {
       defaultDir:
         this.config.defaultDir !== "" ? this.config.defaultDir : path.join(this.activeDataDir, "downloads"),
       connections: clampInt(this.config.connections, MIN_CONNECTIONS, MAX_CONNECTIONS),
+      maxConnections: clampInt(this.config.maxConnections, MIN_CONNECTIONS, MAX_CONNECTIONS),
       chunkSizeBytes,
       speedLimitBps: this.config.speedLimitBps,
       maxAttempts: this.config.maxAttempts,
@@ -1954,6 +2128,44 @@ export class KernelService {
       detail: normalizeTaskDetail(record?.detail),
       events: normalizedEvents,
     }
+  }
+
+  /**
+   * Read the persisted per-sample / per-event recording for one task (0.3.0).
+   *
+   * `limit` bounds the returned sample page (1..{@link MAX_HISTORY_SAMPLES});
+   * events are included unless `includeEvents` is explicitly `false`. A task
+   * that was never recorded returns empty arrays and `null` paths; an unknown
+   * task rejects with `not_found`. The normalized result also carries the
+   * per-run `meta` records (bounded to the last {@link MAX_HISTORY_META}) and
+   * the deduped `builds` tags derived from them (0.2.2).
+   *
+   * By default the kernel returns an evenly-downsampled review series and
+   * ignores `offset`; a caller that supplied an `offset` (including `0`) wants
+   * a literal page, so this sends `raw: true` to make `offset`/`limit` exact.
+   */
+  async history(
+    id: string,
+    params: Omit<HistoryParams, 'id'> = {},
+    signal?: AbortSignal,
+  ): Promise<TaskHistory> {
+    const taskId = normalizeTaskId(id)
+    const request: HistoryParams = {
+      id: taskId,
+      offset: Math.max(0, Math.round(num(params.offset, 0))),
+      limit: clampInt(num(params.limit, DEFAULT_HISTORY_SAMPLES), 1, MAX_HISTORY_SAMPLES),
+      includeEvents: params.includeEvents !== false,
+      eventsLimit: clampInt(num(params.eventsLimit, DEFAULT_HISTORY_EVENTS), 1, MAX_HISTORY_EVENT_LIMIT),
+    }
+    // Literal offset/limit paging exists only on the raw recorded series; the
+    // review series is evenly downsampled and ignores `offset`.
+    if (params.offset !== undefined) request.raw = true
+    const result = await this.request<HistoryResult>(
+      'history',
+      request as unknown as Record<string, unknown>,
+      signal,
+    )
+    return normalizeTaskHistory(result, taskId)
   }
 
   /**

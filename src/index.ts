@@ -2,7 +2,7 @@
  * Host half of the `dsh-rdm` plugin.
  *
  * Wires the resident RDM kernel service to the three host surfaces:
- *  - five model-facing `rdm_*` tools ({@link registerRdmTools});
+ *  - six model-facing `rdm_*` tools ({@link registerRdmTools});
  *  - the review panels' JSON route ({@link registerRdmHostApi});
  *  - one system-prompt section that routes every download through RDM.
  *
@@ -37,7 +37,7 @@ export const PROMPT_SECTION_NAME = 'dsh-rdm:downloads'
  */
 export const PROMPT_SECTION_TEXT = `## File downloads — use the rdm_* tools
 
-Use the rdm_* tools for every HTTP(S) file download instead of shell downloaders (curl/wget/PowerShell). When the source is unknown, rdm_probe first; rdm_download returns a live task id, rdm_control pauses/resumes/cancels/removes it, and rdm_wait long-polls instead of a tight loop. Their receipts are structured key=value lines — quote them and do not parse human prose; "-" means unknown. Downloads persist across turns, so check rdm_tasks before re-downloading. Use a shell downloader only when the user explicitly demands one.`
+Use the rdm_* tools for every HTTP(S) file download instead of shell downloaders (curl/wget/PowerShell). When the source is unknown, rdm_probe first; rdm_download returns a live task id, rdm_control pauses/resumes/cancels/removes it, and rdm_wait long-polls instead of a tight loop. The kernel records per-sample telemetry to disk; read it back with rdm_history to replay a transfer. Their receipts are structured key=value lines — quote them and do not parse human prose; "-" means unknown. Downloads persist across turns, so check rdm_tasks before re-downloading. Use a shell downloader only when the user explicitly demands one.`
 
 // Re-export the tool surface, protocol pin and pure receipt helpers so tests
 // and docs can inspect them from the built host bundle (`lib/index.js`).
@@ -52,6 +52,7 @@ export {
   formatRate,
   renderControlReceipt,
   renderDownloadReceipt,
+  renderHistoryReceipt,
   renderProbeReceipt,
   renderTaskDetailReceipt,
   renderTaskEventLine,
@@ -61,9 +62,11 @@ export {
   sessionIdFromExec,
 } from './tools'
 export {
+  KernelError,
   normalizeAggregate,
   normalizeServerFacts,
   normalizeTaskDetail,
+  normalizeTaskHistory,
   normalizeTaskView,
   protocolMismatchMessage,
 } from './kernel-client'

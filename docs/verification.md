@@ -1,5 +1,19 @@
 # dsh-rdm 0.2.0 — verification report
 
+> **Historical report.** This file documents the **0.2.0** verification run and its
+> artifacts (0.2.0 kernel sha256 `068319182e4a5cd1f6f81db8d0b5b5c2dc3838824f6dd991eb90bd8de4ca5406`,
+> 4,974,080 bytes). Later passes are reported elsewhere:
+> **0.2.1** gate/artifacts (kernel sha256
+> `94AB6DCCB2B343B5CAFE4ABB5B51F73856E5CF2CCD1D1546EE8B77B33B612FDE`, 5,059,072
+> bytes) in [`OPTIMIZATION.md`](OPTIMIZATION.md) §10 and
+> [`design/0.2.1-real-data-fixes.md`](design/0.2.1-real-data-fixes.md); **0.2.2**
+> (kernel 0.2.2, package 0.2.2) in [`OPTIMIZATION.md`](OPTIMIZATION.md) §11 and
+> [`design/0.2.2-live-modelscope-pass.md`](design/0.2.2-live-modelscope-pass.md)
+> — final artifacts kernel sha256
+> `B322863E1BDBE342499BCCD9379B66823640C445165F9D7540053610BAFEAC77`, 5,101,056
+> bytes; gate 146/0 cargo tests, 205/205 e2e checks, 43 receipt checks, 244/244
+> legacy-matrix checks, 64/64 fixture checks.
+
 Status: **PASS** on the release contract
 ([`docs/design/0.2.0-agent-native.md`](design/0.2.0-agent-native.md) §8), with one
 documented environment limitation: the live in-profile install check could not be

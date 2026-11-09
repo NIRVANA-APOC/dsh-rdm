@@ -1,0 +1,3 @@
+==============================================================================
+D:\llm\models\coder-iq1_m\Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf  size=29608446496  keys=1  version=3  tensors=1223
+   MD5(head4MB+tail4MB) = 710315b7e99f2fc1d276903ff26b67a4

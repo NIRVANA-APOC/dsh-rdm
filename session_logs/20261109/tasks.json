@@ -1,0 +1,699 @@
+{
+  "exported": "2026-11-09T12:21:53+08:00",
+  "session": "session-cf09812a-9a90-43db-b42c-827303a6c053",
+  "kernel": {
+    "version": "1.1.0",
+    "builds": [
+      {
+        "pid": 53520,
+        "from": "2026-11-09T12:05:33+08:00",
+        "to": "2026-11-09T12:12:09+08:00",
+        "note": "old build: no <data-dir>/history, rdm_history -> unknown method history, fixed worker pool"
+      },
+      {
+        "pid": 59852,
+        "from": "2026-11-09T12:13:00+08:00",
+        "note": "new build (bin/win32-x64/rdm-kernel.exe, 5,059,072 B, mtime 12:17:53): history/*.jsonl, targetWorkers/resumedBytes fields, controller grow/revert/pool rebuild/shrink"
+      }
+    ],
+    "data_dir": "C:\\Users\\nirvana\\Documents\\deepseek-harness\\dsh-rdm\\.rdm-data"
+  },
+  "coverage": {
+    "kernel_history": {
+      "t_248a5911009cc18d": {
+        "samples": 0,
+        "events": 0,
+        "from": null,
+        "to": null
+      },
+      "t_7359f357ea3922cb": {
+        "samples": 2,
+        "events": 9,
+        "from": "2026-11-09T12:12:39.951+08:00",
+        "to": "2026-11-09T12:12:40.051+08:00"
+      },
+      "t_6a665d4e17fa3100": {
+        "samples": 376,
+        "events": 20,
+        "from": "2026-11-09T12:12:39.918+08:00",
+        "to": "2026-11-09T12:13:38.092+08:00"
+      },
+      "t_ebda50bb99a77a14": {
+        "samples": 2097,
+        "events": 44,
+        "from": "2026-11-09T12:13:42.684+08:00",
+        "to": "2026-11-09T12:19:06.767+08:00"
+      }
+    },
+    "external_sampler": {
+      "interval_s": 2,
+      "from": "2026-11-09T12:14:05+08:00",
+      "to": "2026-11-09T12:20:16+08:00",
+      "rows": 740,
+      "file": "samples.jsonl"
+    },
+    "gaps": [
+      "t_248a5911009cc18d (mmproj): no kernel history (finished before the new build); aggregates only",
+      "t_7359f357ea3922cb (shard 2): 2 samples, both after the 12:12:09 restart; the pre-restart transfer has no series",
+      "t_6a665d4e17fa3100 (shard 1 attempt 1): 376 samples, from the restart on (12:12:39-12:13:38); the 12:05:50-12:12:09 phase has aggregates only (avg 5.7 MiB/s, peak 13.4, 12 workers, origin-slow)"
+    ]
+  },
+  "tasks": [
+    {
+      "spec": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+        "dir": "D:\\llm\\models\\coder-iq1_m",
+        "fileName": null,
+        "connections": 8,
+        "chunkSizeBytes": 0,
+        "headers": {},
+        "cookie": null,
+        "referer": null,
+        "userAgent": null,
+        "expectedSha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
+        "speedLimitBps": 0,
+        "resume": true,
+        "singleStream": false,
+        "proxy": null,
+        "insecure": false,
+        "maxAttempts": 6,
+        "fsyncOnComplete": false,
+        "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053"
+      },
+      "id": "t_248a5911009cc18d",
+      "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053",
+      "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "host": "www.modelscope.cn",
+      "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/b1/a8/2259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0?filename=mmproj-Qwen3.8-Flash-Next-BF16.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+      "fileName": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "dir": "D:\\llm\\models\\coder-iq1_m",
+      "path": "D:\\llm\\models\\coder-iq1_m\\mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+      "status": "completed",
+      "downloaded": 907543008,
+      "total": 907543008,
+      "percent": 100,
+      "speedBps": 0,
+      "speed1sBps": null,
+      "speed5sBps": null,
+      "speed30sBps": null,
+      "speed300sBps": null,
+      "avgBps": 41791444,
+      "peakBps": 59475668,
+      "etaSecs": null,
+      "etaConfidence": "unknown",
+      "stalledMs": 0,
+      "activeWorkers": 0,
+      "peakWorkers": 8,
+      "connections": 8,
+      "chunkSize": 8388608,
+      "resumedChunks": 0,
+      "rangeSupported": true,
+      "resumable": true,
+      "resumeSafety": "strong",
+      "expectedSha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
+      "sha256": "b1a82259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0",
+      "verified": true,
+      "error": null,
+      "retries": 0,
+      "createdAt": 1794197149854,
+      "startedAt": 1794197149855,
+      "finishedAt": 1794197171571,
+      "elapsedMs": 21716,
+      "signedUrlExpiresAt": null,
+      "tlsNotAfter": 1803112590000,
+      "server": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+        "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/b1/a8/2259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0?filename=mmproj-Qwen3.8-Flash-Next-BF16.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+        "host": "www.modelscope.cn",
+        "httpVersion": "HTTP/1.1",
+        "status": 200,
+        "fileName": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+        "fileNameSource": "content-disposition",
+        "totalBytes": 907543008,
+        "contentType": "application/octet-stream",
+        "contentEncoding": null,
+        "contentDisposition": "attachment;filename=\"mmproj-Qwen3.8-Flash-Next-BF16.gguf\"",
+        "range": {
+          "supported": true,
+          "acceptRanges": "bytes",
+          "ifRange": true,
+          "probedBy": "range-get",
+          "probeStatus": 206,
+          "probeBytes": 64
+        },
+        "validators": {
+          "etag": "\"0EFB2F1FFEF56D53393C6373A4DF5850-354\"",
+          "strongEtag": true,
+          "lastModified": "Tue, 15 Sep 2026 19:19:38 GMT"
+        },
+        "resume": {
+          "possible": true,
+          "safety": "strong",
+          "reason": "strong-etag"
+        },
+        "signedUrl": {
+          "signed": false,
+          "expiresAt": null,
+          "expiresInSecs": null,
+          "source": "unknown",
+          "state": "unknown"
+        },
+        "tls": {
+          "https": true,
+          "notAfter": 1803112590000,
+          "expiresInSecs": 8915440,
+          "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+          "subject": "*.modelscope.cn",
+          "state": "valid"
+        },
+        "redirects": [
+          {
+            "status": 302,
+            "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/b1/a8/2259702816a5330d7bd7607cd9676b11780e79ff7348c21103ff3ce49bd0?filename=mmproj-Qwen3.8-Flash-Next-BF16.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>"
+          }
+        ],
+        "headers": {
+          "server": "Tengine",
+          "date": "Wed, 16 Sep 2026 06:50:29 GMT",
+          "cacheControl": null,
+          "expires": null,
+          "vary": null
+        },
+        "rateLimit": {
+          "retryAfterSecs": null,
+          "limit": null,
+          "remaining": null
+        },
+        "timing": {
+          "probeMs": 907,
+          "ttfbMs": 130,
+          "sampleBps": null
+        },
+        "checksum": {
+          "contentDigest": null,
+          "contentMd5": null,
+          "sha256": null,
+          "crc32c": null
+        },
+        "warnings": [
+          "redirected"
+        ],
+        "recommendation": {
+          "start": "now",
+          "connections": 8,
+          "chunkSizeBytes": 8388608,
+          "singleStream": false,
+          "reason": "ranges+strong-etag",
+          "verify": "unavailable"
+        },
+        "origin": null
+      }
+    },
+    {
+      "spec": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+        "dir": "D:\\llm\\models\\coder-iq1_m",
+        "fileName": null,
+        "connections": 12,
+        "maxConnections": 128,
+        "chunkSizeBytes": 0,
+        "headers": {},
+        "cookie": null,
+        "referer": null,
+        "userAgent": null,
+        "expectedSha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113",
+        "speedLimitBps": 0,
+        "resume": true,
+        "singleStream": false,
+        "proxy": null,
+        "insecure": false,
+        "maxAttempts": 6,
+        "fsyncOnComplete": false,
+        "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053"
+      },
+      "id": "t_7359f357ea3922cb",
+      "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053",
+      "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+      "host": "www.modelscope.cn",
+      "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/31/6b/46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+      "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+      "dir": "D:\\llm\\models\\coder-iq1_m",
+      "path": "D:\\llm\\models\\coder-iq1_m\\Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+      "status": "completed",
+      "downloaded": 28800138432,
+      "total": 28800138432,
+      "percent": 100,
+      "speedBps": 0,
+      "speed1sBps": null,
+      "speed5sBps": null,
+      "speed30sBps": 0,
+      "speed300sBps": 0,
+      "avgBps": 1902254850,
+      "peakBps": 93222172,
+      "etaSecs": null,
+      "etaConfidence": "unknown",
+      "stalledMs": 0,
+      "activeWorkers": 0,
+      "peakWorkers": 12,
+      "targetWorkers": 12,
+      "connections": 12,
+      "maxConnections": 128,
+      "chunkSize": 8388608,
+      "resumedChunks": 3433,
+      "resumedBytes": 28798211398,
+      "rangeSupported": true,
+      "resumable": true,
+      "resumeSafety": "strong",
+      "expectedSha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113",
+      "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113",
+      "verified": true,
+      "error": null,
+      "retries": 0,
+      "createdAt": 1794197149577,
+      "startedAt": 1794197149578,
+      "finishedAt": 1794197574691,
+      "elapsedMs": 15140,
+      "signedUrlExpiresAt": null,
+      "tlsNotAfter": 1803112590000,
+      "server": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+        "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/31/6b/46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+        "host": "www.modelscope.cn",
+        "httpVersion": "HTTP/1.1",
+        "status": 200,
+        "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+        "fileNameSource": "content-disposition",
+        "totalBytes": 28800138432,
+        "contentType": "application/octet-stream",
+        "contentEncoding": null,
+        "contentDisposition": "attachment;filename=\"Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf\"",
+        "range": {
+          "supported": true,
+          "acceptRanges": "bytes",
+          "ifRange": true,
+          "probedBy": "range-get",
+          "probeStatus": 206,
+          "probeBytes": 64
+        },
+        "validators": {
+          "etag": "\"F99F51DAC9F49027D86E380D6090E845-400\"",
+          "strongEtag": true,
+          "lastModified": "Tue, 15 Sep 2026 19:13:03 GMT"
+        },
+        "resume": {
+          "possible": true,
+          "safety": "strong",
+          "reason": "strong-etag"
+        },
+        "signedUrl": {
+          "signed": true,
+          "expiresAt": null,
+          "expiresInSecs": null,
+          "source": "unknown",
+          "state": "unknown"
+        },
+        "tls": {
+          "https": true,
+          "notAfter": 1803112590000,
+          "expiresInSecs": 8915030,
+          "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+          "subject": "*.modelscope.cn",
+          "state": "valid"
+        },
+        "redirects": [
+          {
+            "status": 302,
+            "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/31/6b/46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>"
+          }
+        ],
+        "headers": {
+          "server": "Tengine",
+          "date": "Wed, 16 Sep 2026 06:50:30 GMT",
+          "cacheControl": null,
+          "expires": null,
+          "vary": null
+        },
+        "rateLimit": {
+          "retryAfterSecs": null,
+          "limit": null,
+          "remaining": null
+        },
+        "timing": {
+          "probeMs": 298,
+          "ttfbMs": 96,
+          "sampleBps": null
+        },
+        "checksum": {
+          "contentDigest": null,
+          "contentMd5": null,
+          "sha256": null,
+          "crc32c": null
+        },
+        "warnings": [
+          "redirected"
+        ],
+        "recommendation": {
+          "start": "now",
+          "connections": 8,
+          "chunkSizeBytes": 8388608,
+          "singleStream": false,
+          "reason": "ranges+strong-etag",
+          "verify": "unavailable"
+        },
+        "origin": {
+          "known": true,
+          "attempts": 1,
+          "completed": 1,
+          "medianBps": 41791444,
+          "bestBps": 41791444,
+          "lastError": null,
+          "lastAt": 1794197171571
+        }
+      }
+    },
+    {
+      "spec": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "dir": "D:\\llm\\models\\coder-iq1_m",
+        "fileName": null,
+        "connections": 12,
+        "maxConnections": 128,
+        "chunkSizeBytes": 0,
+        "headers": {},
+        "cookie": null,
+        "referer": null,
+        "userAgent": null,
+        "expectedSha256": "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad",
+        "speedLimitBps": 0,
+        "resume": true,
+        "singleStream": false,
+        "proxy": null,
+        "insecure": false,
+        "maxAttempts": 6,
+        "fsyncOnComplete": false,
+        "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053"
+      },
+      "id": "t_6a665d4e17fa3100",
+      "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053",
+      "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "host": "www.modelscope.cn",
+      "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+      "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "dir": "D:\\llm\\models\\coder-iq1_m",
+      "path": "D:\\llm\\models\\coder-iq1_m\\Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "status": "cancelled",
+      "downloaded": 3676430303,
+      "total": 29608446496,
+      "percent": 12,
+      "speedBps": 0,
+      "speed1sBps": 59024230,
+      "speed5sBps": 53507914,
+      "speed30sBps": 35103780,
+      "speed300sBps": 22481158,
+      "avgBps": 62776284,
+      "peakBps": 59857697,
+      "etaSecs": null,
+      "etaConfidence": "unknown",
+      "stalledMs": 0,
+      "activeWorkers": 0,
+      "peakWorkers": 20,
+      "targetWorkers": 18,
+      "connections": 12,
+      "maxConnections": 128,
+      "chunkSize": 8388608,
+      "resumedChunks": 276,
+      "resumedBytes": 2359836648,
+      "rangeSupported": true,
+      "resumable": true,
+      "resumeSafety": "strong",
+      "expectedSha256": "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad",
+      "sha256": null,
+      "verified": null,
+      "error": null,
+      "retries": 0,
+      "createdAt": 1794197149299,
+      "startedAt": 1794197149300,
+      "finishedAt": 1794197618114,
+      "elapsedMs": 58564,
+      "signedUrlExpiresAt": null,
+      "tlsNotAfter": 1803112590000,
+      "server": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+        "host": "www.modelscope.cn",
+        "httpVersion": "HTTP/1.1",
+        "status": 200,
+        "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "fileNameSource": "content-disposition",
+        "totalBytes": 29608446496,
+        "contentType": "application/octet-stream",
+        "contentEncoding": null,
+        "contentDisposition": "attachment;filename=\"Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf\"",
+        "range": {
+          "supported": true,
+          "acceptRanges": "bytes",
+          "ifRange": true,
+          "probedBy": "range-get",
+          "probeStatus": 206,
+          "probeBytes": 64
+        },
+        "validators": {
+          "etag": "\"1CF45D726E0E2E1E9274A3AE8E4CF9F1-400\"",
+          "strongEtag": true,
+          "lastModified": "Mon, 19 Oct 2026 20:14:52 GMT"
+        },
+        "resume": {
+          "possible": true,
+          "safety": "strong",
+          "reason": "strong-etag"
+        },
+        "signedUrl": {
+          "signed": true,
+          "expiresAt": null,
+          "expiresInSecs": null,
+          "source": "unknown",
+          "state": "unknown"
+        },
+        "tls": {
+          "https": true,
+          "notAfter": 1803112590000,
+          "expiresInSecs": 8915030,
+          "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+          "subject": "*.modelscope.cn",
+          "state": "valid"
+        },
+        "redirects": [
+          {
+            "status": 302,
+            "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>"
+          }
+        ],
+        "headers": {
+          "server": "Tengine",
+          "date": "Tue, 20 Oct 2026 01:47:57 GMT",
+          "cacheControl": null,
+          "expires": null,
+          "vary": null
+        },
+        "rateLimit": {
+          "retryAfterSecs": null,
+          "limit": null,
+          "remaining": null
+        },
+        "timing": {
+          "probeMs": 265,
+          "ttfbMs": 97,
+          "sampleBps": null
+        },
+        "checksum": {
+          "contentDigest": null,
+          "contentMd5": null,
+          "sha256": null,
+          "crc32c": null
+        },
+        "warnings": [
+          "redirected"
+        ],
+        "recommendation": {
+          "start": "now",
+          "connections": 8,
+          "chunkSizeBytes": 8388608,
+          "singleStream": false,
+          "reason": "ranges+strong-etag",
+          "verify": "unavailable"
+        },
+        "origin": {
+          "known": true,
+          "attempts": 1,
+          "completed": 1,
+          "medianBps": 41791444,
+          "bestBps": 41791444,
+          "lastError": null,
+          "lastAt": 1794197171571
+        }
+      }
+    },
+    {
+      "spec": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "dir": "D:\\llm\\models\\coder-iq1_m",
+        "fileName": null,
+        "connections": 16,
+        "maxConnections": 128,
+        "chunkSizeBytes": 0,
+        "headers": {},
+        "cookie": null,
+        "referer": null,
+        "userAgent": null,
+        "expectedSha256": "bfa3644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211",
+        "speedLimitBps": 0,
+        "resume": true,
+        "singleStream": false,
+        "proxy": null,
+        "insecure": false,
+        "maxAttempts": 6,
+        "fsyncOnComplete": false,
+        "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053"
+      },
+      "id": "t_ebda50bb99a77a14",
+      "sessionId": "session-cf09812a-9a90-43db-b42c-827303a6c053",
+      "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "host": "www.modelscope.cn",
+      "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+      "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "dir": "D:\\llm\\models\\coder-iq1_m",
+      "path": "D:\\llm\\models\\coder-iq1_m\\Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+      "status": "completed",
+      "downloaded": 29608446496,
+      "total": 29608446496,
+      "percent": 100,
+      "speedBps": 0,
+      "speed1sBps": null,
+      "speed5sBps": null,
+      "speed30sBps": 5957333,
+      "speed300sBps": 85220394,
+      "avgBps": 87223994,
+      "peakBps": 9292890994,
+      "etaSecs": null,
+      "etaConfidence": "unknown",
+      "stalledMs": 0,
+      "activeWorkers": 0,
+      "peakWorkers": 102,
+      "targetWorkers": 70,
+      "connections": 16,
+      "maxConnections": 128,
+      "chunkSize": 8388608,
+      "resumedChunks": 422,
+      "resumedBytes": 3676430303,
+      "rangeSupported": true,
+      "resumable": true,
+      "resumeSafety": "strong",
+      "expectedSha256": "bfa3644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211",
+      "sha256": "bfa3644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211",
+      "verified": true,
+      "error": null,
+      "retries": 2,
+      "createdAt": 1794197622287,
+      "startedAt": 1794197622288,
+      "finishedAt": 1794197961741,
+      "elapsedMs": 339453,
+      "signedUrlExpiresAt": null,
+      "tlsNotAfter": 1803112590000,
+      "server": {
+        "url": "https://www.modelscope.cn/models/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/master/IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "finalUrl": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>",
+        "host": "www.modelscope.cn",
+        "httpVersion": "HTTP/1.1",
+        "status": 200,
+        "fileName": "Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+        "fileNameSource": "content-disposition",
+        "totalBytes": 29608446496,
+        "contentType": "application/octet-stream",
+        "contentEncoding": null,
+        "contentDisposition": "attachment;filename=\"Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf\"",
+        "range": {
+          "supported": true,
+          "acceptRanges": "bytes",
+          "ifRange": true,
+          "probedBy": "range-get",
+          "probeStatus": 206,
+          "probeBytes": 64
+        },
+        "validators": {
+          "etag": "\"1CF45D726E0E2E1E9274A3AE8E4CF9F1-400\"",
+          "strongEtag": true,
+          "lastModified": "Mon, 19 Oct 2026 20:14:52 GMT"
+        },
+        "resume": {
+          "possible": true,
+          "safety": "strong",
+          "reason": "strong-etag"
+        },
+        "signedUrl": {
+          "signed": true,
+          "expiresAt": null,
+          "expiresInSecs": null,
+          "source": "unknown",
+          "state": "unknown"
+        },
+        "tls": {
+          "https": true,
+          "notAfter": 1803112590000,
+          "expiresInSecs": 8914967,
+          "issuer": "GlobalSign GCC R46 OV TLS CA 2025",
+          "subject": "*.modelscope.cn",
+          "state": "valid"
+        },
+        "redirects": [
+          {
+            "status": 302,
+            "url": "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/bf/a3/644db4adfff072fc946c20994f2909d2cf89879d83f80a4c811d4016c211?filename=Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf&namespace=ISTA-DASLab&repository=Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF&revision=master&tag=model&auth_key=<redacted>"
+          }
+        ],
+        "headers": {
+          "server": "Tengine",
+          "date": "Tue, 20 Oct 2026 01:47:57 GMT",
+          "cacheControl": null,
+          "expires": null,
+          "vary": null
+        },
+        "rateLimit": {
+          "retryAfterSecs": null,
+          "limit": null,
+          "remaining": null
+        },
+        "timing": {
+          "probeMs": 294,
+          "ttfbMs": 80,
+          "sampleBps": null
+        },
+        "checksum": {
+          "contentDigest": null,
+          "contentMd5": null,
+          "sha256": null,
+          "crc32c": null
+        },
+        "warnings": [
+          "redirected"
+        ],
+        "recommendation": {
+          "start": "now",
+          "connections": 8,
+          "chunkSizeBytes": 8388608,
+          "singleStream": false,
+          "reason": "ranges+strong-etag",
+          "verify": "unavailable"
+        },
+        "origin": {
+          "known": true,
+          "attempts": 3,
+          "completed": 2,
+          "medianBps": 41791444,
+          "bestBps": 1902254850,
+          "lastError": "cancelled",
+          "lastAt": 1794197618114
+        }
+      }
+    }
+  ]
+}

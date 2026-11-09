@@ -1,16 +1,29 @@
-# dsh-rdm — architecture (0.2.0, agent-native)
+# dsh-rdm — architecture (0.2.2)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
 two review surfaces. Transfers are segmented, resumable, verifiable and
 bandwidth-limited without starting a process per download.
 
-0.2.0 reframes the product: the **agent operates** the downloader through
+0.2.0 reframed the product: the **agent operates** the downloader through
 `rdm_*` tools that return bounded, structured facts; the **human reviews** what
 happened in a global sidebar page and in a session-scoped right sidebar tab.
-The binding contract for this release is
-[design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the kernel wire
-contract is [PROTOCOL.md](../PROTOCOL.md) v2.
+0.2.1 is an additive **real-data pass** on top of that: resume survives volatile
+signed final URLs, the adaptive controller may grow past the requested connection
+count (up to `maxConnections`, default 128), and per-task telemetry/events are
+persisted as JSONL and exposed through `rdm_history`. 0.2.2 is the **live
+ModelScope pass** (kernel identity **0.2.2**, same as the package): recordings gain a per-run meta
+record for build attribution, rate accounting moves to this-run bytes
+(`transferredBytes`), the controller judges growth on aggregate throughput with
+saturation and tail-freeze policies, tail chunks retry fast, and an unknown RPC
+method returns `unsupported_method`. The binding contract for the 0.2.0 framing
+is [design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the 0.2.1
+changes are explained in
+[design/0.2.1-real-data-fixes.md](design/0.2.1-real-data-fixes.md); the 0.2.2
+changes are specified in [`.design/0.2.2-spec.md`](../.design/0.2.2-spec.md) and
+explained in
+[design/0.2.2-live-modelscope-pass.md](design/0.2.2-live-modelscope-pass.md).
+The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md) v2.
 
 ## Goals
 
@@ -42,13 +55,15 @@ dsh-rdm/
 │   ├── OPTIMIZATION.md       # measured kernel work
 │   ├── verification.md       # QA report (verifier-owned; Lead publishes)
 │   ├── design/0.2.0-agent-native.md  # 0.2.0 product/UX/agent contract
+│   ├── design/0.2.1-real-data-fixes.md  # 0.2.1 evidence → fix note
+│   ├── design/0.2.2-live-modelscope-pass.md  # 0.2.2 evidence → fix note
 │   └── research/             # external evidence and reasoning notes
 ├── src/                      # TypeScript host + client sources
 │   ├── index.ts              # host plugin: apply(ctx, config)
 │   ├── config.ts             # schemastery Config (vendored schema lib)
 │   ├── protocol.ts           # TS mirrors of PROTOCOL.md v2 types
 │   ├── kernel-client.ts      # spawn + NDJSON RPC + task mirror + restart + session tagging
-│   ├── tools.ts              # five model-facing tool registrations + line receipts
+│   ├── tools.ts              # six model-facing tool registrations + line receipts
 │   ├── tool-def.ts           # local defineTool: DSL→JSON Schema + arg validation
 │   ├── host-api.ts           # POST /api/dsh-rdm/api browser route (list/get/stats/control)
 │   ├── types.d.ts            # ambient declarations (local typecheck only)
@@ -62,8 +77,9 @@ dsh-rdm/
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml            # rdm-kernel 1.1.0, protocol 2
-│   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine
+│   ├── Cargo.toml            # rdm-kernel 0.2.2, protocol 2 (version unified with package.json since 0.2.2)
+│   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine,
+│   │                         #   controller (adaptive growth/collapse/rebuild), history (JSONL recording)
 │   └── tests/…               # unit + protocol smoke + in-process fixture e2e
 ├── bin/<platform>-<arch>/rdm-kernel[.exe]  # generated kernel binary per platform
 └── scripts/
@@ -78,35 +94,105 @@ dsh-rdm/
 A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
 plugin's protocol.
 
-| Concern | 0.2.0 kernel |
+| Concern | 0.2.2 kernel |
 |---|---|
-| Public API | NDJSON server + task manager (protocol 2) |
+| Public API | NDJSON server + task manager (protocol 2; 0.2.1 additive fields + `history`, 0.2.2 `transferredBytes`/`requestedConnections`/history meta, `unsupported_method`) |
 | GUI/CLI/IPC/MCP/resolver | not present |
 | Probe | manual redirect chain + HEAD/ranged-GET, full `ServerFacts` |
-| Server intelligence | ranges/validators/resume safety, signed-URL expiry (AWS/GCS/Azure/generic), TLS leaf validity, checksum headers, Retry-After, timing |
-| Telemetry | 1s/5s/30s/300s windows, peak/avg, stall, trend, ETA confidence |
+| Server intelligence | ranges/validators/resume safety, signed-URL expiry (AWS/GCS/Azure/generic) plus `auth_key` signed material, TLS leaf validity, checksum headers, Retry-After, timing |
+| Telemetry | 1s/5s/30s/300s windows, peak/avg, stall, trend, ETA confidence; after a resume all rates start from this-run `transferredBytes` |
 | Memory | bounded per-host origin ledger (`origins.json`, ≤256 hosts) |
-| Adaptive controller | compact AIMD + 429/503 pushback |
-| Resume state | `.part` + `.part.json`, `resumeSafety` reported |
+| Adaptive controller | initial population `connections` (requested count reported separately); grows `targetWorkers` up to `maxConnections` (≤128) on **aggregate** throughput, reverts aggregate drops with a 30-tick cooldown, freezes growth at **saturation** (2 kept growths <2 % gain), freezes the target during **tail** drain, rebuilds the HTTP pool on throughput collapse, AIMD/429-503 backoff (`controller.rs`) |
+| Resume state | `.part` + `.part.json`, stable-identity compatibility, `resumeSafety` + `resumeDecision`/`resumeReason`; events report ranges/chunks/bytes separately (chunks from the chunk plan) |
+| Tail finish | stall budget tightens near completion (30 s → 10 s at ≥90 % → 5 s at ≥97 %); tail claims (remaining ≤ target) use a 3 s deadline and `min(250 ms × attempt, 1 s)` retry delay |
+| Recording | append-only `<data-dir>/history/<id>.{samples,events}.jsonl`, with one per-run `kind:"meta"` build/plan record at the head of each run; bounded (≤100k samples, ≤20 meta records read back), redacted, advisory (`history.rs`) |
 | Task store | kernel-owned `tasks/<id>.json` (v2 fields, v1 records load) |
 | Logging | stderr `log` lines |
 | Runtime | tokio, `min(4, cores)` worker threads (≥2) |
 
 Engine flow: `probe (redirects → HEAD → ranged GET fallback, capture server
 facts) → plan (recommendation-aware chunk size/connections, target name, resume
-scan) → chunked worker pool with dynamic chunk queue and AIMD concurrency →
-retries/backoff/Retry-After → SHA-256 verify → atomic rename`. Servers without
-range support transparently fall back to one stream. Pause/cancel are cooperative
-and event-driven; resume state persists every ~500 ms and fsyncs on pause/stop.
-Chunk sizing is automatic by default (4 chunks per connection, 256 KiB..8 MiB).
-Completed files are renamed without fsync by default (`fsyncOnComplete` opts
-back in).
+scan on stable identity, per-run history meta record, reporter baseline from
+resumed bytes) → chunked worker pool with dynamic chunk queue driven by the
+adaptive controller target → retries/backoff/Retry-After → SHA-256 verify →
+atomic rename`. Servers without range support transparently fall back to one
+stream. Pause/cancel are cooperative and event-driven; resume state persists every
+~500 ms and fsyncs on pause/stop. Chunk sizing is automatic by default (4 chunks
+per connection, 256 KiB..8 MiB). Completed files are renamed without fsync by
+default (`fsyncOnComplete` opts back in). While a transfer runs, each reporter
+sample and each task event is appended to the per-task JSONL recording; once the
+remaining chunk count reaches the worker target the tail is drained with a frozen
+target and fast per-claim retries.
+
+### Controller loop
+
+The requested `connections` is the task's initial worker population (the caller's
+original count is reported as `requestedConnections`). A pure state machine
+(`kernel/src/controller.rs`) owns the live `targetWorkers` and decides once per
+sampling window:
+
+* **grow** — when **aggregate** throughput shows headroom and the transfer is not
+  stalled, raise the target by a small step, never past `maxConnections`. The
+  verdict is aggregate-based: a probe is kept unless aggregate throughput drops
+  below 95 % of its pre-probe value (per-connection dilution alone does not
+  revert — that was the 0.2.1 jitter that produced 64→72→64 five times on a flat
+  106 MiB/s plateau);
+* **revert** — when a growth step lowers aggregate throughput, restore the
+  previous target and wait out a **30-tick revert cooldown**;
+* **saturation freeze** — two consecutive kept growths that raise aggregate by
+  less than 2 % freeze growth until throughput falls below 90 % of the frozen
+  peak (or 120 ticks pass), so the controller stops probing at a line ceiling;
+* **collapse rebuild** — when instantaneous throughput falls below 50 % of peak
+  while workers stay pinned (no meaningful stall), rebuild the HTTP connection
+  pool with fresh TCP/TLS and then probe growth; the observed failure mode was
+  32/32 workers with `w5` falling 56.4 → 9.4 MiB/s, which more workers on the same
+  degraded connections cannot fix;
+* **tail freeze** — when remaining claim units are at most the target, hold the
+  target (no grow, shrink or collapse); draining tail chunks is not evidence
+  that the average rate is falling;
+* **backoff** — on 429/503 or `Retry-After` pushback, halve the target.
+
+It also shrinks gently when the average rate falls and the pool is not pinned
+(the collapse case is handled by the rebuild path, not by shrinking).
+
+Every decision is emitted as a `controller` task event (free-form message
+carrying the numbers) and recorded; `TaskView.connections` remains the initial
+population while `TaskView.targetWorkers` reports the live target (0 before the
+plan). A decision cooldown and a rebuild counter prevent oscillation; a rebuild
+probe that does not recover throughput reverts to the pre-collapse target.
+
+### Data dir and recorded history
+
+The kernel's `--data-dir` (plugin config `dataDir`) holds:
+
+```
+<data-dir>/
+  tasks/<task-id>.json              # task record (spec, status, result, server facts)
+  origins.json                      # bounded per-host ledger (≤256 hosts)
+  history/<task-id>.samples.jsonl   # per-run meta record + per-sample telemetry (append-only,
+                                    #   ≤100k samples/task; meta records don't count)
+  history/<task-id>.events.jsonl    # retained task events incl. controller decisions
+```
+
+Recording is owned by `kernel/src/history.rs`: append at the reporter cadence
+(≤10/s), flush ≥1/s and at terminal transitions, redact event messages and the
+meta URL, and treat write errors as advisory (a recording failure never fails or
+slows a download). Each run first appends a `kind:"meta"` record — kernel
+version, pid, run, phase, file/total/chunk, requested/initial/ceiling workers,
+resumed bytes and resume decision — so a timeline that spans kernel builds keeps
+its attribution (the 20261109 session spanned two builds that both reported
+1.1.0 and could not otherwise be aligned). The `history` RPC pages samples and
+events and returns the retained meta records (≤20); the host exposes the same
+data through `rdm_history`, including derived `builds` tags. Files append across
+pause/resume/retry/auto-resume and survive kernel restarts, so a transfer can be
+replayed after the fact; recordings written by 0.2.1 (no meta) remain readable.
 
 Design constraints: correctness over cleverness; no task panics (task errors
 become `failed` states); stdout reserved for protocol; bounded memory (≤200
 events/task, ≤3000 telemetry samples, ≤256 origins, no full-body buffering,
-≤1 MiB write buffer per worker). Performance work and measurements live in
-[OPTIMIZATION.md](OPTIMIZATION.md).
+≤1 MiB write buffer per worker) and bounded recording (≤100k samples per task on
+disk, ≤20 meta records per history response). Performance work and measurements
+live in [OPTIMIZATION.md](OPTIMIZATION.md).
 
 Kernel CLI: `rdm-kernel --data-dir <dir> [--log-level warn]`. Exit on stdin EOF.
 
@@ -127,15 +213,15 @@ schemastery/cosmokit are vendored under `vendor/`.
   * protocol handshake: a kernel whose ready frame reports protocol ≠ 2 fails
     with `protocol_mismatch` and an actionable message;
   * teardown: kill child on plugin dispose (`ctx.effect`).
-* Registers the five tools below plus one system-prompt section
+* Registers the six tools below plus one system-prompt section
   (`dsh-rdm:downloads`) that states the "use rdm_* for downloads" policy exactly
   once (tool descriptions carry behavior only).
 * Session attribution: `rdm_download` reads the calling agent's session id from
   the tool execution context and sends it with the request, so the kernel and
   review UI can scope by session. There is no model-supplied session parameter.
-* Config (`schemastery`): `defaultDir`, `connections`, `chunkSizeMiB`,
-  `speedLimitBps`, `maxAttempts`, `autoResume`, `dataDir`, `kernelPath`,
-  `logLevel`, `startOnDemand`.
+* Config (`schemastery`): `defaultDir`, `connections`, `maxConnections`,
+  `chunkSizeMiB`, `speedLimitBps`, `maxAttempts`, `autoResume`, `dataDir`,
+  `kernelPath`, `logLevel`, `startOnDemand`, `fsyncOnComplete`.
 
 ### Sandboxed hosts and the data dir
 
@@ -149,22 +235,23 @@ when an **unconfigured** default data dir is denied:
 1. `config.dataDir` (if set) → `$DSH_HOME/dsh-rdm` → `<plugin packageRoot>/.rdm-data`
 2. Downloads default to `<active dataDir>/downloads` when `config.defaultDir` is
    empty, so a UI- or tool-started download never depends on the Host process
-   cwd being writable.
+   cwd being writable. Task recording lands in `<active dataDir>/history/`.
 
 The fallback is transparent to the caller (the first request succeeds), logged
 at warn level, and visible as `dataDir` in kernel status/stats.
 
 ### Tool surface (model-facing)
 
-Five tools, bounded canonical outputs, line-oriented receipts. The **model reads
+Six tools, bounded canonical outputs, line-oriented receipts. The **model reads
 the render**, not the canonical JSON; receipts use stable `key=value` fields in a
 fixed order (see `design/0.2.0-agent-native.md` §3.4).
 
 | tool | params | returns |
 |---|---|---|
-| `rdm_download` | `url*`, `dir?`, `fileName?`, `connections?`, `headers?` (json), `cookie?`, `referer?`, `userAgent?`, `expectedSha256?`, `speedLimitBps?`, `resume?`, `singleStream?`, `proxy?`, `insecure?`, `waitSec?` | task view + preflight `ServerFacts` (waits ≤2 s) + next-step hint; `waitSec` waits for completion (≤300 s) |
+| `rdm_download` | `url*`, `dir?`, `fileName?`, `connections?` (1..128), `maxConnections?`, `headers?` (json), `cookie?`, `referer?`, `userAgent?`, `expectedSha256?`, `speedLimitBps?`, `resume?`, `singleStream?`, `proxy?`, `insecure?`, `waitSec?` | task view + preflight `ServerFacts` (waits ≤2 s) + next-step hint; `waitSec` waits for completion (≤300 s) |
 | `rdm_probe` | `url*`, `headers?`, `cookie?`, `referer?`, `userAgent?`, `proxy?`, `insecure?`, `timeoutMs?` | full `ServerFacts` receipt: ranges, resume safety, signed-URL expiry, TLS validity, redirects, timing, checksums, recommendation |
 | `rdm_tasks` | `taskId?`, `status?`, `limit?`, `events?`, `scope?` (`session` default, `all`) | list: kernel + tasks + aggregate + counts; detail: task + telemetry + server + verification + diagnosis + events |
+| `rdm_history` | `taskId*`, `limit?` (1..2000, default 300), `offset?`, `includeEvents?` (default true) | recorded per-sample telemetry + events + per-run build/plan meta for one task, with JSONL paths, totals, `truncated` and derived `builds` tags; survives kernel restarts |
 | `rdm_wait` | `taskIds*` (1..20), `timeoutSec?` | tasks + timedOut + hint; wakes on status transitions, not polling |
 | `rdm_control` | `taskId*`, `action` (`pause\|resume\|cancel\|retry\|remove`), `deletePart?` | task (or removed id) |
 

@@ -19,15 +19,36 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let control = task.control();
     let _ = tokio::fs::remove_file(state_path).await;
     task.set_plan(1, None, 0, 0);
+    task.set_controller_target(1);
     task.set_status(Status::Running);
-    task.add_event("plan", Some("single-stream transfer (no range support)".to_string()), None, None, None);
+    task.add_event("plan", Some(format!("{} bytes; chunks=0 chunk=none; requested={} initial=1 ceiling=1; resumed=0 bytes resume=not-attempted", total.map(|value| value.to_string()).unwrap_or_else(|| "unknown".to_string()), spec.connections)), None, None, None);
+    task.record_history_meta(crate::history::MetaRecord {
+        kind: "meta".to_string(),
+        t: crate::protocol::now_ms(),
+        kernel_version: crate::protocol::VERSION.to_string(),
+        pid: std::process::id(),
+        task_id: task.id.clone(),
+        run: task.run_generation(),
+        phase: "plan".to_string(),
+        url: crate::protocol::redact_url(&spec.url),
+        file_name: meta.file_name.clone(),
+        total_bytes: total,
+        chunk_size: None,
+        chunks: None,
+        requested_connections: spec.connections,
+        initial_workers: 1,
+        max_connections: 1,
+        resumed_bytes: 0,
+        resume_decision: "not-attempted".to_string(),
+        resume_reason: None,
+    });
     task.add_event("started", Some("transfer started".to_string()), None, None, None);
     if let Some(error) = control_error(&control) {
         return Err(error);
     }
     let limiter = (spec.speed_limit_bps > 0).then(|| Arc::new(TokenBucket::new(spec.speed_limit_bps)));
     let counters = Arc::new(Counters::default());
-    let reporter = Reporter::start(Arc::clone(task), Arc::clone(&counters), total);
+    let reporter = Reporter::start(Arc::clone(task), Arc::clone(&counters), total, 0);
     let mut attempt = 0u32;
     let mut result: EngineResult<()> = Ok(());
     loop {
@@ -64,11 +85,11 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     reporter.stop().await;
     let final_bytes = counters.downloaded();
-    task.report(final_bytes, total, 0, counters.peak());
+    task.report(final_bytes, final_bytes, total, 0, counters.peak());
     result?;
     let sha = finalize(task, spec, part, state_path, target, total).await?;
     if let Some(total) = total {
-        task.report(total, Some(total), 0, counters.peak());
+        task.report(total, total, Some(total), 0, counters.peak());
     }
     Ok(sha)
 }

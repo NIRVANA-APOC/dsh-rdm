@@ -1,0 +1,69 @@
+{"t":1794202539237,"seq":1,"kind":"probe","message":"probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202539600,"seq":2,"kind":"probe","message":"31843777504 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202539614,"seq":3,"kind":"plan","message":"31843777504 bytes, 3797 chunks of 8388608 bytes, 16 workers (adaptive up to 128), 0 resumed bytes (resume: none)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202539614,"seq":4,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202540615,"seq":5,"kind":"controller","message":"grow to 18: per-connection 0.8 MiB/s, instant 12.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202541615,"seq":6,"kind":"controller","message":"revert to 16: growth diluted per-connection rate","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202557624,"seq":7,"kind":"controller","message":"grow to 18: per-connection 0.6 MiB/s, instant 9.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202562624,"seq":8,"kind":"controller","message":"grow to 20: per-connection 0.5 MiB/s, instant 9.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202585624,"seq":9,"kind":"controller","message":"grow to 22: per-connection 0.5 MiB/s, instant 9.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202596623,"seq":10,"kind":"controller","message":"grow to 24: per-connection 0.4 MiB/s, instant 9.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202599623,"seq":11,"kind":"controller","message":"grow to 27: per-connection 0.9 MiB/s, instant 21.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202603623,"seq":12,"kind":"controller","message":"grow to 30: per-connection 1.8 MiB/s, instant 48.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202607624,"seq":13,"kind":"controller","message":"grow to 33: per-connection 1.4 MiB/s, instant 40.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202610623,"seq":14,"kind":"controller","message":"grow to 37: per-connection 1.8 MiB/s, instant 59.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202619623,"seq":15,"kind":"controller","message":"grow to 41: per-connection 2.1 MiB/s, instant 79.0 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202625623,"seq":16,"kind":"controller","message":"grow to 46: per-connection 2.4 MiB/s, instant 99.5 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202632623,"seq":17,"kind":"controller","message":"grow to 51: per-connection 2.3 MiB/s, instant 105.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202635623,"seq":18,"kind":"controller","message":"grow to 57: per-connection 2.1 MiB/s, instant 108.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202644623,"seq":19,"kind":"controller","message":"grow to 64: per-connection 1.9 MiB/s, instant 108.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202647623,"seq":20,"kind":"controller","message":"grow to 72: per-connection 1.7 MiB/s, instant 108.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202651623,"seq":21,"kind":"controller","message":"grow to 81: per-connection 1.5 MiB/s, instant 111.6 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202654623,"seq":22,"kind":"controller","message":"grow to 91: per-connection 1.4 MiB/s, instant 113.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202658623,"seq":23,"kind":"controller","message":"grow to 102: per-connection 1.3 MiB/s, instant 114.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202662623,"seq":24,"kind":"controller","message":"grow to 114: per-connection 1.1 MiB/s, instant 114.0 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202668623,"seq":25,"kind":"controller","message":"grow to 128: per-connection 1.0 MiB/s, instant 111.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202725372,"seq":26,"kind":"info","message":"resume state saved: 125 chunks / 14008445673 bytes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202725372,"seq":27,"kind":"interrupted","message":"download interrupted","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902600,"seq":1,"kind":"resumed","message":"resuming (auto-resume)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902600,"seq":2,"kind":"probe","message":"probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902961,"seq":3,"kind":"probe","message":"31843777504 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902961,"seq":4,"kind":"info","message":"resumed 1602 chunks / 14008445673 bytes from .part (etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902962,"seq":5,"kind":"plan","message":"31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=16 ceiling=128; resumed=14008445673 bytes resume=accepted:etag","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202902962,"seq":6,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202903963,"seq":7,"kind":"controller","message":"grow to 18: aggregate 12.7 MiB/s, per-connection 0.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202904964,"seq":8,"kind":"controller","message":"revert to 16: growth dropped aggregate rate (12.7 -> 9.4 MiB/s)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202934963,"seq":9,"kind":"controller","message":"grow to 18: aggregate 9.1 MiB/s, per-connection 0.6 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202938963,"seq":10,"kind":"controller","message":"grow to 20: aggregate 9.2 MiB/s, per-connection 0.5 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202939963,"seq":11,"kind":"controller","message":"growth frozen: aggregate gain < 2% at 9.0 MiB/s over 2 probes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202940963,"seq":12,"kind":"controller","message":"growth unfrozen: aggregate 9.3 MiB/s vs frozen peak 12.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202942963,"seq":13,"kind":"controller","message":"grow to 22: aggregate 9.2 MiB/s, per-connection 0.5 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202946963,"seq":14,"kind":"controller","message":"grow to 24: aggregate 24.4 MiB/s, per-connection 1.1 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202950964,"seq":15,"kind":"controller","message":"grow to 27: aggregate 50.3 MiB/s, per-connection 2.1 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202954963,"seq":16,"kind":"controller","message":"grow to 30: aggregate 93.0 MiB/s, per-connection 3.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202958963,"seq":17,"kind":"controller","message":"grow to 33: aggregate 97.2 MiB/s, per-connection 3.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202962963,"seq":18,"kind":"controller","message":"grow to 37: aggregate 108.1 MiB/s, per-connection 3.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202966964,"seq":19,"kind":"controller","message":"grow to 41: aggregate 107.9 MiB/s, per-connection 2.9 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794202967963,"seq":20,"kind":"controller","message":"growth frozen: aggregate gain < 2% at 107.8 MiB/s over 2 probes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203010681,"seq":21,"kind":"info","message":"resume state saved: 41 ranges / 2502 chunks / 21332844959 bytes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203010681,"seq":22,"kind":"interrupted","message":"download interrupted","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037708,"seq":1,"kind":"resumed","message":"resuming (auto-resume)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037708,"seq":2,"kind":"probe","message":"probing https://www.modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037955,"seq":3,"kind":"probe","message":"31843777504 bytes, ranges=true, type=application/octet-stream","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037955,"seq":4,"kind":"info","message":"resumed 2502 chunks / 21332844959 bytes from .part (etag)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037956,"seq":5,"kind":"plan","message":"31843777504 bytes; chunks=3797 chunk=8388608; requested=16 initial=41 ceiling=128; resumed=21332844959 bytes resume=accepted:etag","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203037956,"seq":6,"kind":"started","message":"transfer started","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203038958,"seq":7,"kind":"controller","message":"grow to 46: aggregate 12.1 MiB/s, per-connection 0.3 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203042956,"seq":8,"kind":"controller","message":"grow to 51: aggregate 64.8 MiB/s, per-connection 1.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203046956,"seq":9,"kind":"controller","message":"grow to 57: aggregate 90.4 MiB/s, per-connection 1.8 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203050956,"seq":10,"kind":"controller","message":"grow to 64: aggregate 98.3 MiB/s, per-connection 1.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203054956,"seq":11,"kind":"controller","message":"grow to 72: aggregate 109.2 MiB/s, per-connection 1.7 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203058957,"seq":12,"kind":"controller","message":"grow to 81: aggregate 102.7 MiB/s, per-connection 1.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203062956,"seq":13,"kind":"controller","message":"grow to 91: aggregate 109.6 MiB/s, per-connection 1.4 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203066956,"seq":14,"kind":"controller","message":"grow to 102: aggregate 111.5 MiB/s, per-connection 1.2 MiB/s","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203067956,"seq":15,"kind":"controller","message":"growth frozen: aggregate gain < 2% at 110.4 MiB/s over 2 probes","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203128956,"seq":16,"kind":"controller","message":"tail: target frozen at 102 workers (remaining claim units 93)","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203136377,"seq":17,"kind":"retry","message":"no body data for 5 s (stalled connection)","chunk":31550272875,"attempt":1,"delayMs":250}
+{"t":1794203159720,"seq":18,"kind":"info","message":"finished in 121764 ms","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203159720,"seq":19,"kind":"verify","message":"hashing file for sha256","chunk":null,"attempt":null,"delayMs":null}
+{"t":1794203176179,"seq":20,"kind":"completed","message":"download completed","chunk":null,"attempt":null,"delayMs":null}

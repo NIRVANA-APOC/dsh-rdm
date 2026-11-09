@@ -1,6 +1,7 @@
 use crate::engine::{self, EngineOutcome};
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::history::{self, HistoryPage, HistoryWriter};
 use crate::http;
 use crate::klog;
 use crate::origins::OriginLedger;
@@ -56,6 +57,8 @@ struct TaskTable {
 pub struct Kernel {
     data_dir: PathBuf,
     tasks_dir: PathBuf,
+    /// `<dataDir>/history` — per-task JSONL download-data recordings (0.2.1).
+    history_dir: PathBuf,
     info: KernelInfo,
     started: Instant,
     config: Mutex<Config>,
@@ -72,10 +75,16 @@ impl Kernel {
     pub fn new(data_dir: PathBuf, outbox: Outbox) -> EngineResult<Arc<Self>> {
         let tasks_dir = data_dir.join("tasks");
         std::fs::create_dir_all(&tasks_dir).map_err(|error| EngineError::io(format!("{}: {error}", tasks_dir.display())))?;
+        let history_dir = history::history_dir(&data_dir);
+        if let Err(error) = std::fs::create_dir_all(&history_dir) {
+            // Recording is advisory; a read-only data dir must not stop downloads.
+            klog!(warn, "could not create history dir {}: {error}", history_dir.display());
+        }
         let origins = Arc::new(OriginLedger::load(&data_dir));
         let kernel = Arc::new(Self {
             info: KernelInfo::current(&data_dir.to_string_lossy()),
             tasks_dir,
+            history_dir,
             origins,
             data_dir,
             started: Instant::now(),
@@ -128,9 +137,20 @@ impl Kernel {
                 continue;
             }
             table.order.push(id.clone());
-            table.by_id.insert(id, Task::from_record(record, Arc::clone(&self.status_notify)));
+            let task = Task::from_record(record, Arc::clone(&self.status_notify));
+            self.attach_history(&task);
+            table.by_id.insert(id, task);
         }
         Ok(())
+    }
+    /// Attach the per-task JSONL recorder. Failures degrade to "no recording"
+    /// (each writer lazily creates its file on the first write).
+    fn attach_history(&self, task: &Arc<Task>) {
+        if task.history_writer().is_some() {
+            return;
+        }
+        let writer = Arc::new(HistoryWriter::new(&self.history_dir, &task.id));
+        task.attach_history(writer);
     }
     fn send(&self, value: Value) {
         if let Some(outbox) = &self.outbox {
@@ -184,6 +204,9 @@ impl Kernel {
                 if task.take_persist(Duration::from_millis(1_000), now) {
                     self.persist(&task).await;
                 }
+                // Buffered history records (≤ 10 samples/s) are flushed once a
+                // second without ever blocking the reporter.
+                task.flush_history();
             }
         }
     }
@@ -227,6 +250,7 @@ impl Kernel {
         tokio::fs::create_dir_all(&spec.dir).await.map_err(|error| ApiError::new("io", format!("{}: {error}", spec.dir.display())))?;
         let id = new_task_id();
         let task = Task::new(id, spec, Arc::clone(&self.status_notify));
+        self.attach_history(&task);
         {
             let mut table = self.tasks.lock().expect("tasks mutex poisoned");
             table.order.push(task.id.clone());
@@ -295,6 +319,9 @@ impl Kernel {
         if status != Status::Failed {
             task.add_event(status.as_str(), Some(format!("download {}", status.as_str())), None, None, None);
         }
+        // Terminal transition: make the recording durable before the host can
+        // observe the terminal status and immediately read it via `history`.
+        task.flush_history();
         self.persist(task).await;
         self.notify(task);
     }
@@ -324,8 +351,43 @@ impl Kernel {
         let events: Vec<TaskEvent> = task.events(events);
         Ok(json!({ "task": view, "detail": detail, "events": events }))
     }
-    pub async fn wait(&self, ids: &[String], timeout_ms: u64) -> Result<Value, ApiError> {
-        let tasks = ids.iter().map(|id| self.task(id)).collect::<Result<Vec<_>, _>>()?;
+    /// `history` RPC (0.2.1): bounded read of one task's persisted download-data
+    /// recording. Works for running tasks (the recorder is flushed first) and
+    /// for tasks from earlier kernel generations (files are read from disk).
+    pub fn history(&self, id: &str, offset: u64, limit: usize, raw: bool, include_events: bool, events_limit: usize) -> Result<Value, ApiError> {
+        let task = self.task(id)?;
+        task.flush_history();
+        let page: HistoryPage = history::read_page(&self.history_dir, id, offset, limit, raw, events_limit);
+        let sample_path = self.existing_history_path(id, "samples.jsonl");
+        let event_path = self.existing_history_path(id, "events.jsonl");
+        let events = if include_events { page.events } else { Vec::new() };
+        let mut builds: Vec<String> = Vec::new();
+        for meta in &page.meta {
+            let tag = meta.build_tag();
+            if !builds.contains(&tag) {
+                builds.push(tag);
+            }
+        }
+        Ok(json!({
+            "taskId": id,
+            "samplesPath": sample_path,
+            "eventsPath": event_path,
+            "samples": page.samples,
+            "events": events,
+            "meta": page.meta,
+            "builds": builds,
+            "totalSamples": page.total_samples,
+            "totalEvents": page.total_events,
+            "truncated": page.truncated,
+            "sampleStride": page.sample_stride,
+            "offset": page.offset,
+        }))
+    }
+    fn existing_history_path(&self, id: &str, suffix: &str) -> Option<String> {
+        let path = self.history_dir.join(format!("{id}.{suffix}"));
+        path.exists().then(|| path.to_string_lossy().into_owned())
+    }
+    pub async fn wait(&self, ids: &[String], timeout_ms: u64) -> Result<Value, ApiError> {        let tasks = ids.iter().map(|id| self.task(id)).collect::<Result<Vec<_>, _>>()?;
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         loop {
             let views: Vec<TaskView> = tasks.iter().map(|task| task.view()).collect();
@@ -355,16 +417,27 @@ impl Kernel {
         match action {
             "pause" | "cancel" => {
                 let pause = action == "pause";
+                // Idempotent pause: a second pause on an already-paused task is
+                // a no-op success instead of a conflict (agents retry controls).
+                if pause && task.status() == Status::Paused {
+                    return Ok(json!({ "task": task.view() }));
+                }
                 require_status(&task, if pause { &ACTIVE } else { &[ACTIVE[0], ACTIVE[1], ACTIVE[2], Status::Paused] }, action)?;
                 if pause {
                     task.control().pause()
                 } else {
                     task.control().cancel()
                 };
-                wait_for_status(&task, if pause { Status::Paused } else { Status::Cancelled }, Duration::from_millis(1500)).await;
+                wait_for_status(&task, if pause { Status::Paused } else { Status::Cancelled }, Duration::from_millis(3000)).await;
                 Ok(json!({ "task": task.view() }))
             }
             "resume" | "retry" => {
+                // Idempotent resume: the engine may need a moment to observe a
+                // pause, so "resume" on a still-active task returns the view
+                // instead of failing with `cannot resume ... running`.
+                if action == "resume" && task.status().is_active() {
+                    return Ok(json!({ "task": task.view() }));
+                }
                 require_status(&task, &RESUMABLE, action)?;
                 if action == "resume" {
                     self.resume(Arc::clone(&task), "resume");
@@ -449,6 +522,7 @@ impl Kernel {
             task.set_status(Status::Interrupted);
         }
         for task in self.tasks_snapshot() {
+            task.flush_history();
             self.persist(&task).await;
         }
         self.origins.save().await;

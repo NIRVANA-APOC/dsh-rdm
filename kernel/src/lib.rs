@@ -1,8 +1,10 @@
+pub mod controller;
 pub mod diagnosis;
 pub mod engine;
 pub mod error;
 pub mod facts;
 pub mod filename;
+pub mod history;
 pub mod http;
 pub mod kernel;
 pub mod log;
@@ -16,4 +18,6 @@ pub mod scheduler;
 pub mod state;
 pub mod task;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod test_temp;
 pub mod tls;
