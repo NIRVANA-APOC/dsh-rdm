@@ -3,20 +3,22 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 **An agent-native downloader for DeepSeek Harness.** One resident Rust kernel,
-six model-facing tools that return decision-grade facts, and two review surfaces
-for the human: a global download ledger in the left sidebar, and a
-session-scoped review tab in the right sidebar.
+seven model-facing tools that return decision-grade facts, and three human
+surfaces: a workspace/session download workbench in the left sidebar, a
+session-scoped tab in the right sidebar, and a top-right popup that appears only
+while downloads are running.
 
-The agent operates. The human reviews.
+The agent operates. The human reviews — and can pause, delete, open or filter
+without leaving the panel.
 
-![Global download review — light](assets/screenshots/review-light.png)
+![Download workbench — light](assets/screenshots/review-light.png)
 
 ## What "agent-native" means here
 
 A downloader used by a model is not a GUI that happens to have an API. The agent
 has to answer, in as few model steps as possible: *is this URL usable, how should
 I fetch it, what is happening now, should I intervene, and can I trust the
-result?* `dsh-rdm` 0.2.2 is built around those questions.
+result?* `dsh-rdm` 0.3.0 is built around those questions.
 
 * **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
   proven range support, validators and RFC 9110 resume safety, signed-URL
@@ -63,33 +65,49 @@ result?* `dsh-rdm` 0.2.2 is built around those questions.
   not thrown strings that lose structure.
 * **Session attribution.** Every download started by an agent carries its
   session id, so the human can review exactly what *this* agent downloaded.
+* **Session attribution that reads like a person wrote it.** Every download keeps
+  its owning session id, and the workbench resolves that session's real title
+  and workspace from the session log and the durable workspace registry, so a
+  record is filed under “重构下载面板与进度弹窗 · dsh-rdm”, not under an opaque id.
+* **Findable records.** `rdm_search` finds existing downloads across every
+  session by keyword (file name, URL, host, path, id, session title) or by exact
+  task id; every row also exposes a copyable download id for the human.
 * **One policy, stated once.** A short system-prompt section tells every agent
   to route downloads through `rdm_*`; the tool definitions stay small (0.2.0 cut
   the first-turn schema cost 7241 → 4966 chars, −31 % vs 0.1.2; the receipt test
-  guards it under 6000 even with 0.2.1's extra tool).
+  guards the seven-tool surface under 7241 chars, measured 6909).
 
-## The two review surfaces
+## The three review surfaces
 
-The human never composes a download here; there is no URL bar, no connection
-slider.
-
-* **Global review** (left sidebar entry → page): a throughput recorder strip for
-  the whole kernel, session-grouped ledger of every download, risk markers, and
-  a per-record evidence drawer (request chain, server facts, timing, resume
-  state, verification, bounded event log). Only live records use saturated
-  colour; a record never claims a verification it did not perform.
-* **Session review** (right sidebar tab, "Downloads"): the same evidence
-  language, filtered to the active session. Empty for a session with no
-  downloads; it never steals focus.
+* **Download workbench** (left sidebar entry → page): a paste-a-link composer,
+  three state cards (正在下载 / 已完成 / 失败任务) that double as status filters, a
+  text filter plus a multi-select suffix dropdown, select-all and batch
+  pause/delete, and a ledger grouped by workspace and then by real session
+  title. Each row shows progress, speed, ETA, the live adaptive connection
+  count, host, elapsed time and a copyable download id, with
+  pause/resume/open-file/open-folder/delete actions and an evidence drawer
+  (request chain, server facts, timing, worker plan, resume state, verification,
+  bounded event log).
+* **Session review** (right sidebar tab, “Downloads”): the same record language
+  and actions, filtered to the active session; no composer or batch toolbar.
+* **Active-download popup** (top-right, frame-wide): one row per session with
+  running work — progress, speed and connection totals — collapsed to a pill or
+  expanded. It does not exist when nothing is downloading.
 * **Evidence language**: a **throughput pulse** (client-sampled, honestly
   labelled) and a **verification seal** (expected vs actual hash, only when a
   hash was compared). Unknowns render `—`.
 
 ![Session download review — dark](assets/screenshots/review-session-dark.png)
 
+![Active-download popup over a conversation](assets/screenshots/review-popup.png)
+
+Batch selection with the composition toolbar:
+
+![Download workbench — batch selection](assets/screenshots/review-batch.png)
+
 ## Tools
 
-Six tools. All outputs are bounded; the model sees a receipt, the caller sees
+Seven tools. All outputs are bounded; the model sees a receipt, the caller sees
 canonical JSON.
 
 | tool | what it does | what comes back |
@@ -97,9 +115,18 @@ canonical JSON.
 | `rdm_probe` | inspect an HTTP(S) source without downloading the file body | `ServerFacts`: ranges, validators, resume safety, signed-URL/TLS expiry, redirects, checksums, rate limit, timing, warnings, recommendation |
 | `rdm_download` | start a transfer in the resident kernel | task view + preflight `ServerFacts` (≤2 s) + next-step hint; `waitSec` optionally blocks |
 | `rdm_tasks` | list this session's downloads, or inspect one in depth | flat task views + aggregate; with `taskId`: telemetry, server facts, verification, diagnosis, bounded events |
+| `rdm_search` | find records across sessions by keyword (id, file name, URL, host, path, session title) or exact id | bounded matches with id, state, progress, session/workspace labels + total; scope `all`/`session`, status and limit filters |
 | `rdm_history` | read the persisted per-task recording (telemetry samples + events + per-run build/plan meta, JSONL under the kernel data dir) | bounded samples/events + `samplesPath`/`eventsPath` + totals; `builds` tags (and one `build=` receipt line) when a recording carries meta; evenly downsampled review series by default, `offset` pages the literal recording; survives kernel restarts |
 | `rdm_wait` | long-poll until terminal or timeout | settled task views + `timedOut` |
 | `rdm_control` | pause, resume, cancel, retry, remove | updated task view (or removed id) |
+
+A search receipt:
+
+```text
+search scope=all matches=2 total=14
+task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.0-win32-x64.zip" connections=12/16
+task t_1a2b3c4d5e6f7a80 state=completed progress=100% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="design-critique-notes.pdf" connections=0/0
+```
 
 A probe receipt:
 
@@ -118,7 +145,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 A task list receipt:
 
 ```text
-kernel state=running version=0.2.2 pid=4212
+kernel state=running version=0.3.0 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -135,7 +162,7 @@ range 0..300 of 1907
 
 ## Kernel intelligence
 
-The Rust kernel (`rdm-kernel` 0.2.2, protocol 2) is a resident child process; it
+The Rust kernel (`rdm-kernel` 0.3.0, protocol 2) is a resident child process; it
 does not listen on a port, starts lazily and stays warm.
 
 * **Server facts** — manual redirect chain (up to 8 hops), proven range support
@@ -196,9 +223,10 @@ with a research note at
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md) with one section per tag;
 the same change must update both the version and this changelog. From 0.2.2 the
-kernel and plugin package share one version number (0.2.2, protocol 2);
-historical recordings keep the strings their binaries actually wrote (0.2.1
-kernel = `1.1.0`, pre-unification 0.2.2 builds = `1.2.0`).
+kernel and plugin package share one version number; **0.3.0** ships package
+`0.3.0` and kernel `0.3.0` (protocol 2) — the kernel code is unchanged apart
+from its identity. Historical recordings keep the strings their binaries
+actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2 builds = `1.2.0`).
 
 ## Install
 
@@ -224,9 +252,13 @@ the `plugin_manager` tool):
 plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
-After installing, agents see `rdm_*`; the left sidebar gains the downloads entry
-and the right sidebar guide gains a "Downloads" tab. No restart is normally
-required, though a page refresh is safe.
+After installing, agents see `rdm_*`; the left sidebar gains the downloads
+workbench, the right sidebar guide gains a “Downloads” tab, and the frame gains
+the active-download popup (it stays hidden until a download runs). The host half
+reloads with the plugin row; the client surfaces need one page refresh before
+they appear (this desktop build exposes no reload menu item). The browser route
+(`POST /api/dsh-rdm/api`) is documented in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api).
 
 ### Configuration
 
@@ -258,7 +290,13 @@ required, though a page refresh is safe.
   message shapes, `unsupported_method`, `auth_key` redaction, stats, aggregate.
 * `node tests/tools-receipts.test.mjs` — receipt contract, policy-once,
   schema-cost guard, recoverable-error receipts.
-* `node scripts/verify-fixture.mjs` — fixture self-test.
+* `node tests/host-api.test.mjs` — browser-route v3 contract: catalog
+  enrichment/failure, batch control partial failures, live-agent notification
+  gating, pre-remove notification snapshot, `open` path resolution/rejection,
+  catalog caches/single-flight, and an `apply()` wiring smoke.
+* `node node_modules/typescript/bin/tsc --noEmit` — strict TypeScript check of
+  the host and client sources.
+* `node scripts/verify-fixture.mjs` — fixture self-test (64/64).
 * `node scripts/verify-kernels.mjs --host --run` — the bundled kernel for this
   host exists, has the right format, and starts.
 
@@ -303,6 +341,21 @@ The measured QA report for the release lives in
   they only move the worker target and never change task state or correctness.
 * ETA confidence is a heuristic over measured windows; it is `unknown` rather
   than guessed when data is insufficient.
+* The workbench composer starts a download with the plugin's configured
+  defaults; connection count, headers and checksum are still agent-side
+  parameters (`rdm_download`), not composer fields.
+* Pausing or deleting an unfinished download from the UI notifies the owning
+  agent only while that agent is live. A cold session is never resumed just to
+  read a UI click; the result reports `notified=false` instead.
+* Open-file / open-folder delegates to the host desktop's default handler
+  (`explorer`, `open`, `xdg-open`) and requires the task record to still exist;
+  it does not embed a file viewer.
+* Workspace and session titles come from the host's workspace registry and
+  session log. A deployment without those services still renders the ledger,
+  grouped by the short session id.
+* The active-download popup is frame-wide and intentionally overlays the
+  top-right corner while work is running; collapse it to a pill if it covers a
+  control.
 * The five-platform prebuilt kernels are built by the release workflow on native
   runners; a local checkout only contains the current host's freshly built
   kernel until the workflow refreshes `bin/`.
@@ -321,16 +374,29 @@ node scripts/build.mjs             # canonical build outside a sandbox
 node scripts/build-kernel.mjs      # canonical kernel build outside a sandbox
 python tests/verify_e2e.py         # protocol-2 kernel suite (sandbox-safe)
 node tests/tools-receipts.test.mjs # host receipts contract
+node tests/host-api.test.mjs       # browser-route v3 contract
+node scripts/check-release.mjs     # package/kernel/changelog consistency
 ```
+
+The browser surfaces have a deterministic static harness under
+`.design/preview-03/` (not shipped): it renders the real components against a
+mocked v3 route, produces the light/dark 1440/768/390 matrix, and can be
+captured through a headless Chrome CDP endpoint. See its `capture.ps1` /
+`cdp.mjs` headers for the two capture paths.
 
 Releasing — the five-platform kernel matrix, GitHub release, npm trusted
 publishing and retry semantics — is documented in
 [docs/release.md](docs/release.md).
 
 The host half imports only Node built-ins (the schema library is vendored); the
-client half registers into `sidebar.panellist`, the keyed `main` slot and the
-native right-sidebar tab seat, with host theme tokens only.
+client half registers into `sidebar.panellist`, the keyed `main` slot, the
+frame-wide `shell.overlay` seat and the native right-sidebar tab seat, with host
+theme tokens only. The client is self-contained: the popup and the workbench
+share one poll of the browser route, and the session tab polls its own scope.
 
 ## License
 
 MIT OR Apache-2.0.
+
+
+

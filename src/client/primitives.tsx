@@ -1,5 +1,6 @@
 // Small shared marks for the review surfaces: status glyph, verification seal,
-// server-fact chip, byte meter, ETA confidence bars and the polite live region.
+// server-fact chip, byte meter, connection badge, checkboxes, icon buttons,
+// empty state and the polite live region.
 //
 // All colour comes from CSS custom properties defined once on `.rdm2`; this
 // file only carries structure and accessible names.
@@ -7,6 +8,7 @@
 import React from 'react'
 import type { ChipModel, SealModel } from './model'
 import { REVIEW_CSS } from './review-css'
+import { ChevronGlyph } from './icons'
 
 /** The one keyed style element both surfaces render (CSS lives in review-css.ts). */
 export function ReviewStyle() {
@@ -140,13 +142,135 @@ export function ConfidenceMark({ bars, label }: { bars: number; label: string })
   )
 }
 
-/** The thin byte meter under a record's name line (not connection lanes). */
+/** The progress meter under a record's meta line; tone carries the state. */
 export function ByteMeter({ fraction, tone }: { fraction: number; tone: 'live' | 'paused' | 'done' | 'failed' | 'idle' }) {
   const width = `${Math.max(0, Math.min(1, fraction)) * 100}%`
   return (
     <div className="rdm2-meter" data-tone={tone} role="presentation">
       <span className="rdm2-meter-fill" style={{ width }} />
     </div>
+  )
+}
+
+/** Worker-connection badge: the adaptive concurrency, at a glance. */
+export function ConnectionBadge({ label, title }: { label: string; title: string }) {
+  return (
+    <span className="rdm2-conn" title={title} aria-label={title}>
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+        <g stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none">
+          <path d="M3 9.2V4.4M6 9.2V2.6M9 9.2V5.8" />
+        </g>
+      </svg>
+      {label}
+    </span>
+  )
+}
+
+/** An icon-only action button with a visible tooltip via `title` + a11y name. */
+export interface IconButtonProps {
+  label: string
+  onClick?: (event: { stopPropagation(): void }) => void
+  disabled?: boolean
+  tone?: 'default' | 'danger'
+  className?: string
+  children: any
+}
+
+export function IconButton(props: IconButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`rdm2-icon-button${props.className === undefined ? '' : ` ${props.className}`}`}
+      data-tone={props.tone ?? 'default'}
+      aria-label={props.label}
+      title={props.label}
+      disabled={props.disabled === true}
+      onClick={(event) => {
+        event.stopPropagation()
+        props.onClick?.(event)
+      }}
+    >
+      {props.children}
+    </button>
+  )
+}
+
+/** A quiet text button. */
+export interface TextButtonProps {
+  label?: string
+  onClick?: (event: { stopPropagation(): void }) => void
+  disabled?: boolean
+  tone?: 'default' | 'danger' | 'primary'
+  className?: string
+  children: any
+}
+
+export function TextButton(props: TextButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`rdm2-button${props.className === undefined ? '' : ` ${props.className}`}`}
+      data-tone={props.tone ?? 'default'}
+      aria-label={props.label}
+      disabled={props.disabled === true}
+      onClick={(event) => {
+        event.stopPropagation()
+        props.onClick?.(event)
+      }}
+    >
+      {props.children}
+    </button>
+  )
+}
+
+/** A custom checkbox (button semantics) that stays legible on every token set. */
+export interface CheckboxProps {
+  checked: boolean
+  mixed?: boolean
+  label: string
+  disabled?: boolean
+  onChange: (next: boolean) => void
+  className?: string
+}
+
+export function Checkbox(props: CheckboxProps) {
+  return (
+    <button
+      type="button"
+      className={`rdm2-checkbox${props.className === undefined ? '' : ` ${props.className}`}`}
+      role="checkbox"
+      aria-checked={props.mixed === true ? 'mixed' : props.checked}
+      aria-label={props.label}
+      disabled={props.disabled === true}
+      data-checked={props.checked || props.mixed === true ? 'true' : 'false'}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (props.disabled === true) return
+        props.onChange(!props.checked)
+      }}
+    >
+      {props.mixed === true ? (
+        <span className="rdm2-checkbox-dash" aria-hidden="true" />
+      ) : props.checked ? (
+        <svg width="11" height="11" viewBox="0 0 11 11" aria-hidden="true" focusable="false">
+          <path d="M2 5.7 4.4 8 9 2.8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+    </button>
+  )
+}
+
+/** Kernel health mark: one dot, nothing else (`idle` while the first poll runs). */
+export function KernelDot({ tone, label }: { tone: 'ok' | 'bad' | 'idle'; label: string }) {
+  return <span className="rdm2-kernel-dot" data-tone={tone} role="img" aria-label={label} title={label} />
+}
+
+/** Disclosure chevron for the filter menu and record drawer. */
+export function Disclosure({ open }: { open: boolean }) {
+  return (
+    <span className="rdm2-disclosure" data-open={open ? 'true' : 'false'} aria-hidden="true">
+      <ChevronGlyph size={12} />
+    </span>
   )
 }
 
@@ -160,20 +284,31 @@ export function LiveRegion({ message }: { message: string }) {
 }
 
 /** Loading skeleton rows for the ledger while the first poll is in flight. */
-export function SkeletonRows({ rows = 2 }: { rows?: number }) {
+export function SkeletonRows({ rows = 3 }: { rows?: number }) {
   const items: any[] = []
   for (let index = 0; index < rows; index += 1) {
     items.push(
-      <div className="rdm2-skeleton-row" key={index} aria-hidden="true">
+      <div className="rdm2-skeleton-card" key={index} aria-hidden="true">
         <span className="rdm2-skeleton rdm2-skeleton-name" />
-        <span className="rdm2-skeleton rdm2-skeleton-meter" />
         <span className="rdm2-skeleton rdm2-skeleton-meta" />
+        <span className="rdm2-skeleton rdm2-skeleton-meter" />
       </div>,
     )
   }
   return (
     <div className="rdm2-skeleton-list" aria-busy="true">
       {items}
+    </div>
+  )
+}
+
+/** A calm empty state: mark, sentence, optional next step. */
+export function EmptyState({ icon, title, hint }: { icon?: any; title: string; hint?: string }) {
+  return (
+    <div className="rdm2-empty-state">
+      {icon === undefined ? null : <span className="rdm2-empty-icon">{icon}</span>}
+      <p className="rdm2-empty-title">{title}</p>
+      {hint === undefined ? null : <p className="rdm2-empty-hint">{hint}</p>}
     </div>
   )
 }

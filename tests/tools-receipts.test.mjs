@@ -31,6 +31,7 @@ import {
   renderDownloadReceipt,
   renderHistoryReceipt,
   renderProbeReceipt,
+  renderSearchReceipt,
   renderTaskDetailReceipt,
   renderTaskRecord,
   renderTasksListReceipt,
@@ -211,6 +212,31 @@ function detailFixture(overrides = {}) {
 
 const kernelStatus = { running: true, starting: false, version: '0.2.2', pid: 1234, dataDir: 'C:\\data', error: null }
 
+/** One `rdm_search` match fixture (design §6 canonical shape). */
+function searchMatchFixture(overrides = {}) {
+  return {
+    id: 't_9f3a1c2d5e6b7a80',
+    status: 'running',
+    fileName: 'app.zip',
+    url: 'https://cdn.example.com/app.zip',
+    host: 'cdn.example.com',
+    sessionId: 'sess_abc',
+    sessionTitle: 'Build fixtures',
+    workspaceTitle: 'dsh-rdm',
+    title: 'Build fixtures',
+    percent: 42,
+    downloaded: 21184000,
+    total: 50406400,
+    speedBps: 1468006,
+    targetWorkers: 24,
+    activeWorkers: 12,
+    createdAt: 1762990000000,
+    finishedAt: null,
+    updatedAt: 1762990017500,
+    ...overrides,
+  }
+}
+
 // ── Protocol pin ────────────────────────────────────────────────────────────
 
 check('protocol version is 2', () => assert.equal(PROTOCOL_VERSION, 2))
@@ -220,17 +246,17 @@ check('protocol mismatch error is actionable', () => {
   assert.match(message, /requires protocol 2/)
   assert.match(message, /build-kernel/)
   // 0.2.2 versioning: the plugin/kernel versions named in the hint are current.
-  assert.match(message, /dsh-rdm 0\.2\.2/)
-  assert.match(message, /0\.2\.2 kernel/)
+  assert.match(message, /dsh-rdm 0\.3\.0/)
+  assert.match(message, /0\.3\.0 kernel/)
 })
 
 // ── Tool surface ────────────────────────────────────────────────────────────
 
 const tools = createRdmTools({})
-check('six tools with the expected names', () => {
+check('seven tools with the expected names', () => {
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['rdm_download', 'rdm_probe', 'rdm_tasks', 'rdm_wait', 'rdm_control', 'rdm_history'],
+    ['rdm_download', 'rdm_probe', 'rdm_tasks', 'rdm_wait', 'rdm_control', 'rdm_history', 'rdm_search'],
   )
 })
 check('download parameters expose the 0.3.0 concurrency surface', () => {
@@ -257,6 +283,23 @@ check('history parameters match the 0.3.0 tool contract', () => {
   assert.match(history.description, /persisted per-sample telemetry/)
   assert.match(history.description, /file paths/)
 })
+check('search parameters match the 0.3.0 tool contract', () => {
+  const search = tools.find((tool) => tool.name === 'rdm_search')
+  assert.ok(search !== undefined, 'missing rdm_search')
+  const properties = search.parameters.properties
+  assert.equal(properties.query.type, 'string')
+  assert.equal(properties.taskId.type, 'string')
+  assert.equal(properties.status.type, 'string')
+  assert.equal(properties.limit.type, 'number')
+  assert.match(properties.limit.description, /1\.\.50, default 10/)
+  assert.equal(properties.scope.type, 'string')
+  assert.deepEqual(properties.scope.enum, ['all', 'session'])
+  // Task ids are an exact shortcut, never a required parameter.
+  assert.deepEqual(search.parameters.required ?? [], [])
+  assert.match(search.description, /Find download records across sessions/)
+  assert.match(search.description, /session\/workspace labels/)
+  assert.match(search.description, /rdm_tasks.*rdm_wait.*rdm_control/)
+})
 check('policy is stated only in the system-prompt section', () => {
   for (const tool of tools) {
     assert.ok(!/EVERY file download/i.test(tool.description), `policy repeated in ${tool.name}`)
@@ -268,10 +311,13 @@ check('policy is stated only in the system-prompt section', () => {
   assert.match(PROMPT_SECTION_TEXT, /rdm_history/)
   assert.match(PROMPT_SECTION_TEXT, /structured key=value/)
 })
-check('first-turn schema cost stays under 6000 characters', () => {
+check('first-turn schema cost stays under the 0.1.2 baseline', () => {
   const surface = tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters }))
   const chars = JSON.stringify(surface).length
-  assert.ok(chars <= 6000, `schema cost is ${chars} characters`)
+  // 0.3.0 adds the seventh tool (`rdm_search`). The design contract bounds the
+  // first-turn cost against the 0.1.2 baseline (7241 chars), and the richer
+  // 0.3.0 surface still fits: ~6.9k chars rather than the old six-tool 6000 guard.
+  assert.ok(chars <= 7241, `schema cost is ${chars} characters`)
 })
 check('prompt section is about 90 words', () => {
   const words = PROMPT_SECTION_TEXT.split(/\s+/).filter(Boolean).length
@@ -579,6 +625,72 @@ check('control receipts', () => {
   const lines = renderControlReceipt({ action: 'pause', task: taskFixture({ status: 'paused' }), removedId: null, deletePart: false, hint: 'x' })
   assert.equal(lines[0], 'control action=pause task=t_9f3a1c2d5e6b7a80')
   assert.equal(lines[1], renderTaskRecord(taskFixture({ status: 'paused' })))
+  assertReceiptLines(lines.join('\n'))
+})
+
+// ── Search (0.3.0 cross-session record lookup) ──────────────────────────────
+
+check('search receipt: header then one bounded match line', () => {
+  const lines = renderSearchReceipt({
+    kernel: kernelStatus,
+    matches: [searchMatchFixture()],
+    total: 14,
+    scope: 'all',
+    error: null,
+    hint: 'x',
+  })
+  assert.equal(lines[0], 'search scope=all matches=1 total=14')
+  assert.equal(
+    lines[1],
+    'task t_9f3a1c2d5e6b7a80 state=running progress=42% session="Build fixtures" workspace="dsh-rdm" file="app.zip" connections=12/24',
+  )
+  // The URL is never dumped into the receipt (signed URLs are long and secret).
+  assert.ok(!lines.join('\n').includes('cdn.example.com'), 'receipt must not dump URLs')
+  assert.ok(lines.length <= 2)
+  assertReceiptLines(lines.join('\n'))
+})
+check('search receipt bounds long file names and session labels', () => {
+  const longName = `${'x'.repeat(400)}.zip`
+  const lines = renderSearchReceipt({
+    kernel: kernelStatus,
+    matches: [searchMatchFixture({ fileName: longName, sessionTitle: 'S'.repeat(200), workspaceTitle: 'W'.repeat(200) })],
+    total: 1,
+    scope: 'session',
+    error: null,
+    hint: 'x',
+  })
+  assert.equal(lines[0], 'search scope=session matches=1 total=1')
+  assert.ok(lines[1].length < 420, `match line is ${lines[1].length} characters`)
+  assert.ok(lines[1].includes('...'), 'long values are ellipsized')
+  assertReceiptLines(lines.join('\n'))
+})
+check('search receipt caps the rendered record count', () => {
+  const matches = Array.from({ length: 50 }, (_, index) => searchMatchFixture({ id: `t_${index}` }))
+  const lines = renderSearchReceipt({
+    kernel: kernelStatus,
+    matches,
+    total: 120,
+    scope: 'all',
+    error: null,
+    hint: 'x',
+  })
+  assert.equal(lines[0], 'search scope=all matches=50 total=120')
+  assert.equal(lines.length, 51)
+  assertReceiptLines(lines.join('\n'))
+})
+check('search not_found envelope renders as an error receipt (not a throw)', () => {
+  const lines = renderSearchReceipt({
+    kernel: kernelStatus,
+    matches: [],
+    total: 0,
+    scope: 'session',
+    error: { code: 'not_found', message: 'No RDM task with id "t_x" exists.' },
+    hint: 'rdm_tasks without taskId lists the existing ids.',
+  })
+  assert.equal(lines[0], 'search scope=session matches=0 total=0')
+  assert.equal(lines[1], 'error code=not_found message=No RDM task with id "t_x" exists.')
+  assert.match(lines[2], /^next rdm_tasks without taskId lists the existing ids\.$/)
+  assert.ok(lines.length <= 3, 'error receipt stays bounded to 3 lines')
   assertReceiptLines(lines.join('\n'))
 })
 
@@ -897,6 +1009,14 @@ check('receipts never print headers/cookie/referer values', () => {
     rdm_wait: { tasks: [taskFixture()], timedOut: false, error: null, hint: 'x' },
     rdm_control: { action: 'pause', task: taskFixture(), removedId: null, deletePart: false, error: null, hint: 'x' },
     rdm_history: historyFixture(),
+    rdm_search: {
+      kernel: kernelStatus,
+      matches: [searchMatchFixture()],
+      total: 1,
+      scope: 'all',
+      error: null,
+      hint: 'x',
+    },
   }
   for (const tool of tools) {
     const text = tool.output
@@ -1079,6 +1199,22 @@ check('canonical values validate against their output schemas', () => {
     error: { code: 'conflict', message: 'completed' },
     hint: 'x',
   })
+  assertCanonical('rdm_search', {
+    kernel: kernelStatus,
+    matches: [searchMatchFixture()],
+    total: 14,
+    scope: 'all',
+    error: null,
+    hint: 'x',
+  })
+  assertCanonical('rdm_search', {
+    kernel: kernelStatus,
+    matches: [],
+    total: 0,
+    scope: 'session',
+    error: { code: 'not_found', message: 'missing' },
+    hint: 'x',
+  })
   assertCanonical('rdm_history', historyFixture())
   assertCanonical('rdm_history', {
     ...historyFixture(),
@@ -1143,6 +1279,130 @@ check('canonical values validate against their output schemas', () => {
   }
 }
 
+// ── rdm_search execution (stub kernel + fake catalog labels) ────────────────
+
+{
+  const tasks = [
+    taskFixture({ id: 't_alpha', sessionId: 'sess_abc', status: 'running', fileName: 'app.zip', host: 'cdn.example.com' }),
+    taskFixture({
+      id: 't_beta',
+      sessionId: 'sess_def',
+      status: 'completed',
+      fileName: 'report.pdf',
+      host: 'files.example.com',
+      path: 'C:\\Downloads\\report.pdf',
+    }),
+    taskFixture({
+      id: 't_gamma',
+      sessionId: 'sess_abc',
+      status: 'failed',
+      fileName: 'notes.txt',
+      host: 'notes.example.com',
+      error: { code: 'network', message: 'reset' },
+    }),
+  ]
+  const catalogCalls = []
+  const fakeCatalog = {
+    describe: async (ids) => {
+      catalogCalls.push(ids)
+      return {
+        sessions: {
+          sess_abc: {
+            id: 'sess_abc',
+            title: 'Fixture builds',
+            live: true,
+            cwd: 'C:\\ws',
+            workspaceId: 'ws1',
+            workspaceTitle: 'dsh-rdm',
+            workspacePath: 'C:\\ws',
+          },
+          sess_def: {
+            id: 'sess_def',
+            title: 'Docs sweep',
+            live: false,
+            cwd: null,
+            workspaceId: null,
+            workspaceTitle: null,
+            workspacePath: null,
+          },
+        },
+        workspaces: [{ id: 'ws1', title: 'dsh-rdm', path: 'C:\\ws' }],
+      }
+    },
+  }
+  const listCalls = []
+  const getCalls = []
+  const stubKernel = {
+    kernelStatus: () => kernelStatus,
+    list: async (params) => {
+      listCalls.push(params)
+      return { tasks, aggregate: {} }
+    },
+    get: async (id) => {
+      getCalls.push(id)
+      const task = tasks.find((entry) => entry.id === id)
+      if (task === undefined) throw new KernelError('not_found', `No RDM task with id "${id}" exists.`)
+      return { task, detail: null, events: [] }
+    },
+  }
+  const searchTools = createRdmTools(stubKernel, fakeCatalog)
+  const search = searchTools.find((entry) => entry.name === 'rdm_search')
+  const context = { signal: new AbortController().signal, agent: { session: { id: 'sess_abc' } } }
+  try {
+    // Query terms match file/URL/host/path and labels case-insensitively.
+    const byFile = await search.execute({ query: 'REPORT' }, context)
+    assertCanonical('rdm_search', byFile)
+    assert.deepEqual(byFile.matches.map((match) => match.id), ['t_beta'])
+    assert.equal(byFile.total, 1)
+    assert.equal(byFile.matches[0].sessionTitle, 'Docs sweep')
+    assert.equal(byFile.matches[0].workspaceTitle, null)
+    // Session-title terms select every record of that session.
+    const bySessionTitle = await search.execute({ query: 'fixture builds' }, context)
+    assert.deepEqual(bySessionTitle.matches.map((match) => match.id), ['t_alpha', 't_gamma'])
+    assert.equal(bySessionTitle.matches[0].workspaceTitle, 'dsh-rdm')
+    // Status and scope filters compose.
+    const failed = await search.execute({ status: 'failed' }, context)
+    assert.deepEqual(failed.matches.map((match) => match.id), ['t_gamma'])
+    const scoped = await search.execute({ scope: 'session' }, context)
+    assert.deepEqual(scoped.matches.map((match) => match.id), ['t_alpha', 't_gamma'])
+    assert.equal(scoped.scope, 'session')
+    // `limit` bounds the records; `total` keeps the full match count.
+    const limited = await search.execute({ limit: 1 }, context)
+    assert.equal(limited.matches.length, 1)
+    assert.equal(limited.total, 3)
+    // taskId is the exact shortcut; a missing id is a recoverable envelope.
+    const exact = await search.execute({ taskId: 't_beta' }, context)
+    assert.equal(exact.matches.length, 1)
+    assert.equal(exact.matches[0].id, 't_beta')
+    assert.equal(exact.scope, 'all')
+    const missing = await search.execute({ taskId: 't_missing' }, context)
+    assertCanonical('rdm_search', missing)
+    assert.equal(missing.error.code, 'not_found')
+    assert.equal(missing.total, 0)
+    assert.deepEqual(missing.matches, [])
+    // Explicit session scope with no calling session reports how to widen it.
+    const noSession = await search.execute({ scope: 'session' }, { signal: new AbortController().signal })
+    assert.equal(noSession.matches.length, 0)
+    assert.match(noSession.hint, /scope="all"/)
+    // createRdmTools stays callable with one argument: labels are null.
+    const bare = createRdmTools(stubKernel).find((entry) => entry.name === 'rdm_search')
+    const unlabelled = await bare.execute({ query: 'app' }, context)
+    assert.equal(unlabelled.matches[0].sessionTitle, null)
+    assert.equal(unlabelled.matches[0].workspaceTitle, null)
+    // The renderer is wired into the tool output.
+    const text = search.output.render({}, byFile).map((block) => block.text).join('\n')
+    assert.match(text, /^search scope=all matches=1 total=1$/m)
+    assert.match(text, /^task t_beta state=completed /m)
+    // The kernel scan is bounded and the catalog is batched once per call.
+    assert.equal(listCalls[0].limit, 100)
+    assert.deepEqual(catalogCalls[0], ['sess_abc', 'sess_def'])
+    assert.ok(getCalls.includes('t_missing'))
+    passed += 1
+  } catch (error) {
+    failures.push(`rdm_search execute: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 // ── 0.2.2 §1.7: old-kernel unknown method is a recoverable value ────────────
 
 {
@@ -1170,7 +1430,7 @@ check('canonical values validate against their output schemas', () => {
       .map((block) => block.text)
       .join('\n')
     assert.match(text, /^error code=unsupported_method message=/m)
-    assert.match(text, /^next upgrade the kernel binary to 0\.2\.2 \(dsh-rdm 0\.2\.2\+\)/m)
+    assert.match(text, /^next upgrade the kernel binary to 0\.3\.0 \(dsh-rdm 0\.3\.0\+\)/m)
     assert.ok(text.split('\n').length <= 6, 'error receipt stays bounded to 6 lines')
     assertReceiptLines(text)
     passed += 1
@@ -1188,3 +1448,4 @@ if (failures.length > 0) {
 } else {
   console.log(`PASS ${passed} checks (tools-receipts)`)
 }
+

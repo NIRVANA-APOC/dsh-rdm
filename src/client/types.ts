@@ -95,6 +95,13 @@ export interface SidebarTabRegistry {
   register(definition: SidebarTabTypeDefinition): () => void
 }
 
+/** Client layout service subset (`ctx.layout`): panel selection and rightbar. */
+export interface LayoutService {
+  selectPanel?(panelId: string | null): void
+  openRightbar?(track: boolean, fullscreen: boolean): void
+  closeRightbar?(): void
+}
+
 /** Client plugin context subset used here. */
 export interface ClientContext {
   locale: LocaleService
@@ -105,6 +112,8 @@ export interface ClientContext {
   sidebarRight?: SidebarRightService
   /** Present only when `@deepseek-ai/dsh-client-ui-sidebar-right` is injected. */
   sidebarRightTabs?: SidebarTabRegistry
+  /** Panel navigation exposed by the shell (`ctx.layout`). */
+  layout?: LayoutService
   get?(name: string): unknown
 }
 
@@ -185,7 +194,16 @@ export interface TaskView {
   stalledMs: number | null
   activeWorkers: number | null
   peakWorkers: number | null
+  /** Connections requested when the task was created (0.2.2). */
+  requestedConnections: number | null
+  /** Connections planned at start (the controller's initial population). */
   connections: number | null
+  /** Adaptive concurrency ceiling for this task (1..128). */
+  maxConnections: number | null
+  /** Controller's live worker target; 0 before the transfer is planned. */
+  targetWorkers: number | null
+  /** Bytes transferred in this run (excludes bytes adopted from `.part`). */
+  transferredBytes: number | null
   chunkSize: number | null
   resumedChunks: number | null
   rangeSupported: boolean | null
@@ -416,11 +434,35 @@ export interface Aggregate {
   riskCount: number
 }
 
+/**
+ * One owning session's display identity, resolved by the host from the session
+ * log (`sessionTitle`) and the durable workspace registry. A host without those
+ * services reports an empty catalog; the UI then falls back to the short id.
+ */
+export interface SessionMeta {
+  id: string
+  title: string | null
+  live: boolean
+  cwd: string | null
+  workspaceId: string | null
+  workspaceTitle: string | null
+  workspacePath: string | null
+}
+
+/** One durable workspace (host workspace registry). */
+export interface WorkspaceMeta {
+  id: string
+  title: string
+  path: string
+}
+
 /** `list` action value after normalization (`{kernel, tasks, aggregate}`). */
 export interface ListValue {
   kernel: KernelInfo
   tasks: TaskView[]
   aggregate: Aggregate
+  sessions: Record<string, SessionMeta>
+  workspaces: WorkspaceMeta[]
 }
 
 /** `get` action value after normalization (`{task, detail, events}`). */
@@ -446,3 +488,34 @@ export interface GetOptions {
 
 /** Control verbs accepted by the host route. */
 export type ControlOp = 'pause' | 'resume' | 'cancel' | 'retry' | 'remove'
+
+/** How the host opens a downloaded file. */
+export type OpenTarget = 'file' | 'folder'
+
+/** Per-id outcome of one control request (batch or single). */
+export interface ControlOutcome {
+  id: string
+  ok: boolean
+  task: TaskView | null
+  error: { code: string; message: string } | null
+  /** Whether the owning agent was told this was a user action. */
+  notified: boolean
+}
+
+/** `control` action value after normalization. */
+export interface ControlResult {
+  action: ControlOp
+  results: ControlOutcome[]
+}
+
+/** `open` action value after normalization. */
+export interface OpenResult {
+  opened: boolean
+  path: string | null
+  error: { code: string; message: string } | null
+}
+
+/** `start` action value after normalization. */
+export interface StartResult {
+  task: TaskView
+}

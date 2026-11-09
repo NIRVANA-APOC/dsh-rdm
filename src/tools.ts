@@ -1,9 +1,9 @@
 /**
  * Model-facing tool surface of `dsh-rdm`.
  *
- * Six tools drive the resident RDM kernel through {@link KernelService}:
+ * Seven tools drive the resident RDM kernel through {@link KernelService}:
  * `rdm_download`, `rdm_probe`, `rdm_tasks`, `rdm_wait`, `rdm_control`,
- * `rdm_history`.
+ * `rdm_history`, `rdm_search`.
  *
  * Conventions:
  *  - parameters are schema-validated before `execute` runs;
@@ -30,6 +30,7 @@ import {
   normalizeTaskId,
 } from './kernel-client'
 import type { KernelService } from './kernel-client'
+import type { SessionCatalogLike, SessionMeta } from './session-catalog'
 import {
   DEFAULT_HISTORY_EVENTS,
   DEFAULT_HISTORY_SAMPLES,
@@ -501,7 +502,7 @@ export function renderControlReceipt(value: ControlValue): string[] {
 }
 
 /**
- * History receipt (0.3.0/0.2.2): one summary line, the two JSONL paths, the
+ * History receipt (0.3.0): one summary line, the two JSONL paths, the
  * returned sample range, one `build=` line when the recording spans kernel
  * builds, and (on failure) the canonical error + follow-up.
  *
@@ -533,6 +534,41 @@ export function renderHistoryReceipt(value: HistoryValue, offset = 0): string[] 
   return lines
 }
 
+/**
+ * Search receipt (design §6): one header line
+ * (`search scope=all matches=3 total=14`), then one bounded record line per
+ * match (`task t_… state=running progress=42% …`).
+ *
+ * Field order follows the design example (id, state, progress, session,
+ * workspace, file); the live connection count is appended after `file` so a
+ * verifier matching the example prefix still succeeds. The URL is deliberately
+ * not dumped: a signed URL is long and may carry credentials, while the id is
+ * the stable handle for every follow-up call.
+ */
+export function renderSearchReceipt(value: SearchValue): string[] {
+  const lines: string[] = [
+    `search scope=${value.scope} matches=${value.matches.length} total=${value.total}`,
+  ]
+  for (const match of value.matches) {
+    lines.push(
+      [
+        `task ${match.id}`,
+        `state=${match.status}`,
+        `progress=${formatPercent(match.percent)}`,
+        `session="${collapse(match.sessionTitle ?? DASH, 60)}"`,
+        `workspace="${collapse(match.workspaceTitle ?? DASH, 60)}"`,
+        `file="${collapse(match.fileName !== '' ? match.fileName : DASH, 120)}"`,
+        `connections=${match.activeWorkers}/${match.targetWorkers}`,
+      ].join(' '),
+    )
+  }
+  if (value.error != null) {
+    lines.push(renderErrorLine(value.error))
+    lines.push(renderNextLine(value.hint))
+  }
+  return lines
+}
+
 // ── Error mapping ───────────────────────────────────────────────────────────
 
 /** Actionable follow-up per kernel error code. */
@@ -547,7 +583,7 @@ const ERROR_HINTS: Record<string, string> = {
   kernel_stopped: 'The plugin is unloading/reloading; retry after it registers rdm_* again.',
   kernel_not_running: 'The kernel child is not ready yet; retry in a moment.',
   protocol_mismatch:
-    'This plugin needs a protocol-2 (kernel 0.2.2) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
+    'This plugin needs a protocol-2 (kernel 0.3.0) build. Rebuild the kernel for this plugin or point the plugin config "kernelPath" at a matching binary; protocol 1 binaries cannot be used.',
   timeout:
     'The kernel is still busy. Check progress with rdm_tasks (taskId=...) and rdm_wait instead of resubmitting the same download.',
   cancelled: 'The call was cancelled; nothing else was changed.',
@@ -563,7 +599,7 @@ const ERROR_HINTS: Record<string, string> = {
   io: 'Local filesystem error; check that the destination directory exists and is writable.',
   unsupported: 'The kernel cannot honor this request; simplify the parameters (for example drop singleStream/insecure).',
   unsupported_method:
-    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.2.2 (dsh-rdm 0.2.2+) and retry.',
+    'The running kernel binary does not implement this method (it predates this plugin). Rebuild or upgrade the kernel binary to 0.3.0 (dsh-rdm 0.3.0+) and retry.',
   internal: 'Unexpected kernel error; retry once, then report it to the user with the kernel stderr tail.',
 }
 
@@ -662,7 +698,7 @@ function waitErrorHint(error: ToolError): string {
 function historyErrorHint(taskId: string, error: ToolError): string {
   if (error.code === 'not_found') return 'rdm_tasks without taskId lists the existing ids.'
   if (error.code === 'unsupported_method') {
-    return 'upgrade the kernel binary to 0.2.2 (dsh-rdm 0.2.2+); the running build does not implement rdm_history.'
+    return 'upgrade the kernel binary to 0.3.0 (dsh-rdm 0.3.0+); the running build does not implement rdm_history.'
   }
   return `retry rdm_history taskId=${taskId}; if it persists, report the kernel error to the user.`
 }
@@ -674,6 +710,120 @@ function historyHint(history: TaskHistory, includeEvents: boolean): string {
   }
   const events = includeEvents ? ` and ${history.events.length} recorded events` : ''
   return `Replay ${history.samples.length} samples${events}; rdm_tasks taskId=${history.taskId} shows the live state.`
+}
+
+// ── Search helpers ──────────────────────────────────────────────────────────
+
+/** Resolve owning-session labels through the optional catalog (never throws). */
+async function describeSessions(
+  catalog: SessionCatalogLike | null,
+  ids: readonly string[],
+): Promise<Record<string, SessionMeta>> {
+  if (catalog === null || ids.length === 0) return {}
+  try {
+    const result = await catalog.describe(ids)
+    const sessions = result?.sessions
+    return sessions !== null && typeof sessions === 'object' ? sessions : {}
+  } catch {
+    // Labels are decoration: an unlabelled search result is still useful.
+    return {}
+  }
+}
+
+/** Unique non-empty session ids of a scan page. */
+function sessionIdsOf(tasks: readonly TaskView[]): string[] {
+  const ids: string[] = []
+  for (const task of tasks) {
+    const sessionId = task.sessionId
+    if (typeof sessionId !== 'string' || sessionId === '' || ids.includes(sessionId)) continue
+    ids.push(sessionId)
+  }
+  return ids
+}
+
+/** Lower-case whitespace-separated query terms (all must match). */
+function searchTerms(query: unknown): string[] {
+  if (typeof query !== 'string') return []
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term.length > 0)
+}
+
+/** Status filter as a set, or `null` for "any status". Throws on bad input. */
+function searchStatusSet(value: unknown): Set<string> | null {
+  const parsed = normalizeStatusFilter(value)
+  if (parsed === undefined) return null
+  return new Set(Array.isArray(parsed) ? parsed : [parsed])
+}
+
+/**
+ * The case-insensitive haystack one record is matched against: the fields the
+ * agent may know (id, name, URL, host, path, session/workspace label).
+ */
+function searchHaystack(task: TaskView, meta: SessionMeta | null): string {
+  return [
+    task.id,
+    task.fileName,
+    task.url,
+    task.finalUrl ?? '',
+    task.host,
+    task.path ?? '',
+    task.sessionId ?? '',
+    meta?.title ?? '',
+    meta?.workspaceTitle ?? '',
+  ]
+    .join('\n')
+    .toLowerCase()
+}
+
+/** Project one task plus its catalog labels into the bounded match shape. */
+function toSearchMatch(task: TaskView, meta: SessionMeta | null): SearchMatch {
+  const sessionTitle = meta?.title ?? null
+  return {
+    id: task.id,
+    status: task.status,
+    fileName: task.fileName,
+    url: task.url,
+    host: task.host,
+    sessionId: task.sessionId,
+    sessionTitle,
+    workspaceTitle: meta?.workspaceTitle ?? null,
+    title: sessionTitle ?? (task.fileName !== '' ? task.fileName : null),
+    percent: task.percent,
+    downloaded: task.downloaded,
+    total: task.total,
+    speedBps: task.speedBps,
+    targetWorkers: task.targetWorkers,
+    activeWorkers: task.activeWorkers,
+    createdAt: task.createdAt,
+    finishedAt: task.finishedAt,
+    updatedAt: Math.max(task.finishedAt ?? 0, task.startedAt ?? 0, task.createdAt),
+  }
+}
+
+/** Follow-up hint after an `rdm_search` list. */
+function searchHint(
+  scope: 'all' | 'session',
+  matches: readonly SearchMatch[],
+  total: number,
+  error: ToolError | null,
+): string {
+  if (error !== null) {
+    return error.code === 'not_found'
+      ? 'rdm_tasks without taskId lists the existing ids.'
+      : 'Refine the query or check the kernel with rdm_tasks.'
+  }
+  const first = matches[0]
+  if (first === undefined) {
+    return scope === 'session'
+      ? 'No record matched in this session; pass scope="all" to search every session.'
+      : 'No download record matched; try a shorter query, a task id, or omit the status filter.'
+  }
+  const follow = `Inspect one with rdm_tasks taskId=${first.id}, wait with rdm_wait, or control it with rdm_control.`
+  return total > matches.length
+    ? `Showing ${matches.length} of ${total} matches; raise limit or narrow the query. ${follow}`
+    : follow
 }
 
 // ── Session attribution ─────────────────────────────────────────────────────
@@ -1083,6 +1233,45 @@ const HISTORY_EVENT_SCHEMA: SchemaNode = objectNode({
   delayMs: nullableNode({ type: 'number' }),
 })
 
+/** `rdm_search` record cap (design §6: 1..50, default 10). */
+const SEARCH_DEFAULT_LIMIT = 10
+const SEARCH_MAX_LIMIT = 50
+
+/** How many kernel records `rdm_search` scans before local filtering. */
+const SEARCH_SOURCE_LIMIT = 100
+
+/** One `rdm_search` match: bounded task facts plus session/workspace labels. */
+const SEARCH_MATCH_SCHEMA: SchemaNode = objectNode({
+  id: str(),
+  status: enumOf(TASK_STATUSES),
+  fileName: str(),
+  url: str(),
+  host: str(),
+  sessionId: nullableNode({ type: 'string' }),
+  sessionTitle: nullableNode({ type: 'string' }),
+  workspaceTitle: nullableNode({ type: 'string' }),
+  title: nullableNode({ type: 'string' }),
+  percent: nullableNode({ type: 'number' }),
+  downloaded: num(),
+  total: nullableNode({ type: 'number' }),
+  speedBps: num(),
+  targetWorkers: num(),
+  activeWorkers: num(),
+  createdAt: num(),
+  finishedAt: nullableNode({ type: 'number' }),
+  updatedAt: num(),
+})
+
+/** `rdm_search` output schema (design §6). */
+const SEARCH_VALUE_SCHEMA: SchemaNode = objectNode({
+  kernel: req(KERNEL_SCHEMA),
+  matches: arrayNode(SEARCH_MATCH_SCHEMA),
+  total: num(),
+  scope: { type: 'string', enum: ['all', 'session'], required: true },
+  error: nullableNode(TOOL_ERROR_SCHEMA),
+  hint: str(),
+})
+
 // ── Argument / value types ──────────────────────────────────────────────────
 
 interface DownloadArgs {
@@ -1208,6 +1397,48 @@ interface HistoryValue {
   hint: string
 }
 
+interface SearchArgs {
+  query?: string
+  taskId?: string
+  status?: string
+  limit?: number
+  scope?: 'all' | 'session'
+}
+
+/** One bounded search hit: the task facts a follow-up call needs. */
+interface SearchMatch {
+  id: string
+  status: TaskView['status']
+  fileName: string
+  url: string
+  host: string
+  sessionId: string | null
+  sessionTitle: string | null
+  workspaceTitle: string | null
+  /** Display label: the session title, else the file name. */
+  title: string | null
+  percent: number | null
+  downloaded: number
+  total: number | null
+  speedBps: number
+  targetWorkers: number
+  activeWorkers: number
+  createdAt: number
+  finishedAt: number | null
+  /** Last activity: finished/started/created, whichever is newest. */
+  updatedAt: number
+}
+
+interface SearchValue {
+  kernel: KernelStatusView
+  matches: SearchMatch[]
+  /** Match count before the `limit` slice. */
+  total: number
+  scope: 'all' | 'session'
+  error: ToolError | null
+  hint: string
+}
+
 // ── Execution helpers ───────────────────────────────────────────────────────
 
 /** Aggregate value used when a list call failed before producing one. */
@@ -1323,11 +1554,18 @@ function controlHint(action: ControlAction, taskId: string, deletePart: boolean)
 // ── Tool definitions ────────────────────────────────────────────────────────
 
 /**
- * Build the six model-facing tool definitions bound to one kernel service.
+ * Build the seven model-facing tool definitions bound to one kernel service.
  * Exported separately from {@link registerRdmTools} so tests and docs can
  * inspect the surface (and its receipts) without a host context.
+ *
+ * @param kernel - The shared kernel service.
+ * @param catalog - Optional session/workspace catalog used by `rdm_search` for
+ *   session and workspace labels; without it those labels are `null`.
  */
-export function createRdmTools(kernel: KernelService): ToolDefinition<any, any>[] {
+export function createRdmTools(
+  kernel: KernelService,
+  catalog: SessionCatalogLike | null = null,
+): ToolDefinition<any, any>[] {
   return [
     defineTool<DownloadArgs, DownloadValue>({
       name: 'rdm_download',
@@ -1847,17 +2085,148 @@ export function createRdmTools(kernel: KernelService): ToolDefinition<any, any>[
           }
         }),
     }),
+
+    defineTool<SearchArgs, SearchValue>({
+      name: 'rdm_search',
+      description:
+        'Find download records across sessions. Matches the query against task id, file name, URL, host, ' +
+        'path and owning session title; returns bounded records with their ids, session/workspace labels ' +
+        'and status so you can inspect them with rdm_tasks, wait with rdm_wait, or control them with ' +
+        'rdm_control.',
+      parameters: {
+        query: {
+          type: 'string',
+          description: 'Whitespace-separated search terms; every term must match (case-insensitive).',
+        },
+        taskId: { type: 'string', description: 'Exact task id shortcut; returns that one record.' },
+        status: {
+          type: 'string',
+          description: `Status filter: ${TASK_STATUSES.join('|')} (comma-separate for several).`,
+        },
+        limit: {
+          type: 'number',
+          description: `Max records to return (1..${SEARCH_MAX_LIMIT}, default ${SEARCH_DEFAULT_LIMIT}).`,
+        },
+        scope: {
+          type: 'string',
+          enum: ['all', 'session'],
+          description: 'Search scope: "all" (default, every session) or "session" (the calling session).',
+        },
+      },
+      output: {
+        schema: SEARCH_VALUE_SCHEMA,
+        render: (_args, value) => [
+          { type: 'text', text: renderSearchReceipt(value).join('\n') },
+        ],
+      },
+      execute: (args, exec: ToolRunContext) =>
+        runTool(async () => {
+          exec.signal.throwIfAborted()
+          const limit = clampInteger(args.limit, SEARCH_DEFAULT_LIMIT, 1, SEARCH_MAX_LIMIT)
+          const sessionId = sessionIdFromExec(exec)
+          const scope: 'all' | 'session' = args.scope === 'session' ? 'session' : 'all'
+          // Exact-id shortcut: a missing id is a recoverable value, not a throw,
+          // so the model sees a normal `error code=not_found` receipt.
+          if (args.taskId !== undefined && args.taskId.trim() !== '') {
+            const taskId = normalizeTaskId(args.taskId)
+            try {
+              const result = await kernel.get(taskId, 0, exec.signal)
+              const labels = await describeSessions(
+                catalog,
+                result.task.sessionId === null ? [] : [result.task.sessionId],
+              )
+              const meta = result.task.sessionId === null ? null : labels[result.task.sessionId] ?? null
+              return {
+                kernel: kernel.kernelStatus(),
+                matches: [toSearchMatch(result.task, meta)],
+                total: 1,
+                scope,
+                error: null,
+                hint: `Inspect it with rdm_tasks taskId=${taskId}, wait with rdm_wait, or control it with rdm_control.`,
+              } satisfies SearchValue
+            } catch (error) {
+              const recoverable = recoverableError(error)
+              if (recoverable === null) throw error
+              return {
+                kernel: kernel.kernelStatus(),
+                matches: [],
+                total: 0,
+                scope,
+                error: recoverable,
+                hint: searchHint(scope, [], 0, recoverable),
+              } satisfies SearchValue
+            }
+          }
+          // An explicit session scope without a caller session has nothing to
+          // scope to; say so instead of silently returning every session.
+          if (scope === 'session' && sessionId === null) {
+            return {
+              kernel: kernel.kernelStatus(),
+              matches: [],
+              total: 0,
+              scope,
+              error: null,
+              hint: 'No calling session is available; pass scope="all" to search every session.',
+            } satisfies SearchValue
+          }
+          const terms = searchTerms(args.query)
+          const statuses = searchStatusSet(args.status)
+          try {
+            const listed = await kernel.list({ limit: SEARCH_SOURCE_LIMIT }, exec.signal)
+            const labels = await describeSessions(catalog, sessionIdsOf(listed.tasks))
+            const matched: SearchMatch[] = []
+            for (const task of listed.tasks) {
+              if (statuses !== null && !statuses.has(task.status)) continue
+              if (scope === 'session' && task.sessionId !== sessionId) continue
+              const meta = task.sessionId === null ? null : labels[task.sessionId] ?? null
+              if (terms.length > 0) {
+                const haystack = searchHaystack(task, meta)
+                if (!terms.every((term) => haystack.includes(term))) continue
+              }
+              matched.push(toSearchMatch(task, meta))
+            }
+            const total = matched.length
+            const matches = matched.slice(0, limit)
+            return {
+              kernel: kernel.kernelStatus(),
+              matches,
+              total,
+              scope,
+              error: null,
+              hint: searchHint(scope, matches, total, null),
+            } satisfies SearchValue
+          } catch (error) {
+            const recoverable = recoverableError(error)
+            if (recoverable === null) throw error
+            return {
+              kernel: kernel.kernelStatus(),
+              matches: [],
+              total: 0,
+              scope,
+              error: recoverable,
+              hint: searchHint(scope, [], 0, recoverable),
+            } satisfies SearchValue
+          }
+        }),
+    }),
   ]
 }
 
 /**
- * Register the six `rdm_*` tools on the host tool registry.
+ * Register the seven `rdm_*` tools on the host tool registry.
  *
  * @param ctx - Host plugin context (must provide `ctx.tools`).
  * @param kernel - The shared kernel service.
+ * @param catalog - Optional session/workspace catalog for `rdm_search` labels.
  */
-export function registerRdmTools(ctx: HostContext, kernel: KernelService): void {
-  for (const tool of createRdmTools(kernel)) {
+export function registerRdmTools(
+  ctx: HostContext,
+  kernel: KernelService,
+  catalog: SessionCatalogLike | null = null,
+): void {
+  for (const tool of createRdmTools(kernel, catalog)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-rdm: tool ${tool.name}`)
   }
 }
+
+

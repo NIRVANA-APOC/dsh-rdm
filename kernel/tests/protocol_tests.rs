@@ -120,9 +120,9 @@ fn ready(kernel: &KernelProcess) -> Value {
     let ready = kernel.next_line(Duration::from_secs(20)).expect("ready line");
     assert_eq!(ready["event"], "ready");
     assert_eq!(ready["protocol"], 2, "{ready}");
-    // 0.2.2 unifies the kernel and package versions: the ready frame reports
-    // 0.2.2, and the history meta line records the same identity.
-    assert_eq!(ready["kernel"]["version"], "0.2.2", "{ready}");
+    // The kernel and package share one version: the ready frame reports the
+    // crate version, and the history meta line records the same identity.
+    assert_eq!(ready["kernel"]["version"], env!("CARGO_PKG_VERSION"), "{ready}");
     assert!(ready["kernel"]["pid"].as_u64().unwrap_or(0) > 0);
     ready
 }
@@ -493,7 +493,7 @@ fn malformed_and_unknown_requests_are_reported() {
     assert_eq!(response["error"]["code"], "unsupported_method");
     let message = response["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("nope"), "message must name the method: {message}");
-    assert!(message.contains("0.2.2"), "message must name the kernel version: {message}");
+    assert!(message.contains(env!("CARGO_PKG_VERSION")), "message must name the kernel version: {message}");
 
     let response = kernel.request("get", "get", json!({"id": "t_missing"}));
     assert_eq!(response["ok"], false);
@@ -510,3 +510,4 @@ fn malformed_and_unknown_requests_are_reported() {
     let _ = kernel.wait_exit(Duration::from_millis(10));
     let _ = std::fs::remove_dir_all(&dir);
 }
+

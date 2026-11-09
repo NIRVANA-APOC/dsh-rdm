@@ -1,18 +1,20 @@
 // The session review surface — the body of the native right-sidebar tab
 // (`dsh-rdm/downloads`, kind `rdm`).
 //
-// Same visual language and the same evidence drawer as the global page, scoped
-// to one session (docs/design/0.2.0-agent-native.md §6.3). The pane itself is
-// the surface: no outer card, a sticky two-line header, hairline-separated
-// records newest first, a micro recorder strip per record.
+// Same record primitive and evidence drawer as the global workbench, scoped to
+// one session: no composer, no filters, no batch bar; the row actions are the
+// same pause/resume/open/delete verbs so a human can intervene from either
+// surface.
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { controlTask, errorText } from './api'
+import { controlTasks, errorText, openTask } from './api'
+import { copyText } from './clipboard'
 import { useLedger, type HistorySeed } from './data'
 import { formatSpeed } from './format'
 import { RecordRow } from './ledger'
 import { fileNameOf, groupBySession } from './model'
-import { LiveRegion, Note, ReviewStyle, SkeletonRows } from './primitives'
+import { EmptyState, LiveRegion, Note, ReviewStyle, SkeletonRows, TextButton } from './primitives'
+import { DownloadGlyph } from './icons'
 import type { NativeTabFrameworkProps, TFunction, TaskView } from './types'
 
 /**
@@ -54,22 +56,18 @@ export interface SessionSurfaceProps {
   visible?: boolean
 }
 
-/** Header: active count + aggregate rate, with verified and risk counts. */
-function SessionHeader({ t, state, verified }: { t: TFunction; state: ReturnType<typeof useLedger>; verified: number }) {
-  const risk = state.aggregate.riskCount
+/** Header: active count + aggregate rate. */
+function SessionHeader({ t, state }: { t: TFunction; state: ReturnType<typeof useLedger> }) {
   const rate = state.aggregate.nowBps
+  const active = state.aggregate.active
   return (
     <header className="rdm2-session-header">
       <div className="rdm2-session-title-line">
         <h1 className="rdm2-session-title">{t('session.title')}</h1>
-        <span className="rdm2-session-counts">
-          {verified > 0 ? <span>{t('session.verifiedCount', { n: verified })}</span> : null}
-          {risk > 0 ? <span className="rdm2-session-risk">{t('session.riskCount', { n: risk })}</span> : null}
+        <span className="rdm2-session-sub">
+          <span>{t('counts.active', { n: active })}</span>
+          <span>{rate > 0 ? formatSpeed(rate) : t('rates.idle')}</span>
         </span>
-      </div>
-      <div className="rdm2-session-sub">
-        <span>{t('counts.active', { n: state.aggregate.active })}</span>
-        <span>{rate > 0 ? formatSpeed(rate) : t('rates.idle')}</span>
       </div>
     </header>
   )
@@ -88,22 +86,56 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<TaskView | null>(null)
 
   const sorted = useMemo(() => {
     if (!scoped) return []
     const group = groupBySession(state.tasks.filter((task) => task.sessionId === sessionId))[0]
     return group === undefined ? [] : group.tasks
   }, [scoped, sessionId, state.tasks])
-  const verified = useMemo(() => state.tasks.filter((task) => task.verified === true).length, [state.tasks])
 
-  const stop = (task: TaskView): void => {
-    setActionError(null)
-    void controlTask(task.id, 'cancel')
-      .then(() => setFeedback(t('record.stopRequested', { name: fileNameOf(task) })))
-      .catch((error: unknown) => setActionError(errorText(t, error)))
-  }
   const toggle = (id: string): void => {
     setExpandedId((previous) => (previous === id ? null : id))
+  }
+
+  const control = async (task: TaskView, action: 'pause' | 'resume' | 'remove'): Promise<void> => {
+    setActionError(null)
+    try {
+      const result = await controlTasks([task.id], action, { notify: action !== 'resume' })
+      const outcome = result.results[0]
+      if (outcome !== undefined && !outcome.ok && outcome.error !== null) {
+        setActionError(errorText(t, outcome.error))
+        return
+      }
+      const base =
+        action === 'pause'
+          ? t('record.pausedOne', { name: fileNameOf(task) })
+          : action === 'resume'
+            ? t('record.resumedOne', { name: fileNameOf(task) })
+            : t('record.deletedOne', { name: fileNameOf(task) })
+      setFeedback(outcome?.notified === true ? `${base} ${t('record.agentNotified')}` : base)
+      if (action === 'remove') setConfirmDelete(null)
+    } catch (error) {
+      setActionError(errorText(t, error))
+    }
+  }
+
+  const open = async (task: TaskView, target: 'file' | 'folder'): Promise<void> => {
+    setActionError(null)
+    try {
+      const result = await openTask(task.id, target)
+      if (!result.opened) {
+        setActionError(result.error === null ? t('error.code.open_failed') : errorText(t, result.error))
+        return
+      }
+      setFeedback(target === 'file' ? t('record.openedFile', { name: fileNameOf(task) }) : t('record.openedFolder'))
+    } catch (error) {
+      setActionError(errorText(t, error))
+    }
+  }
+
+  const copyId = async (task: TaskView): Promise<void> => {
+    setFeedback((await copyText(task.id)) ? t('record.idCopied') : t('common.copyFailed'))
   }
 
   const loading = scoped && state.phase === 'loading'
@@ -117,7 +149,7 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
       aria-hidden={visible ? undefined : 'true'}
     >
       <ReviewStyle />
-      <SessionHeader t={t} state={state} verified={verified} />
+      <SessionHeader t={t} state={state} />
       {!scoped ? <Note>{t('session.unknownScope')}</Note> : null}
       {state.banner !== null && state.phase === 'ready' ? (
         <div className="rdm2-banner" role="alert">
@@ -133,6 +165,26 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
       {actionError !== null ? (
         <div className="rdm2-banner" role="alert">
           <span className="rdm2-banner-title">{actionError}</span>
+          <TextButton label={t('common.dismiss')} onClick={() => setActionError(null)}>
+            {t('common.dismiss')}
+          </TextButton>
+        </div>
+      ) : null}
+
+      {confirmDelete !== null ? (
+        <div className="rdm2-confirm rdm2-confirm-inline" role="alertdialog" aria-label={t('record.deleteConfirmTitle')}>
+          <div className="rdm2-confirm-copy">
+            <span className="rdm2-confirm-title">{t('record.deleteConfirmOne', { name: fileNameOf(confirmDelete) })}</span>
+            <span className="rdm2-confirm-hint">{t('record.deleteConfirmHint')}</span>
+          </div>
+          <div className="rdm2-confirm-actions">
+            <TextButton label={t('common.cancel')} onClick={() => setConfirmDelete(null)}>
+              {t('common.cancel')}
+            </TextButton>
+            <TextButton label={t('common.delete')} tone="danger" onClick={() => void control(confirmDelete, 'remove')}>
+              {t('common.delete')}
+            </TextButton>
+          </div>
         </div>
       ) : null}
 
@@ -142,7 +194,7 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
             <SkeletonRows rows={2} />
           </div>
         ) : !scoped ? null : sorted.length === 0 ? (
-          <Note>{t('empty.session')}</Note>
+          <EmptyState icon={<DownloadGlyph size={20} />} title={t('empty.session')} />
         ) : (
           sorted.map((task) => (
             <RecordRow
@@ -153,6 +205,11 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
               history={state.history}
               expanded={expandedId === task.id}
               onToggle={toggle}
+              onPause={(target) => void control(target, 'pause')}
+              onResume={(target) => void control(target, 'resume')}
+              onDelete={(target) => setConfirmDelete(target)}
+              onOpen={(target, kind) => void open(target, kind)}
+              onCopyId={(target) => void copyId(target)}
               onReveal={
                 props.onReveal === undefined
                   ? undefined
@@ -160,7 +217,6 @@ function SessionSurfaceCore(props: SessionSurfaceCoreProps) {
                       props.onReveal?.(path, sessionId)
                     }
               }
-              onStop={stop}
               domId={`rdm2-session-drawer-${task.id}`}
             />
           ))
@@ -209,3 +265,4 @@ export function makeSessionTabTitle(t: TFunction) {
     return React.createElement('span', { className: 'rdm2-tab-title' }, t('session.title'))
   }
 }
+

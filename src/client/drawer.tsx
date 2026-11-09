@@ -18,6 +18,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { errorText } from './api'
+import { copyText } from './clipboard'
 import type { DetailState } from './data'
 import { eventDetail, formatBytes, formatClock, formatDuration, formatElapsed, formatSpeed, hashPrefix, shortHash } from './format'
 import { canStop, taskPath } from './model'
@@ -75,33 +76,7 @@ export interface EvidenceDrawerProps {
   id: string
 }
 
-type CopyKind = 'path' | 'hash' | null
-
-/** Copy text with a graceful fallback for denied clipboard environments. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // Fall through to the selection-based fallback below.
-  }
-  try {
-    const area = document.createElement('textarea')
-    area.value = text
-    area.setAttribute('readonly', '')
-    area.style.position = 'fixed'
-    area.style.opacity = '0'
-    document.body.appendChild(area)
-    area.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(area)
-    return ok
-  } catch {
-    return false
-  }
-}
+type CopyKind = 'path' | 'hash' | 'id' | null
 
 /** The evidence drawer for one record. */
 export function EvidenceDrawer(props: EvidenceDrawerProps) {
@@ -144,7 +119,7 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
   const actual = verification?.sha256 ?? task.sha256
   const verdict = verification?.verified ?? task.verified
 
-  const copyLabel = copied === 'path' ? t('record.copiedPath') : copied === 'hash' ? t('record.copiedHash') : copyFailed ? t('common.copyFailed') : ''
+  const copyLabel = copied === 'path' ? t('record.copiedPath') : copied === 'hash' ? t('record.copiedHash') : copied === 'id' ? t('record.idCopied') : copyFailed ? t('common.copyFailed') : ''
   const sealHash = hashPrefix(actual ?? expected)
 
   const server = full?.server ?? null
@@ -192,6 +167,16 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
             {t('record.copyHash')}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="rdm2-button"
+          data-rdm2-action="copy-id"
+          onClick={() => {
+            void copyText(task.id).then((ok) => flash('id', ok))
+          }}
+        >
+          {t('record.copyId')}
+        </button>
         {onStop !== undefined && canStop(task) ? (
           <button
             type="button"
@@ -244,6 +229,7 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
                 <Fact label={t('facts.redirects')} value={t('drawer.none')} />
               )}
               <Fact label={t('facts.session')} value={task.sessionId ?? t('group.unattributed')} mono wide />
+              <Fact label={t('facts.taskId')} value={task.id} mono wide />
             </dl>
           </Section>
 
@@ -308,7 +294,10 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
                 label={t('facts.validatorsMatched')}
                 value={resumeState === null || resumeState.validatorsMatched === null ? '—' : resumeState.validatorsMatched ? t('facts.yes') : t('facts.no')}
               />
-              <Fact label={t('facts.workers')} value={task.activeWorkers === null ? '—' : `${task.activeWorkers}${task.connections === null ? '' : ` / ${task.connections}`}`} />
+              <Fact label={t('facts.workers')} value={task.activeWorkers === null ? '—' : String(task.activeWorkers)} />
+              <Fact label={t('facts.workersTarget')} value={task.targetWorkers === null ? '—' : String(task.targetWorkers)} />
+              <Fact label={t('facts.workersRequested')} value={task.requestedConnections === null ? '—' : String(task.requestedConnections)} />
+              <Fact label={t('facts.workersMax')} value={task.maxConnections === null ? '—' : String(task.maxConnections)} />
               <Fact label={t('facts.peakWorkers')} value={task.peakWorkers === null ? '—' : String(task.peakWorkers)} />
               <Fact label={t('facts.chunkSize')} value={task.chunkSize === null ? '—' : formatBytes(task.chunkSize)} />
               <Fact label={t('facts.retries')} value={task.retries === null ? '—' : String(task.retries)} />

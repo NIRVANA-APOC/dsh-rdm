@@ -9,7 +9,7 @@ object per line, `\n` terminated, no pretty printing.
 * The kernel exits when `stdin` reaches EOF (parent plugin gone) or on `shutdown`.
 * The kernel never listens on a network port. All control is parent→child stdio.
 
-Protocol v2 (kernel 0.2.2) is the first "agent-native" revision: tasks carry
+Protocol v2 (kernel 0.3.0) is the first "agent-native" revision: tasks carry
 session attribution and live telemetry windows, probes return a full server-fact
 record (ranges, validators, signed-URL expiry, TLS validity, redirects, timing,
 recommendation), and the hot path (`list`/notifications) stays a flat, cheap
@@ -24,14 +24,19 @@ resume compatibility is keyed on stable identity with an explicit
 persisted as JSONL under the kernel data dir and read back through the new
 `history` method. See [0.2.1 additive changes](#021-additive-changes) at the end.
 
-0.2.2 is the **live ModelScope pass** (kernel identity is **0.2.2**, unified with the plugin version;
-protocol stays 2) and is additive as well: every JSONL samples file gains one
-per-run **meta record** for build attribution (a session may span kernel
-builds), `TaskView` gains `transferredBytes` (this-run rate accounting) and
-`requestedConnections` (requested vs initial workers), the controller judges
-growth on **aggregate** throughput with saturation backoff and tail freeze, tail
-chunks retry fast, and an unknown RPC method returns the stable
-`unsupported_method` error. See [0.2.2 additive changes](#022-additive-changes).
+0.2.2 was the **live ModelScope pass** (kernel identity 0.2.2 at the time) and
+is additive as well: every JSONL samples file gains one per-run **meta record**
+for build attribution (a session may span kernel builds), `TaskView` gains
+`transferredBytes` (this-run rate accounting) and `requestedConnections`
+(requested vs initial workers), the controller judges growth on **aggregate**
+throughput with saturation backoff and tail freeze, tail chunks retry fast, and
+an unknown RPC method returns the stable `unsupported_method` error. See
+[0.2.2 additive changes](#022-additive-changes).
+
+**0.3.0** does not change the wire protocol: the kernel identity is now `0.3.0`
+(unified with the plugin package) and every method, field and notification keeps
+the protocol-2 shape. Recordings written by 0.3.0 identify themselves through the
+existing per-run meta record.
 
 This protocol is private to the plugin: it is versioned here, and no
 compatibility with other downloaders, their CLIs or their persisted state is
@@ -45,7 +50,7 @@ promised or implemented.
    `interrupted` (or auto-resumes them when `autoResume` is true), then writes:
 
    ```json
-   {"event":"ready","protocol":2,"kernel":{"version":"0.2.2","pid":1234,"dataDir":"C:\\\\...\\\\dsh-rdm"}}
+   {"event":"ready","protocol":2,"kernel":{"version":"0.3.0","pid":1234,"dataDir":"C:\\\\...\\\\dsh-rdm"}}
    ```
 
 3. Plugin sends `initialize` (optional but recommended) with session defaults.
@@ -480,7 +485,7 @@ Result:
 
 ```jsonc
 {"protocol":2,
- "kernel":{"version":"0.2.2","pid":1234,"dataDir":"C:\\\\Users\\\\x\\\\.dsh\\\\dsh-rdm"},
+ "kernel":{"version":"0.3.0","pid":1234,"dataDir":"C:\\\\Users\\\\x\\\\.dsh\\\\dsh-rdm"},
  "config":{"defaultDir":"C:\\\\Downloads","connections":8,"maxConnections":128,
            "chunkSizeBytes":0,"speedLimitBps":0,"maxAttempts":6,"autoResume":true,
            "logLevel":"warn","fsyncOnComplete":false}}
@@ -600,7 +605,7 @@ Result: `{"task": TaskView | null}` (`null` for `remove`).
 Result:
 
 ```jsonc
-{"protocol":2,"kernel":{"version":"0.2.2","pid":1234,"uptimeMs":123456,
+{"protocol":2,"kernel":{"version":"0.3.0","pid":1234,"uptimeMs":123456,
   "dataDir":"C:\\\\Users\\\\x\\\\.dsh\\\\dsh-rdm"},
  "tasks":{"total":3,"queued":0,"running":1,"paused":1,"completed":1,
           "failed":0,"cancelled":0,"interrupted":0},
@@ -658,7 +663,7 @@ Result:
   "sampleStride": 1,     // 1 = consecutive rows; >1 = evenly downsampled
   "offset": 0,           // resolved first-sample offset of the returned page
   "meta": [ {            // per-run build/plan attribution (0.2.2; empty for 0.2.1-era files)
-    "kind": "meta", "t": 1794197622684, "kernelVersion": "0.2.2", "pid": 1234,
+    "kind": "meta", "t": 1794197622684, "kernelVersion": "0.3.0", "pid": 1234,
     "taskId": "t_…", "run": 1, "phase": "plan", "url": "<redacted>",
     "fileName": "a.gguf", "totalBytes": 22360456160, "chunkSize": 8388608,
     "chunks": 2666, "requestedConnections": 16, "initialWorkers": 16,
@@ -686,7 +691,7 @@ Result: `{}`; kernel persists state and exits within 2 seconds.
 ## Notifications
 
 ```jsonc
-{"event":"ready","protocol":2,"kernel":{"version":"0.2.2","pid":1234,"dataDir":"..."}}
+{"event":"ready","protocol":2,"kernel":{"version":"0.3.0","pid":1234,"dataDir":"..."}}
 {"event":"task","task": TaskView}
 ```
 
@@ -920,3 +925,4 @@ Protocol stays **2** and the envelope is unchanged; release 0.2.2 (kernel
 9. No tool parameter changes; `rdm_history` derives `builds` tags from the meta
    records and adds one `build=` receipt line when they exist. No new event
    kinds.
+

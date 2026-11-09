@@ -172,3 +172,22 @@ export function progressFraction(downloaded: number, total: number | null): numb
   if (total === null || total <= 0) return 0
   return clamp(downloaded / total, 0, 1)
 }
+
+/** Integer percent copy (`42%`); unknown stays empty, never `0%`. */
+export function formatPercent(percent: number | null | undefined): string {
+  if (typeof percent !== 'number' || !isFinite(percent)) return ''
+  return `${Math.round(clamp(percent, 0, 100))}%`
+}
+
+/** A task id shortened for a dense chip; the full id is the copy payload. */
+export function shortTaskId(id: string, length = 11): string {
+  const trimmed = id.trim()
+  if (trimmed.length <= length) return trimmed
+  return `${trimmed.slice(0, length)}…`
+}
+
+/** A file name without its extension, for tight titles. */
+export function stemOf(fileName: string): string {
+  const dot = fileName.lastIndexOf('.')
+  return dot > 0 ? fileName.slice(0, dot) : fileName
+}

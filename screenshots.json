@@ -1,7 +1,12 @@
 [
   "assets/screenshots/review-light.png",
+  "assets/screenshots/review-batch.png",
+  "assets/screenshots/review-popup.png",
   "assets/screenshots/review-detail.png",
   "assets/screenshots/review-session-light.png",
   "assets/screenshots/review-session-dark.png",
-  "assets/screenshots/review-mobile.png"
+  "assets/screenshots/review-mobile.png",
+  "assets/screenshots/panel-light.png",
+  "assets/screenshots/panel-dark.png",
+  "assets/screenshots/panel-mobile.png"
 ]

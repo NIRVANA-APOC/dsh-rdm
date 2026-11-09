@@ -2,8 +2,8 @@
 // normalized TaskView into the words and marks the UI shows. No JSX, no React,
 // no network — this module is trivially reviewable and testable.
 
-import { formatBytes, formatDuration, formatRemaining, hashPrefix, taskStateOf } from './format'
-import type { TFunction, TaskView } from './types'
+import { formatBytes, formatDuration, formatRemaining, hashPrefix, shortSessionId, taskStateOf } from './format'
+import type { SessionMeta, TFunction, TaskView, WorkspaceMeta } from './types'
 
 /** Localized status word for a kernel status code. */
 export function statusLabel(t: TFunction, status: string): string {
@@ -159,45 +159,334 @@ function errorCause(t: TFunction, code: string): string {
   return localized === key ? code : localized
 }
 
-/** Rows grouped by owning session, groups in recency order, records newest first. */
+/* -------------------------------------------------------------- grouping */
+
+/** One owning session inside a workspace group. */
 export interface SessionGroup {
   sessionId: string | null
+  /** Raw log-backed title, or null when the host has no catalog entry. */
+  title: string | null
   tasks: TaskView[]
+  active: number
+  done: number
+  failed: number
   nowBps: number
-  records: number
+  lastActivity: number
 }
+
+/** Records grouped workspace first, then session (the human's mental model). */
+export interface WorkspaceGroup {
+  workspaceId: string | null
+  title: string | null
+  path: string | null
+  sessions: SessionGroup[]
+  tasks: TaskView[]
+  active: number
+  done: number
+  failed: number
+  lastActivity: number
+}
+
+/** The state buckets the stat cards and filters share. */
+export type StatusBucket = 'all' | 'active' | 'done' | 'failed'
 
 /** Recency key of one record (finished/started/created, newest wins). */
 function recencyOf(task: TaskView): number {
   return Math.max(task.finishedAt ?? 0, task.startedAt ?? 0, task.createdAt ?? 0)
 }
 
-/** Group a normalized task list for the global ledger. */
-export function groupBySession(tasks: TaskView[]): SessionGroup[] {
-  const groups = new Map<string, TaskView[]>()
-  for (const task of tasks) {
-    const key = task.sessionId ?? ''
-    const bucket = groups.get(key)
-    if (bucket === undefined) groups.set(key, [task])
-    else bucket.push(task)
+function bucketOf(task: TaskView): Exclude<StatusBucket, 'all'> {
+  if (task.status === 'failed') return 'failed'
+  if (task.status === 'completed') return 'done'
+  return 'active'
+}
+
+/** Count of records in each stat-card bucket. */
+export function cardCounts(tasks: TaskView[]): Record<Exclude<StatusBucket, 'all'>, number> {
+  const counts = { active: 0, done: 0, failed: 0 }
+  for (const task of tasks) counts[bucketOf(task)] += 1
+  return counts
+}
+
+/** Whether a record belongs to the active bucket (queued/probing/running). */
+export function isActive(task: TaskView): boolean {
+  return task.status === 'queued' || task.status === 'probing' || task.status === 'running'
+}
+
+/** Whether the record is finished in a terminal sense. */
+export function isFinished(task: TaskView): boolean {
+  return task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled'
+}
+
+/** Normalize a path for prefix comparison (`\` → `/`, trim trailing slash). */
+function normalPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** Longest-prefix workspace match for a directory (case-insensitive). */
+function workspaceOfPath(dir: string | null, workspaces: WorkspaceMeta[]): WorkspaceMeta | null {
+  if (dir === null || dir === '') return null
+  const target = normalPath(dir)
+  let best: WorkspaceMeta | null = null
+  let bestLength = -1
+  for (const workspace of workspaces) {
+    const candidate = normalPath(workspace.path)
+    if (candidate === '') continue
+    if (target === candidate || target.startsWith(`${candidate}/`)) {
+      if (candidate.length > bestLength) {
+        best = workspace
+        bestLength = candidate.length
+      }
+    }
   }
-  const result: SessionGroup[] = []
-  for (const [key, bucket] of groups) {
-    bucket.sort((left, right) => recencyOf(right) - recencyOf(left))
-    result.push({
-      sessionId: key === '' ? null : key,
-      tasks: bucket,
-      nowBps: bucket.reduce((sum, task) => sum + (task.status === 'running' || task.status === 'probing' ? task.speedBps : 0), 0),
-      records: bucket.length,
+  return best
+}
+
+/** The workspace a record belongs to, from its session, cwd or destination. */
+export function workspaceOf(
+  task: TaskView,
+  sessions: Record<string, SessionMeta>,
+  workspaces: WorkspaceMeta[],
+): { workspace: WorkspaceMeta | null; session: SessionMeta | null } {
+  const session = task.sessionId === null ? null : (sessions[task.sessionId] ?? null)
+  if (session !== null && session.workspaceId !== null) {
+    const direct = workspaces.find((workspace) => workspace.id === session.workspaceId)
+    if (direct !== undefined) return { workspace: direct, session }
+  }
+  const byCwd = workspaceOfPath(session?.workspacePath ?? session?.cwd ?? null, workspaces)
+  if (byCwd !== null) return { workspace: byCwd, session }
+  return { workspace: workspaceOfPath(task.dir, workspaces), session }
+}
+
+function pushTask(map: Map<string, SessionGroup>, task: TaskView, title: string | null): void {
+  const key = task.sessionId ?? ''
+  let group = map.get(key)
+  if (group === undefined) {
+    group = {
+      sessionId: task.sessionId,
+      title,
+      tasks: [],
+      active: 0,
+      done: 0,
+      failed: 0,
+      nowBps: 0,
+      lastActivity: 0,
+    }
+    map.set(key, group)
+  }
+  group.tasks.push(task)
+  group[bucketOf(task)] += 1
+  if (task.status === 'running' || task.status === 'probing') group.nowBps += task.speedBps
+  group.lastActivity = Math.max(group.lastActivity, recencyOf(task))
+}
+
+/**
+ * Group the ledger workspace first, then by session. Sessions are identified by
+ * their real title (the host resolves it from the session log); when the host
+ * has no catalog entry the title stays null and the UI falls back to a short id.
+ * Groups with active work come first inside a workspace, then recency.
+ */
+export function groupByWorkspace(
+  tasks: TaskView[],
+  sessions: Record<string, SessionMeta>,
+  workspaces: WorkspaceMeta[],
+): WorkspaceGroup[] {
+  const byWorkspace = new Map<string, { meta: WorkspaceMeta | null; sessions: Map<string, SessionGroup> }>()
+
+  for (const task of tasks) {
+    const resolved = workspaceOf(task, sessions, workspaces)
+    const key = resolved.workspace?.id ?? ''
+    let bucket = byWorkspace.get(key)
+    if (bucket === undefined) {
+      bucket = { meta: resolved.workspace, sessions: new Map() }
+      byWorkspace.set(key, bucket)
+    }
+    pushTask(bucket.sessions, task, resolved.session?.title ?? null)
+  }
+
+  const groups: WorkspaceGroup[] = []
+  for (const bucket of byWorkspace.values()) {
+    const sessionGroups = [...bucket.sessions.values()]
+    for (const group of sessionGroups) group.tasks.sort((left, right) => recencyOf(right) - recencyOf(left))
+    sessionGroups.sort((left, right) => right.active - left.active || right.lastActivity - left.lastActivity)
+    const all = sessionGroups.flatMap((group) => group.tasks)
+    groups.push({
+      workspaceId: bucket.meta?.id ?? null,
+      title: bucket.meta?.title ?? null,
+      path: bucket.meta?.path ?? null,
+      sessions: sessionGroups,
+      tasks: all,
+      active: sessionGroups.reduce((sum, group) => sum + group.active, 0),
+      done: sessionGroups.reduce((sum, group) => sum + group.done, 0),
+      failed: sessionGroups.reduce((sum, group) => sum + group.failed, 0),
+      lastActivity: Math.max(...sessionGroups.map((group) => group.lastActivity), 0),
     })
   }
-  result.sort((left, right) => {
-    const leftAt = Math.max(...left.tasks.map(recencyOf))
-    const rightAt = Math.max(...right.tasks.map(recencyOf))
-    return rightAt - leftAt
-  })
-  return result
+  groups.sort((left, right) => right.active - left.active || right.lastActivity - left.lastActivity)
+  return groups
 }
+
+/** Rows grouped by owning session, newest first (session tab / legacy callers). */
+export function groupBySession(tasks: TaskView[]): SessionGroup[] {
+  const map = new Map<string, SessionGroup>()
+  for (const task of tasks) pushTask(map, task, null)
+  const groups = [...map.values()]
+  for (const group of groups) group.tasks.sort((left, right) => recencyOf(right) - recencyOf(left))
+  groups.sort((left, right) => right.active - left.active || right.lastActivity - left.lastActivity)
+  return groups
+}
+
+/* --------------------------------------------------------------- filters */
+
+/** The filter state the workbench toolbar owns. */
+export interface FilterState {
+  query: string
+  bucket: StatusBucket
+  /** Lower-case extensions without the dot; empty means every suffix. */
+  extensions: string[]
+}
+
+export const EMPTY_FILTER: FilterState = { query: '', bucket: 'all', extensions: [] }
+
+/** File-name extension, lower-case without the dot (url path when no name). */
+export function extensionOf(task: TaskView): string | null {
+  const fromName = /\.([a-z0-9]{1,12})$/i.exec(task.fileName)
+  if (fromName !== null) return fromName[1]!.toLowerCase()
+  if (task.path !== null) {
+    const fromPath = /\.([a-z0-9]{1,12})$/i.exec(task.path)
+    if (fromPath !== null) return fromPath[1]!.toLowerCase()
+  }
+  try {
+    const pathname = new URL(task.url).pathname
+    const fromUrl = /\.([a-z0-9]{1,12})$/i.exec(pathname)
+    if (fromUrl !== null) return fromUrl[1]!.toLowerCase()
+  } catch {
+    // Not a parseable absolute URL: no suffix.
+  }
+  return null
+}
+
+/** One entry of the suffix dropdown, with its current record count. */
+export interface ExtensionOption {
+  extension: string
+  count: number
+}
+
+/** Every suffix present in the given records, most frequent first. */
+export function extensionOptions(tasks: TaskView[]): ExtensionOption[] {
+  const counts = new Map<string, number>()
+  for (const task of tasks) {
+    const extension = extensionOf(task)
+    if (extension === null) continue
+    counts.set(extension, (counts.get(extension) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([extension, count]) => ({ extension, count }))
+    .sort((left, right) => right.count - left.count || left.extension.localeCompare(right.extension))
+}
+
+/** Text that a query term may match. */
+function haystackOf(task: TaskView, sessions: Record<string, SessionMeta>, workspaces: WorkspaceMeta[]): string {
+  const resolved = workspaceOf(task, sessions, workspaces)
+  return [
+    task.id,
+    task.fileName,
+    task.url,
+    task.finalUrl ?? '',
+    task.host ?? '',
+    task.path ?? '',
+    task.dir ?? '',
+    resolved.session?.title ?? '',
+    resolved.workspace?.title ?? '',
+  ]
+    .join('\n')
+    .toLowerCase()
+}
+
+/** Whether a record passes the workbench filter. */
+export function matchesFilter(
+  task: TaskView,
+  filter: FilterState,
+  sessions: Record<string, SessionMeta>,
+  workspaces: WorkspaceMeta[],
+): boolean {
+  if (filter.bucket !== 'all' && bucketOf(task) !== filter.bucket) return false
+  if (filter.extensions.length > 0) {
+    const extension = extensionOf(task)
+    if (extension === null || !filter.extensions.includes(extension)) return false
+  }
+  const terms = filter.query.trim().toLowerCase().split(/\s+/).filter((term) => term !== '')
+  if (terms.length === 0) return true
+  const haystack = haystackOf(task, sessions, workspaces)
+  return terms.every((term) => haystack.includes(term))
+}
+
+/** Filter a record list, keeping the incoming order. */
+export function filterTasks(
+  tasks: TaskView[],
+  filter: FilterState,
+  sessions: Record<string, SessionMeta>,
+  workspaces: WorkspaceMeta[],
+): TaskView[] {
+  return tasks.filter((task) => matchesFilter(task, filter, sessions, workspaces))
+}
+
+/** Whether the filter is not the identity filter. */
+export function filterActive(filter: FilterState): boolean {
+  return filter.bucket !== 'all' || filter.extensions.length > 0 || filter.query.trim() !== ''
+}
+
+/* ------------------------------------------------------------ connections */
+
+/** The worker counts a record exposes (all nullable on an old host). */
+export interface ConnectionInfo {
+  /** Actually active worker connections right now. */
+  current: number | null
+  /** Controller target (adaptive concurrency). */
+  target: number | null
+  /** Connections requested at start. */
+  requested: number | null
+  /** Adaptive ceiling. */
+  max: number | null
+}
+
+/** Read the worker counts, preferring the live active count. */
+export function connectionInfoOf(task: TaskView): ConnectionInfo {
+  return {
+    current: task.activeWorkers !== null && task.activeWorkers > 0 ? task.activeWorkers : null,
+    target: task.targetWorkers !== null && task.targetWorkers > 0 ? task.targetWorkers : null,
+    requested: task.requestedConnections !== null && task.requestedConnections > 0
+      ? task.requestedConnections
+      : task.connections !== null && task.connections > 0
+        ? task.connections
+        : null,
+    max: task.maxConnections !== null && task.maxConnections > 0 ? task.maxConnections : null,
+  }
+}
+
+/** The compact connection label: current workers, target when it differs. */
+export function connectionLabel(task: TaskView): string | null {
+  const info = connectionInfoOf(task)
+  const current = info.current ?? info.target
+  if (current === null) return null
+  if (info.target !== null && info.current !== null && info.target !== info.current) {
+    return `${info.current}→${info.target}`
+  }
+  return String(current)
+}
+
+/** The number shown in the record meta as "current connections". */
+export function currentConnections(task: TaskView): number | null {
+  if (task.status === 'running' || task.status === 'probing') {
+    return task.activeWorkers ?? task.targetWorkers ?? task.requestedConnections
+  }
+  if (task.status === 'queued') {
+    return task.targetWorkers ?? task.requestedConnections ?? task.connections
+  }
+  return null
+}
+
+/* ------------------------------------------------------------- rates/misc */
 
 /** Live rate of a set of records (running + probing only). */
 export function liveRateOf(tasks: TaskView[]): number {
@@ -266,7 +555,7 @@ export function toneOf(task: TaskView): 'live' | 'paused' | 'done' | 'failed' | 
   return state
 }
 
-/** Whether Stop is offered for a record. */
+/** Whether Stop (cancel) is offered for a record. */
 export function canStop(task: TaskView): boolean {
   return task.status === 'running' || task.status === 'probing' || task.status === 'queued' || task.status === 'paused'
 }
@@ -274,4 +563,19 @@ export function canStop(task: TaskView): boolean {
 /** Whether the record's rate is expected to move right now. */
 export function isMoving(task: TaskView): boolean {
   return task.status === 'running' || task.status === 'probing'
+}
+
+/** Whether the record can be paused by the human. */
+export function canPause(task: TaskView): boolean {
+  return task.status === 'running' || task.status === 'probing' || task.status === 'queued'
+}
+
+/** Whether the record can be resumed by the human. */
+export function canResume(task: TaskView): boolean {
+  return task.status === 'paused' || task.status === 'interrupted' || task.status === 'cancelled' || task.status === 'failed'
+}
+
+/** A stable, short label for a session without a resolvable title. */
+export function sessionFallbackId(sessionId: string | null): string {
+  return shortSessionId(sessionId)
 }

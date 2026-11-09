@@ -7,7 +7,7 @@ use std::path::PathBuf;
 /// docs/design/0.2.0-agent-native.md §2.
 pub const PROTOCOL: u32 = 2;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const DEFAULT_USER_AGENT: &str = "dsh-rdm/0.2.2";
+pub const DEFAULT_USER_AGENT: &str = concat!("dsh-rdm/", env!("CARGO_PKG_VERSION"));
 pub const DEFAULT_CONNECTIONS: usize = 8;
 pub const MIN_CONNECTIONS: usize = 1;
 /// Hard ceiling for one task's worker pool. 0.2.1 raises it from 32 to 128 so
@@ -959,3 +959,4 @@ mod redaction_tests {
         assert_eq!(url_identity("not a url"), "not a url");
     }
 }
+

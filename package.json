@@ -1,7 +1,7 @@
 {
   "name": "dsh-rdm",
-  "version": "0.2.2",
-  "description": "Agent-native resident downloader for DeepSeek Harness: rdm_* tools with server intelligence and verified receipts, plus a review-first sidebar UI.",
+  "version": "0.3.0",
+  "description": "Agent-native resident downloader for DeepSeek Harness: rdm_* tools with server intelligence and verified receipts, a workspace/session workbench with batch review, and a live download popup.",
   "type": "module",
   "main": "lib/index.js",
   "repository": {

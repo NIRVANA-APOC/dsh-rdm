@@ -56,6 +56,8 @@ declare module 'node:child_process' {
     readonly stdout: ReadableStreamLike
     readonly stderr: ReadableStreamLike
     kill(signal?: string): boolean
+    /** Detach the child from the host event loop (used by the desktop opener). */
+    unref(): void
     on(event: string, listener: (...args: any[]) => void): this
     once(event: string, listener: (...args: any[]) => void): this
     removeListener(event: string, listener: (...args: any[]) => void): this
@@ -68,6 +70,8 @@ declare module 'node:child_process' {
     windowsHide?: boolean
     cwd?: string
     env?: Record<string, string | undefined>
+    /** Start the child in its own process group (desktop opener). */
+    detached?: boolean
   }
 
   export function spawn(

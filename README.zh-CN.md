@@ -2,15 +2,15 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**面向 DeepSeek Harness 的智能体原生下载器。** 一个常驻 Rust 内核、六个面向模型且返回决策级事实的工具，以及两个面向人类的审阅界面：左侧边栏的全局下载台账，以及右侧边栏的会话级审阅标签页。
+**面向 DeepSeek Harness 的智能体原生下载器。** 一个常驻 Rust 内核、七个面向模型且返回决策级事实的工具，以及三个面向人类的界面：左侧边栏按工作区/会话分组的下载工作台、右侧边栏的会话级审阅标签页，以及只在下载进行时出现的右上角进度弹窗。
 
-智能体负责操作，人类负责审阅。
+智能体负责操作，人类负责审阅——并且可以不出面板地暂停、删除、打开与筛选。
 
-![全局下载审阅 — 浅色](assets/screenshots/review-light.png)
+![下载工作台 — 浅色](assets/screenshots/review-light.png)
 
 ## “智能体原生”在这里的含义
 
-被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.2.2 就是围绕这些问题构建的。
+被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.3.0 就是围绕这些问题构建的。
 
 * **决策级探测。** `rdm_probe` 返回完整的服务器事实记录——经证实的字节范围支持、校验器与 RFC 9110 续传安全性、签名链接过期、TLS 证书有效期、重定向链、校验和可用性、速率限制响应头、耗时、稳定的警告码，以及具体建议。而不是一句“200 OK，48 MB”。
 * **启动时预检。** `rdm_download` 会把同一份服务器事实附着到任务上（有界等待，默认 2 秒），这样智能体无需第二次调用就能决定暂停、校验还是继续等待。
@@ -23,30 +23,46 @@
 * **长轮询，而非高频轮询。** `rdm_wait` 阻塞到任务全部进入终态或超时，并返回类型化的 `timedOut`；状态结果扁平且有界。
 * **结构化回执、有界的规范 JSON。** 模型读取字段顺序稳定的行式 `key=value` 回执；程序调用方拿到规范 JSON。可恢复失败是值（`error code=…` 加 `next …`），而不是会丢失结构的抛出字符串。
 * **会话归属。** 智能体发起的每个下载都携带其所属的会话 id，因此人类可以精确审阅*这个*智能体下载了什么。
-* **一条策略，只声明一次。** 一段简短的系统提示词段告诉每个智能体把下载交给 `rdm_*`；工具定义保持精简（0.2.0 把首轮 schema 成本从 7241 降到 4966 字符，比 0.1.2 减少 31%；回执测试仍把它守在 6000 字符以内，即便 0.2.1 多了一个工具）。
+* **会话归属说人话。** 每个下载都保留所属会话 id，工作台再从会话日志与持久化工作区注册表解析出真实标题与工作区，所以记录会出现在「重构下载面板与进度弹窗 · dsh-rdm」下面，而不是一串看不懂的 id。
+* **记录可被检索。** `rdm_search` 支持跨会话按关键字（文件名、URL、主机、路径、id、会话标题）或精确任务 id 查找已有下载；每条记录也向人类提供可复制的下载 id。
+* **一条策略，只声明一次。** 一段简短的系统提示词段告诉每个智能体把下载交给 `rdm_*`；工具定义保持精简（0.2.0 把首轮 schema 成本从 7241 降到 4966 字符，比 0.1.2 减少 31%；回执测试把七工具表面守在 7241 字符以内，实测 6909）。
 
-## 两个审阅界面
+## 三个界面
 
-人类在这里从不组合下载：没有 URL 输入框，也没有连接数滑块。
-
-* **全局审阅**（左侧边栏入口 → 页面）：一条覆盖整个内核的吞吐记录条、按会话分组的下载台账、风险标记，以及每条记录都可展开的证据抽屉（请求链、服务器事实、耗时、续传状态、校验、有界事件日志）。只有进行中的记录使用高饱和颜色；记录不会声称执行过它没有执行的校验。
-* **会话审阅**（右侧边栏标签页，“下载”）：同一套证据语言，但只筛选当前会话。没有下载的会话为空；它从不抢焦点。
+* **下载工作台**（左侧边栏入口 → 页面）：粘贴链接即可开始下载；三张状态卡片（正在下载 / 已完成 / 失败任务）同时充当状态筛选；文本筛选 + 后缀多选下拉；全选与批量暂停/删除；记录按工作区分大组、再按真实会话标题分小组。每条记录展示进度、速度、剩余时间、当前自适应连接数、主机、用时与可复制的下载 id，并提供暂停/继续/打开文件/打开所在目录/删除与证据抽屉（请求链、服务器事实、耗时、worker 计划、续传状态、校验、有界事件日志）。
+* **会话审阅**（右侧边栏标签页“下载”）：同一套记录语言与操作，只筛选当前会话；没有输入框与批量工具条。
+* **活跃下载弹窗**（右上角、跨面板）：每个有进行中任务的会话一行——进度、速度与连接数汇总——可展开或收成胶囊。没有下载在进行时它不存在。
 * **证据语言**：一条**吞吐脉冲**（客户端采样、如实标注）和一个**校验印记**（预期与实际哈希，仅在确实比较过哈希时出现）。未知值渲染为 `—`。
 
 ![会话下载审阅 — 深色](assets/screenshots/review-session-dark.png)
 
+![会话上方的活跃下载弹窗](assets/screenshots/review-popup.png)
+
+批量选择与工具条：
+
+![下载工作台 — 批量选择](assets/screenshots/review-batch.png)
+
 ## 工具
 
-六个工具。所有输出都有界；模型看到回执，调用方看到规范 JSON。
+七个工具。所有输出都有界；模型看到回执，调用方看到规范 JSON。
 
 | 工具 | 作用 | 返回 |
 |---|---|---|
 | `rdm_probe` | 检查 HTTP(S) 源而不下载文件本体 | `ServerFacts`：字节范围、校验器、续传安全性、签名链接/TLS 过期、重定向、校验和、速率限制、耗时、警告、建议 |
 | `rdm_download` | 在常驻内核中启动传输 | 任务视图 + 预检 `ServerFacts`（≤2 s）+ 下一步提示；`waitSec` 可选阻塞 |
 | `rdm_tasks` | 列出本会话的下载，或深入查看单个下载 | 扁平任务视图 + 聚合；带 `taskId` 时返回遥测、服务器事实、校验、诊断、有界事件 |
+| `rdm_search` | 跨会话按关键字（id、文件名、URL、主机、路径、会话标题）或精确 id 查找记录 | 有界匹配结果（id、状态、进度、会话/工作区标签）+ 总数；支持 `scope`、状态与条数筛选 |
 | `rdm_history` | 读取持久化的单任务记录（逐样本遥测 + 事件 + 每次运行的构建/计划 meta，位于内核数据目录下的 JSONL） | 有界的样本/事件 + `samplesPath`/`eventsPath` + 总数；带 meta 时给出 `builds` 标签（以及一行 `build=` 回执）；默认返回均匀降采样的审阅序列，传 `offset` 则按字面翻页；跨内核重启保留 |
 | `rdm_wait` | 长轮询直到终态或超时 | 已结算的任务视图 + `timedOut` |
 | `rdm_control` | 暂停、继续、取消、重试、移除 | 更新后的任务视图（或已移除的 id） |
+
+一次检索回执：
+
+```text
+search scope=all matches=2 total=14
+task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.0-win32-x64.zip" connections=12/16
+task t_1a2b3c4d5e6f7a80 state=completed progress=100% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="design-critique-notes.pdf" connections=0/0
+```
 
 一次探测回执：
 
@@ -65,7 +81,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 一次任务列表回执：
 
 ```text
-kernel state=running version=0.2.2 pid=4212
+kernel state=running version=0.3.0 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -82,7 +98,7 @@ range 0..300 of 1907
 
 ## 内核智能
 
-Rust 内核（`rdm-kernel` 0.2.2，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
+Rust 内核（`rdm-kernel` 0.3.0，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
 
 * **服务器事实** —— 手动跟随的重定向链（最多 8 跳）、经证实的字节范围支持（带已验证 `Content-Range` 的 206，而不是只看 `Accept-Ranges` 响应头）、按 RFC 9110 对校验器做强/弱分类、从最终 URL 推导的各类签名链接过期时间（AWS SigV4/SigV2、GCS SigV4、Azure SAS、通用 `Expires`、ModelScope `auth_key`）、TLS 叶子证书 `notAfter`、校验和可用性（`Content-Digest`/`Content-MD5`/S3 SHA-256/CRC32C）、`Retry-After`、探测/TTFB 耗时，以及有界警告码。携带凭据的值（含 `auth_key` 与每个重定向跳点）在所有投影中都会脱敏。
 * **保持诚实的续传** —— `.part` + 续传状态、校验器兼容性检查，以及显式的 `resumeSafety`：`strong`/`weak`/`none`。内核只为强 ETag 发送 `If-Range`；弱校验器续传会重新探测并校验 `Content-Range`/长度，若源站忽略字节范围则回退为完整响应体。兼容性按稳定身份（URL 路径、大小、校验器）判定，最终 URL 上按请求变化的 `auth_key`/`Expires`/`Policy` 令牌不会再让已完成的分块表作废；每次尝试都会报告 `resumeDecision`/`resumeReason`。进行中的下载在签名链接过期后仍会继续；过期后再续传则不会——诊断会给出“不要暂停”。
@@ -93,7 +109,7 @@ Rust 内核（`rdm-kernel` 0.2.2，协议 2）是一个常驻子进程：不监�
 * **感知尾部的收尾** —— 当剩余 chunk 数不多于 worker 目标时，claim 使用 3 秒停滞期限与快速重试（250 ms × 尝试次数，封顶 1 秒），而不是在一条失效的长尾连接上等 10 秒。
 * **有界** —— 每个任务在视图环中 ≤200 条事件、内存中 ≤3000 个遥测样本、落盘 ≤10 万个样本/任务、每次响应 ≤20 条构建/计划 meta、≤256 个来源，不缓冲完整响应体，stdout 专供协议使用。
 
-性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（0.2.2，协议 2）；历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。。
+性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号；**0.3.0** 的插件包与内核都是 `0.3.0`（协议 2），内核代码除版本标识外没有变化。历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。
 
 ## 安装
 
@@ -117,7 +133,7 @@ dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/do
 plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
-安装后，智能体可以看到 `rdm_*`；左侧边栏出现下载入口，右侧边栏指南新增一个“下载”标签页。通常无需重启，刷新一次页面也是安全的。
+安装后，智能体可以看到 `rdm_*`；左侧边栏出现下载工作台，右侧边栏指南新增一个“下载”标签页，整帧还会出现活跃下载弹窗（没有下载时保持隐藏）。Host 半边会随插件行重载；客户端界面需要刷新一次页面后才会出现（这个桌面版本没有暴露刷新菜单项）。浏览器路由（`POST /api/dsh-rdm/api`）的契约见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api)。
 
 ### 配置
 
@@ -141,6 +157,8 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 * `node scripts/verify-kernel.mjs` —— 针对本地 fixture 的内核 e2e（这是规范套件；它会启动内核，因此需要允许创建子进程的宿主）。
 * `python tests/verify_e2e.py` —— 进程外协议 2 驱动，用于 Node 无法创建子进程的宿主（见下文）：探测事实、签名链接、重定向、会话范围、遥测、暂停/继续（含跨易变令牌最终 URL 的续传）、`maxConnections` 收敛、带每次运行构建 meta 的录制历史、`transferredBytes`/`requestedConnections`、plan/回执消息形状、`unsupported_method`、`auth_key` 脱敏、统计、聚合。
 * `node tests/tools-receipts.test.mjs` —— 回执契约、策略只声明一次、schema 成本守卫、可恢复错误回执。
+* `node tests/host-api.test.mjs` —— 浏览器路由 v3 契约：会话/工作区补全与降级、批量 control 的逐项结果、活跃 Agent 通知门控、移除前快照、`open` 的路径解析/拒绝、catalog 缓存/单飞，以及 `apply()` 装配冒烟测试。
+* `node node_modules/typescript/bin/tsc --noEmit` —— 宿主与客户端源码的严格 TypeScript 检查。
 * `node scripts/verify-fixture.mjs` —— fixture 自测。
 * `node scripts/verify-kernels.mjs --host --run` —— 当前宿主的随包内核存在、格式正确且能启动。
 
@@ -162,6 +180,11 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 * 传输后的 SHA-256 校验仍然是串行执行（乱序 chunk 无法流式汇入同一个哈希；引入 chunk 哈希树会改变校验契约）。在多 GiB 文件上它会占几个百分点的墙钟时间。
 * 控制器的增长/饱和决策只是基于实测窗口的启发式判断；它们只调整 worker 目标，从不改变任务状态或正确性。
 * ETA 置信度是对实测窗口的启发式判断；数据不足时它是 `unknown`，而不是猜出来的数字。
+* 工作台的输入框只按插件默认配置启动下载；连接数、请求头与校验和仍是智能体侧 `rdm_download` 的参数，不是输入框字段。
+* 从 UI 暂停或删除未结束的下载时，只有对应的 Agent 仍活跃才会收到通知；冷会话不会因为一次 UI 点击而被唤醒，结果显示 `notified=false`。
+* 打开文件/所在目录交给宿主桌面的默认处理程序（`explorer`、`open`、`xdg-open`），且要求任务记录仍然存在；它不内嵌文件查看器。
+* 工作区与会话标题来自宿主的 workspace registry 与会话日志；缺少这些服务的部署仍会渲染台账，只是按短会话 id 分组。
+* 活跃下载弹窗是跨面板的，会在下载进行时覆盖右上角；如果挡住控件，可以收成胶囊。
 * 五个平台的预编译内核由 release 工作流在原生 runner 上构建；在工作流刷新 `bin/` 之前，本地检出只包含当前宿主最新构建的内核。
 * 沙箱化的智能体宿主可能拒绝 Node 创建子进程；这种环境下请用 `bash scripts/dev-build.sh` 构建，用 `python tests/verify_e2e.py` 运行内核套件（两者都记录在 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）。
 
@@ -175,12 +198,19 @@ node scripts/build.mjs             # 沙箱外的规范构建
 node scripts/build-kernel.mjs      # 沙箱外的规范内核构建
 python tests/verify_e2e.py         # 协议 2 内核套件（沙箱安全）
 node tests/tools-receipts.test.mjs # 宿主回执契约
+node tests/host-api.test.mjs       # 浏览器路由 v3 契约
+node scripts/check-release.mjs     # package/kernel/changelog 一致性
 ```
+
+浏览器界面有一份确定性的静态预览工具，位于 `.design/preview-03/`（不随包发布）：它用真实组件对接 mock 的 v3 路由，产出浅/深色 1440/768/390 截图矩阵，并可通过无头 Chrome 的 CDP 端点抓图；两条抓图路径见 `capture.ps1` / `cdp.mjs` 文件头。
 
 发布流程——五平台内核矩阵、GitHub release、npm trusted publishing 与重试语义——记录在 [docs/release.md](docs/release.md)。
 
-宿主半边只导入 Node 内置模块（schema 库以 vendor 方式内置）；客户端半边注册到 `sidebar.panellist`、带 key 的 `main` 槽位和原生右侧边栏标签座位，并且只使用宿主主题 token。
+宿主半边只导入 Node 内置模块（schema 库以 vendor 方式内置）；客户端半边注册到 `sidebar.panellist`、带 key 的 `main` 槽位、跨帧的 `shell.overlay` 座位和原生右侧边栏标签座位，并且只使用宿主主题 token。客户端自包含：工作台与弹窗共享同一份浏览器路由轮询，会话标签页只轮询自己的作用域。
 
 ## 许可
 
 MIT OR Apache-2.0。
+
+
+

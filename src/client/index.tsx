@@ -1,4 +1,4 @@
-// Client half of the dsh-rdm plugin (0.2.0).
+// Client half of the dsh-rdm plugin (0.3.0).
 //
 // Compiled by scripts/dev-build.sh into the Harness module-loader format:
 // `window.__ModuleLoader__.load({ id: 'dsh-rdm', factory(require) { ... } })`.
@@ -7,7 +7,8 @@
 //
 // Surfaces:
 //   * `sidebar.panellist` entry (id `rdm`) → the root-scoped `main` keyed slot
-//     `rdm`, which renders the global review page (flight recorder, no composer);
+//     `rdm`, which renders the download workbench (composer, cards, ledger);
+//   * `shell.overlay` (id `dsh-rdm-progress`) → the active-download popup;
 //   * the session right-sidebar native tab `dsh-rdm/downloads`, registered only
 //     when the profile injects `@deepseek-ai/dsh-client-ui-sidebar-right`.
 //
@@ -20,7 +21,8 @@ import zh from '../../locale/zh.json'
 import { Icon } from './icon'
 import { ReviewPage } from './ledger'
 import { registerNativeSidebar } from './native'
-import type { ClientContext, TFunction } from './types'
+import { DownloadsPopup } from './overlay'
+import type { ClientContext, LayoutService, TFunction } from './types'
 
 const NAMESPACE = 'dsh-rdm'
 const SLOT_ID = 'rdm'
@@ -76,6 +78,28 @@ function apply(ctx: ClientContext): void {
     ),
   )
 
+  // Frame-wide active-download popup. This is the one surface that is visible
+  // outside the plugin panel, so it renders nothing unless a session is running
+  // a download. `layout.selectPanel` is the shell's own navigation path.
+  const layout = (ctx.layout ?? (typeof ctx.get === 'function' ? (ctx.get('layout') as LayoutService | undefined) : undefined)) ?? undefined
+  const openDownloads = (): void => {
+    try {
+      layout?.selectPanel?.(SLOT_ID)
+    } catch (error) {
+      console.warn('[dsh-rdm] could not open the downloads panel:', error)
+    }
+  }
+  try {
+    ctx.slots.inject('shell.overlay', () =>
+      ctx.slots.register(
+        { name: 'shell.overlay', id: 'dsh-rdm-progress', order: 40, locale: NAMESPACE },
+        () => React.createElement(DownloadsPopup, { t, onOpen: openDownloads }),
+      ),
+    )
+  } catch (error) {
+    console.warn('[dsh-rdm] active-download popup registration skipped:', error)
+  }
+
   // Session review surface: native right-sidebar tab. Optional by construction —
   // when the sidebar package is not injected this logs and returns.
   try {
@@ -89,3 +113,4 @@ const name = 'dsh-rdm'
 const inject = ['slots', 'locale']
 
 module.exports = { name, inject, apply }
+

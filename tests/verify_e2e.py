@@ -39,6 +39,13 @@ import traceback
 import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def package_version() -> str:
+    """Current plugin package version (kernel and package stay unified)."""
+    with open(os.path.join(ROOT, "package.json"), "r", encoding="utf-8") as handle:
+        return str(json.load(handle).get("version", ""))
+
 # Per-run temp root. Two harness instances (e.g. the Lead's gate run and an
 # agent pre-run) must never share data/download dirs: each scenario starts with
 # `shutil.rmtree(group_root)`, which would otherwise delete the other run's
@@ -1033,7 +1040,7 @@ def scenario_v022(fixture: Fixture, binary: str) -> None:
     try:
         kernel.request("initialize", init_params)
         kernel_version = str(field(kernel.ready, "kernel", "version", default=""))
-        check("v022.kernel version is 0.2.2 (unified with package)", kernel_version == "0.2.2", kernel_version)
+        check("v022.kernel version matches the package version", kernel_version == package_version(), kernel_version)
 
         # ── 1. plan receipt fields + this-run view counters ────────────────
         plan_size = 256 * 1024

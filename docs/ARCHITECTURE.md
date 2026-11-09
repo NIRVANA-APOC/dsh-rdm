@@ -1,8 +1,8 @@
-# dsh-rdm — architecture (0.2.2)
+# dsh-rdm — architecture (0.3.0)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
-two review surfaces. Transfers are segmented, resumable, verifiable and
+three human surfaces. Transfers are segmented, resumable, verifiable and
 bandwidth-limited without starting a process per download.
 
 0.2.0 reframed the product: the **agent operates** the downloader through
@@ -12,17 +12,22 @@ happened in a global sidebar page and in a session-scoped right sidebar tab.
 signed final URLs, the adaptive controller may grow past the requested connection
 count (up to `maxConnections`, default 128), and per-task telemetry/events are
 persisted as JSONL and exposed through `rdm_history`. 0.2.2 is the **live
-ModelScope pass** (kernel identity **0.2.2**, same as the package): recordings gain a per-run meta
-record for build attribution, rate accounting moves to this-run bytes
+ModelScope pass** (kernel identity 0.2.2 at the time): recordings gain a per-run
+meta record for build attribution, rate accounting moves to this-run bytes
 (`transferredBytes`), the controller judges growth on aggregate throughput with
 saturation and tail-freeze policies, tail chunks retry fast, and an unknown RPC
-method returns `unsupported_method`. The binding contract for the 0.2.0 framing
-is [design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the 0.2.1
-changes are explained in
-[design/0.2.1-real-data-fixes.md](design/0.2.1-real-data-fixes.md); the 0.2.2
-changes are specified in [`.design/0.2.2-spec.md`](../.design/0.2.2-spec.md) and
-explained in
-[design/0.2.2-live-modelscope-pass.md](design/0.2.2-live-modelscope-pass.md).
+method returns `unsupported_method`. 0.3.0 is the **download workbench**: the
+human can compose a download, filter/batch-manage records grouped by workspace
+and real session title, open results on the desktop, and follow live progress in
+a frame-wide top-right popup; the agent gains `rdm_search`. The kernel code is
+unchanged apart from its identity (package and kernel both `0.3.0`, protocol 2).
+
+The binding contract for the 0.2.0 framing is
+[design/0.2.0-agent-native.md](design/0.2.0-agent-native.md); the 0.2.1 changes
+are explained in [design/0.2.1-real-data-fixes.md](design/0.2.1-real-data-fixes.md);
+the 0.2.2 changes are specified in [`.design/0.2.2-spec.md`](../.design/0.2.2-spec.md)
+and explained in [design/0.2.2-live-modelscope-pass.md](design/0.2.2-live-modelscope-pass.md).
+The 0.3.0 UI/API contract is [`.design/0.3.0-ui-spec.md`](../.design/0.3.0-ui-spec.md).
 The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md) v2.
 
 ## Goals
@@ -34,10 +39,13 @@ The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md) v2.
    windowed telemetry and origin memory.
 2. `dsh` always downloads through RDM: the plugin registers `rdm_*` tools, adds
    one short system-prompt section that prefers them over shell downloads, and
-   exposes review-only UI (left global sheet + session right sidebar tab).
+   exposes human surfaces: a workspace/session workbench (left global page), a
+   session tab (right sidebar) and a frame-wide active-download popup. The
+   workbench can also start a download from a pasted link.
 3. Information over control: the tools answer "what does the server do?", "how
    is the transfer doing over several time windows?", "can I resume safely?",
-   "does the result verify?" without follow-up calls.
+   "does the result verify?" without follow-up calls. Human controls stay
+   deliberately small: pause, resume, delete, open, filter, select.
 4. Resident cost stays small and lazy: the kernel starts on the first tool /
    review use, then stays warm; it exits when the plugin unloads or stdin closes.
 
@@ -63,21 +71,27 @@ dsh-rdm/
 │   ├── config.ts             # schemastery Config (vendored schema lib)
 │   ├── protocol.ts           # TS mirrors of PROTOCOL.md v2 types
 │   ├── kernel-client.ts      # spawn + NDJSON RPC + task mirror + restart + session tagging
-│   ├── tools.ts              # six model-facing tool registrations + line receipts
+│   ├── session-catalog.ts    # session titles/workspaces + agent notices + desktop opener
+│   ├── tools.ts              # seven model-facing tool registrations + line receipts
 │   ├── tool-def.ts           # local defineTool: DSL→JSON Schema + arg validation
-│   ├── host-api.ts           # POST /api/dsh-rdm/api browser route (list/get/stats/control)
+│   ├── host-api.ts           # POST /api/dsh-rdm/api browser route (list/get/stats/control/open/start)
 │   ├── types.d.ts            # ambient declarations (local typecheck only)
 │   └── client/
-│       ├── index.tsx         # client plugin {inject, apply}; left entry + native right tab
-│       ├── panel.tsx         # global review page (session-grouped ledger + evidence drawer)
-│       ├── rightbar.tsx      # session-scoped review tab body/title
-│       ├── components.tsx    # waveform, seals, chips, drawer primitives
-│       ├── api.ts            # fetch wrapper for /api/dsh-rdm/api
-│       └── styles.ts         # theme-token CSS string
+│       ├── index.tsx         # client plugin {inject, apply}: left entry, main page, overlay, native tab
+│       ├── ledger.tsx        # global workbench (composer, cards, filters, workspace/session ledger)
+│       ├── overlay.tsx       # frame-wide active-download popup (`shell.overlay`)
+│       ├── session-tab.tsx   # session-scoped review tab body/title
+│       ├── drawer.tsx        # evidence drawer
+│       ├── icons.tsx         # 16 px stroke icon set
+│       ├── primitives.tsx    # status glyph, seal, chips, meter, checkbox, buttons
+│       ├── model.ts          # pure grouping/filter/connection/risk model
+│       ├── data.ts           # shared global feed + scoped session feed
+│       ├── api.ts            # fetch wrapper + v3 normalizers
+│       └── review-css.ts     # theme-token CSS for the three surfaces
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml            # rdm-kernel 0.2.2, protocol 2 (version unified with package.json since 0.2.2)
+│   ├── Cargo.toml            # rdm-kernel 0.3.0, protocol 2 (version unified with package.json)
 │   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine,
 │   │                         #   controller (adaptive growth/collapse/rebuild), history (JSONL recording)
 │   └── tests/…               # unit + protocol smoke + in-process fixture e2e
@@ -94,7 +108,7 @@ dsh-rdm/
 A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
 plugin's protocol.
 
-| Concern | 0.2.2 kernel |
+| Concern | 0.3.0 kernel |
 |---|---|
 | Public API | NDJSON server + task manager (protocol 2; 0.2.1 additive fields + `history`, 0.2.2 `transferredBytes`/`requestedConnections`/history meta, `unsupported_method`) |
 | GUI/CLI/IPC/MCP/resolver | not present |
@@ -213,7 +227,13 @@ schemastery/cosmokit are vendored under `vendor/`.
   * protocol handshake: a kernel whose ready frame reports protocol ≠ 2 fails
     with `protocol_mismatch` and an actionable message;
   * teardown: kill child on plugin dispose (`ctx.effect`).
-* Registers the six tools below plus one system-prompt section
+* Owns one shared `SessionCatalog` (`src/session-catalog.ts`): resolves session
+  titles from `sessionQuery.readTitleSnapshots`, live flags from `sessions.get`,
+  workspace grouping from `workspaceRegistry.list()` (15 s title cache / 30 s
+  workspace cache, single-flight batch, never throws), delivers user-action
+  notices to a live agent through `sessionController.prompt`, and launches the
+  host desktop opener detached. Every service is optional.
+* Registers the seven tools below plus one system-prompt section
   (`dsh-rdm:downloads`) that states the "use rdm_* for downloads" policy exactly
   once (tool descriptions carry behavior only).
 * Session attribution: `rdm_download` reads the calling agent's session id from
@@ -242,7 +262,7 @@ at warn level, and visible as `dataDir` in kernel status/stats.
 
 ### Tool surface (model-facing)
 
-Six tools, bounded canonical outputs, line-oriented receipts. The **model reads
+Seven tools, bounded canonical outputs, line-oriented receipts. The **model reads
 the render**, not the canonical JSON; receipts use stable `key=value` fields in a
 fixed order (see `design/0.2.0-agent-native.md` §3.4).
 
@@ -251,6 +271,7 @@ fixed order (see `design/0.2.0-agent-native.md` §3.4).
 | `rdm_download` | `url*`, `dir?`, `fileName?`, `connections?` (1..128), `maxConnections?`, `headers?` (json), `cookie?`, `referer?`, `userAgent?`, `expectedSha256?`, `speedLimitBps?`, `resume?`, `singleStream?`, `proxy?`, `insecure?`, `waitSec?` | task view + preflight `ServerFacts` (waits ≤2 s) + next-step hint; `waitSec` waits for completion (≤300 s) |
 | `rdm_probe` | `url*`, `headers?`, `cookie?`, `referer?`, `userAgent?`, `proxy?`, `insecure?`, `timeoutMs?` | full `ServerFacts` receipt: ranges, resume safety, signed-URL expiry, TLS validity, redirects, timing, checksums, recommendation |
 | `rdm_tasks` | `taskId?`, `status?`, `limit?`, `events?`, `scope?` (`session` default, `all`) | list: kernel + tasks + aggregate + counts; detail: task + telemetry + server + verification + diagnosis + events |
+| `rdm_search` | `query?`, `taskId?`, `status?`, `limit?` (1..50, default 10), `scope?` (`all` default, `session`) | bounded records across sessions with id/state/progress/session title/workspace/connections + `total`; exact id shortcuts to one match; unknown id is a recoverable `not_found` envelope |
 | `rdm_history` | `taskId*`, `limit?` (1..2000, default 300), `offset?`, `includeEvents?` (default true) | recorded per-sample telemetry + events + per-run build/plan meta for one task, with JSONL paths, totals, `truncated` and derived `builds` tags; survives kernel restarts |
 | `rdm_wait` | `taskIds*` (1..20), `timeoutSec?` | tasks + timedOut + hint; wakes on status transitions, not polling |
 | `rdm_control` | `taskId*`, `action` (`pause\|resume\|cancel\|retry\|remove`), `deletePart?` | task (or removed id) |
@@ -259,27 +280,75 @@ Tool descriptions are deliberately short; parameter rules live on parameters;
 the policy sentence appears only in the system-prompt section (harness
 `agent-experience` guidance).
 
+`rdm_search` matches case-insensitive whitespace-separated terms against the
+record's id, file name, URL, host, path, owning session title and workspace
+title. It reads at most the newest 100 kernel records, filters locally, and
+never dumps full URLs into the receipt.
+
 ## Client UI (`src/client/`)
 
-Two review surfaces, one visual language. There is **no download composer** and
-no connection tuning: the human reviews what agents did.
+Three surfaces, one visual language. The human reviews what agents did, and can
+also intervene directly (start, pause, delete, open, filter, select).
 
 * `sidebar.panellist` registers the global entry (`id:'rdm'`, `order:30`) whose
-  icon opens the **global review page** in the keyed `main` slot (`key:'rdm'`).
+  icon opens the **download workbench** in the keyed `main` slot (`key:'rdm'`):
+  a paste-a-link composer, three state cards that double as status filters, a
+  text filter plus suffix multi-select dropdown, select-all/batch pause/delete,
+  and a ledger grouped by workspace → real session title. Rows carry
+  pause/resume, open-file, open-folder, delete, copy-id, the live adaptive
+  connection count and the evidence drawer.
 * `dsh.client.inject` additionally includes
   `@deepseek-ai/dsh-client-ui-sidebar-right`; the client registers a native
   right-sidebar tab type `dsh-rdm/downloads` (kind `rdm`) with a guide entry, a
   body slot and a title slot. The tab filters tasks by the session id the slot
-  framework injects, giving the **session review** surface.
-* Both surfaces share components: aggregate header, 60–120 s throughput
-  waveform, session-grouped ledger, server chips, verification seal, and an
-  evidence drawer (server facts, timing, resume state, verification, events).
+  framework injects and reuses the same row/drawer with a micro pulse instead of
+  the page meter.
+* The client registers a frame-wide entry on `shell.overlay`
+  (`id:'dsh-rdm-progress'`): the **active-download popup**, one row per session
+  with running work (progress, speed, connections), collapsible to a pill and
+  absent when nothing is active. Clicking a row opens the workbench through
+  `ctx.layout.selectPanel('rdm')`.
+* The workbench and popup share one module-level poll in `data.ts`; the session
+  tab polls its own scope. A mutation (pause/delete/start) refreshes the shared
+  feed immediately.
 * All colors/spacings use `--dsw-alias-*`/`--dsw-specific-*` theme tokens; no
   Harness client package is imported beyond the injected client modules. Locale
   strings live in `locale/{en,zh}.json` and are bound through `ctx.locale`.
-* The client tolerates an older host API (missing fields render as unknown) and
-  missing right-sidebar services (the left page still works), so a partial
-  deploy never crashes the page.
+* The client tolerates an older host API (missing fields render as unknown,
+  missing session catalog falls back to short ids) and missing right-sidebar
+  services (the workbench and popup still work), so a partial deploy never
+  crashes the page.
+
+### Session / workspace catalog
+
+`list` enriches the task rows with a host-resolved catalog so the ledger can
+group by something a human recognizes:
+
+- **title** — `sessionQuery.readTitleSnapshots(ids)`, which works for live and
+  persisted sessions; null when the session log has no title event.
+- **live** — `sessions.get(id) !== undefined` at poll time.
+- **workspace** — `workspaceRegistry.list()` maps `sessionIds` first, then the
+  session header `cwd` against the canonical workspace path; `workspaceId`,
+  `workspaceTitle` and `workspacePath` are returned per session, plus the flat
+  `workspaces` list.
+- Caches: 15 s for title/header (negative entries included), 30 s for the
+  workspace list, one single-flight title batch. A missing or throwing service
+  contributes empty labels; the route never fails on catalog errors.
+
+### Control notices and desktop open
+
+- `control` on `pause`/`cancel`/`remove` (notify defaults true, `notify:false`
+  opts out) reads the pre-action task, and only when it is unfinished, has a
+  session id, and that session has a **live agent** (`ctx.get('agents').get`),
+  queues a short model-facing notice through
+  `sessionController.prompt({mode:'queue', content:[{type:'text',text}]})`.
+  A cold session is never resumed for a notice. Failures are reported as
+  `notified:false` and never fail the control result.
+- `open` accepts only `{id, target:'file'|'folder'}`. The host resolves
+  `task.path` (file) or `dirname(task.path) || task.dir` (folder), validates it,
+  and spawns the platform opener detached (`explorer.exe`, `open`/`open -R`,
+  `xdg-open`). The browser never supplies a path, and the action is not exposed
+  as an agent tool.
 
 ### Browser route API
 
@@ -288,15 +357,23 @@ connection service enforces Host/Origin/browser authentication), body:
 
 ```jsonc
 {"action":"list","sessionId":"sess_abc","status":"running","limit":50}
+// -> {kernel, tasks, aggregate, sessions: {…}, workspaces: […]}
+
 {"action":"get","id":"t_…","events":20}
 {"action":"stats"}
-{"action":"control","id":"t_…","action":"pause","deletePart":true}
-{"action":"start","url":"…","dir":"…"}   // retained for tests/programmatic callers; the UI does not use it
+
+{"action":"control","ids":["t_…"],"control":"pause","deletePart":false,"notify":true}
+// -> {action, results:[{id, ok, task?, error?, notified?}]}
+// legacy single-id callers also get top-level task/removedId/deletePart.
+
+{"action":"open","id":"t_…","target":"file"|"folder"}   // -> {opened, path}
+{"action":"start","url":"…","dir":"…"}                  // used by the workbench composer
 ```
 
 Envelope: `{"ok":true,"value":…}` or `{"ok":false,"error":{"code","message"}}`.
-`list` returns `{kernel, tasks, aggregate}`; both UI surfaces and tools call the
-same `KernelService` methods (one operation, two callers).
+The action set is `list`, `get`, `start`, `control`, `stats`, `open`. All
+surfaces and the tools call the same `KernelService` methods (one operation, two
+callers).
 
 ## Build & install
 
@@ -361,32 +438,44 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
 Then inspect `Tool.listTools` for `rdm_*`, `Slots.listSubTree` for the `rdm`
-occupants (`sidebar.panellist`, `main`), and the right-sidebar guide for the
-"Downloads" capsule. A page refresh is not normally needed for a first install
-(HMR); if the client bundle was replaced, restart the page/plugin per
-plugin_manager output.
+occupants (`sidebar.panellist`, `main`) and the `shell.overlay` popup
+(`dsh-rdm-progress`), and the right-sidebar guide for the "Downloads" capsule.
+The host half reloads with the plugin row; a **client bundle change needs one
+page refresh** before the sidebar entry, workbench and popup register (the
+desktop build does not expose a reload menu item; close/reopen the window or use
+the host's page reload if available). After the refresh, confirm the sidebar
+entry in `Slots.listSubTree` and open the workbench once.
 
-## Acceptance criteria (0.2.0)
+## Acceptance criteria (0.3.0)
 
 1. `bash scripts/dev-build.sh all` / `node scripts/build.mjs` produce
    `lib/index.js` + `lib/client.js`; the kernel builds and installs to
-   `bin/<host>/`; `node scripts/verify-kernels.mjs` passes for all five
-   prebuilt targets; kernel unit/integration tests pass.
-2. Kernel protocol 2: `ServerFacts` complete against the fixture (redirects,
-   ranges, validators, signed URL, checksum/rate-limit headers), telemetry
-   windows/peak/avg/stall/trend/ETA confidence correct, session id round-trips,
-   0.1.x task records load, notification stays flat.
-3. Tools: receipts line-oriented and bounded; preflight facts available within
-   2 s; signed-URL expiry and resume safety reported; policy stated once.
-4. Session scoping: tool-started tasks carry the calling session id; browser
-   `list` filters by it; unattributed tasks stay global.
-5. Client: global page and session right tab show live + historical tasks with
-   evidence drawer; light/dark, 1440/768/390, empty/loading/error states
-   verified from screenshots; contrast and reduced-motion checks pass; no
-   composer.
-6. Independent verifier PASS with recorded evidence.
-7. Docs: PROTOCOL v2, this file, design contract, research note, README 0.2.0,
-   verification report; performance changes measured and documented.
-8. Live check: plugin installed from this workspace into a DSH profile; tools
-   visible; a fixture download completes and appears in both review surfaces
-   (screenshot evidence), or the limitation documented honestly.
+   `bin/<host>/`; `node scripts/verify-kernels.mjs` passes for all five prebuilt
+   targets; kernel unit/integration tests pass.
+2. Kernel protocol 2 unchanged: `ServerFacts`, telemetry, session round-trip,
+   legacy task records, flat notifications; 0.3.0 only bumps kernel identity to
+   `0.3.0`.
+3. Tools: seven tools, line-oriented bounded receipts, preflight facts within
+   2 s, signed-URL/resume safety, `rdm_search` across sessions with bounded
+   matches, policy stated once.
+4. Browser route v3: `list` carries session titles + workspace grouping and
+   degrades without those services; batch `control` returns one result per id
+   and notifies only unfinished tasks whose agent is live; `open` resolves a task
+   id only; legacy single-id callers still work.
+5. Workbench: composer, three state cards (with filters), kernel words + dot
+   only, no page waveform, text + suffix filters, select-all/batch pause/delete,
+   per-record pause/resume/open-file/open-folder/delete/copy-id, adaptive
+   connection count, workspace → session-title grouping, evidence drawer.
+6. Popup on `shell.overlay` id `dsh-rdm-progress`: appears only with active
+   downloads, per-session progress/speed/connections, collapse pill, opens the
+   workbench; reduced-motion respected.
+7. Locale parity between `locale/en.json` and `locale/zh.json`; light/dark and
+   1440/768/390/empty/loading/error screenshots from the real components;
+   contrast, focus-visible and reduced-motion checks pass.
+8. Independent verifier PASS with recorded evidence.
+9. Docs: PROTOCOL (kernel), this file, `.design/0.3.0-ui-spec.md`, README (en/zh),
+   CHANGELOG 0.3.0, verification report.
+10. Live check: plugin installed from this workspace into a DSH profile; seven
+    tools visible; `rdm_search` callable; workbench and popup registered
+    (`Slots.listSubTree`); fixture download appears; honest limits recorded.
+

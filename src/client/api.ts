@@ -2,9 +2,9 @@
 //
 // Protocol v2 (docs/design/0.2.0-agent-native.md §4.2) exposes four actions:
 // `list` ({sessionId? status? limit?}) -> {kernel, tasks, aggregate},
-// `get` ({id, events?}) -> {task, detail, events}, `stats` ({}) and
-// `control` ({id, action, deletePart?}). `start` still exists on the host for
-// tests, but the review UI never calls it — there is no composer.
+// `get` ({id, events?}) -> {task, detail, events}, `stats` ({}),
+// `control` ({ids, action, deletePart?, notify?}), `open` ({id, target}) and
+// `start` ({url}) — the workbench composer uses `start`.
 //
 // The kernel and host land separately from this client, so every response is
 // normalized here: a 0.1.x host that omits `aggregate`, `detail`, sessionIds
@@ -14,10 +14,14 @@
 import type {
   Aggregate,
   ControlOp,
+  ControlOutcome,
+  ControlResult,
   GetOptions,
   GetValue,
   KernelInfo,
   ListValue,
+  OpenResult,
+  OpenTarget,
   RateTrend,
   ServerChecksums,
   ServerFacts,
@@ -30,6 +34,8 @@ import type {
   ServerSignedUrl,
   ServerTlsFacts,
   ServerValidators,
+  SessionMeta,
+  StartResult,
   StatsValue,
   TFunction,
   TaskDetail,
@@ -42,6 +48,7 @@ import type {
   TaskVerification,
   TaskView,
   ThroughputWindows,
+  WorkspaceMeta,
 } from './types'
 
 /** Route path registered by the host half through the connection service. */
@@ -174,9 +181,51 @@ export async function getStats(): Promise<StatsValue> {
 
 /** Run one control verb against a task. */
 export async function controlTask(id: string, control: ControlOp, deletePart = false): Promise<TaskView | null> {
-  const value = await request<unknown>({ action: 'control', id, control, deletePart }, 20000)
-  const record = asRecord(value)
-  return record === null ? null : normalizeTask(record.task)
+  const value = await controlTasks([id], control, { deletePart })
+  const outcome = value.results[0]
+  if (outcome === undefined) return null
+  if (!outcome.ok && outcome.error !== null) throw new RouteError(outcome.error.code, outcome.error.message)
+  return outcome.task
+}
+
+/**
+ * Control one or more tasks, optionally telling the owning agent that the stop
+ * was a user action. The host executes the batch sequentially and returns one
+ * outcome per id; per-id failures stay in `results`.
+ */
+export async function controlTasks(
+  ids: string[],
+  control: ControlOp,
+  options: { deletePart?: boolean; notify?: boolean } = {},
+): Promise<ControlResult> {
+  const payload: Record<string, unknown> = { action: 'control', ids, control }
+  if (options.deletePart === true) payload.deletePart = true
+  if (options.notify !== undefined) payload.notify = options.notify
+  const value = await request<unknown>(payload, 30000)
+  return normalizeControl(value, control, ids)
+}
+
+/** Open a task's saved file, or the folder that contains it, on the host desktop. */
+export async function openTask(id: string, target: OpenTarget): Promise<OpenResult> {
+  const value = await request<unknown>({ action: 'open', id, target }, 12000)
+  const record = asRecord(value) ?? {}
+  const error = normalizeError(record.error)
+  return {
+    opened: record.opened === true,
+    path: asString(record.path),
+    error: error === null ? null : { code: error.code, message: error.message },
+  }
+}
+
+/** Start a download from the page composer. */
+export async function startTask(url: string, dir?: string): Promise<TaskView> {
+  const payload: Record<string, unknown> = { action: 'start', url }
+  if (dir !== undefined && dir !== '') payload.dir = dir
+  const value = await request<unknown>(payload, 20000)
+  const record = asRecord(value) ?? {}
+  const task = normalizeTask(record.task)
+  if (task.id === '') throw new RouteError('invalid_response', 'start returned no task')
+  return task
 }
 
 /* ------------------------------------------------------------ normalizers */
@@ -266,7 +315,11 @@ export function normalizeTask(value: unknown): TaskView {
     stalledMs: asNumber(record.stalledMs),
     activeWorkers: asNumber(record.activeWorkers),
     peakWorkers: asNumber(record.peakWorkers),
+    requestedConnections: asNumber(record.requestedConnections),
     connections: asNumber(record.connections),
+    maxConnections: asNumber(record.maxConnections),
+    targetWorkers: asNumber(record.targetWorkers),
+    transferredBytes: asNumber(record.transferredBytes),
     chunkSize: asNumber(record.chunkSize),
     resumedChunks: asNumber(record.resumedChunks),
     rangeSupported: asBoolean(record.rangeSupported),
@@ -402,6 +455,77 @@ function normalizeAggregate(value: unknown, tasks: TaskView[]): Aggregate {
   }
 }
 
+/** Normalize one session's display identity; a host without the catalog omits it. */
+function normalizeSessionMeta(value: unknown): SessionMeta | null {
+  const record = asRecord(value)
+  if (record === null) return null
+  const id = asString(record.id)
+  if (id === null || id === '') return null
+  return {
+    id,
+    title: asString(record.title),
+    live: record.live === true,
+    cwd: asString(record.cwd),
+    workspaceId: asString(record.workspaceId),
+    workspaceTitle: asString(record.workspaceTitle),
+    workspacePath: asString(record.workspacePath),
+  }
+}
+
+function normalizeSessions(value: unknown): Record<string, SessionMeta> {
+  const record = asRecord(value)
+  if (record === null) return {}
+  const sessions: Record<string, SessionMeta> = {}
+  for (const [key, entry] of Object.entries(record)) {
+    const meta = normalizeSessionMeta(entry)
+    if (meta !== null) sessions[key] = meta
+  }
+  return sessions
+}
+
+function normalizeWorkspaces(value: unknown): WorkspaceMeta[] {
+  const workspaces: WorkspaceMeta[] = []
+  for (const entry of asArray(value)) {
+    const record = asRecord(entry)
+    if (record === null) continue
+    const id = asString(record.id)
+    const path = asString(record.path)
+    if (id === null || id === '' || path === null || path === '') continue
+    workspaces.push({ id, title: asString(record.title) ?? path, path })
+  }
+  return workspaces
+}
+
+/** Normalize the `control` action value (v3 results or a legacy single task). */
+function normalizeControl(value: unknown, action: ControlOp, ids: string[]): ControlResult {
+  const record = asRecord(value) ?? {}
+  const results: ControlOutcome[] = []
+  for (const entry of asArray(record.results)) {
+    const item = asRecord(entry)
+    if (item === null) continue
+    const id = asString(item.id)
+    if (id === null || id === '') continue
+    results.push({
+      id,
+      ok: item.ok === true,
+      task: item.task === null || item.task === undefined ? null : normalizeTask(item.task),
+      error: normalizeError(item.error),
+      notified: item.notified === true,
+    })
+  }
+  if (results.length > 0) return { action, results }
+  // Legacy host: one top-level task, addressed by the single requested id.
+  const fallbackId = ids[0] ?? ''
+  const legacyTask = record.task === null || record.task === undefined ? null : normalizeTask(record.task)
+  if (fallbackId !== '' && (legacyTask !== null || action === 'remove')) {
+    return {
+      action,
+      results: [{ id: fallbackId, ok: true, task: legacyTask, error: null, notified: false }],
+    }
+  }
+  return { action, results: ids.map((id) => ({ id, ok: false, task: null, error: { code: 'invalid_response', message: 'no result' }, notified: false })) }
+}
+
 /** Normalize the `list` action value; tolerates a pre-v2 `{kernel, tasks}`. */
 export function normalizeList(value: unknown): ListValue {
   // A double envelope (`{value: {...}}`) has been seen from a proxy-style host
@@ -413,7 +537,13 @@ export function normalizeList(value: unknown): ListValue {
   const source = record ?? {}
   const tasks = asArray(source.tasks).map(normalizeTask).filter((task) => task.id !== '')
   const kernel = normalizeKernel(source.kernel ?? source.status)
-  return { kernel, tasks, aggregate: normalizeAggregate(source.aggregate, tasks) }
+  return {
+    kernel,
+    tasks,
+    aggregate: normalizeAggregate(source.aggregate, tasks),
+    sessions: normalizeSessions(source.sessions),
+    workspaces: normalizeWorkspaces(source.workspaces),
+  }
 }
 
 /** Normalize one diagnostic event. */
@@ -712,3 +842,4 @@ function hasTaskCounts(value: Record<string, unknown> | null): boolean {
   if (value === null) return false
   return ['total', 'active', 'completed', 'failed'].some((key) => typeof value[key] === 'number')
 }
+

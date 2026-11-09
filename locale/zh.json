@@ -1,21 +1,85 @@
 {
   "meta": {
     "title": "下载",
-    "description": "智能体发起的下载的审阅界面：请求了什么、服务器声明了什么、内核测量了什么、校验结果是什么。"
+    "description": "审阅智能体发起的下载：请求了什么、服务器声明了什么、内核测量了什么、校验结果是什么。"
   },
   "page": {
-    "title": "下载",
-    "pid": "pid {pid}",
-    "recorderLabel": "最近 120 秒的总吞吐",
-    "recorderNow": "现在",
-    "recorderAria": "最近 120 秒的下载总吞吐，当前速率 {rate}",
-    "recorderNote": "本页自行采样绘制。内核上报的时间窗口在各条记录的证据抽屉里。"
+    "title": "下载"
   },
-  "rates": {
-    "now": "现在",
-    "w5": "5 秒",
-    "w30": "30 秒",
-    "idle": "空闲"
+  "kernel": {
+    "ok": "内核正常",
+    "bad": "内核异常",
+    "running": "内核运行中",
+    "starting": "内核启动中",
+    "stopped": "内核未运行",
+    "checking": "内核检测中"
+  },
+  "composer": {
+    "placeholder": "粘贴下载链接",
+    "submit": "下载",
+    "starting": "启动中…",
+    "invalid": "请输入完整的 http:// 或 https:// 链接。",
+    "started": "已开始下载 {name}"
+  },
+  "cards": {
+    "regionLabel": "下载状态",
+    "active": "正在下载",
+    "activeHint": "{n} 个任务正在传输",
+    "activeIdle": "当前没有传输任务",
+    "done": "已完成",
+    "doneHint": "内核汇总的成功记录",
+    "failed": "失败任务",
+    "failedHint": "有 {n} 条记录需要查看",
+    "failedNone": "没有需要查看的记录",
+    "filterAria": "按“{label}”筛选：{count} 条记录"
+  },
+  "toolbar": {
+    "selectAll": "全选",
+    "selectAllOn": "已全选",
+    "selected": "已选 {n} 项",
+    "pause": "暂停",
+    "delete": "删除",
+    "clearSelection": "取消选择"
+  },
+  "filters": {
+    "searchPlaceholder": "筛选文件、会话或 ID",
+    "extensions": "后缀",
+    "noExtensions": "还没有可筛选的文件",
+    "clear": "清除筛选",
+    "clearSearch": "清除搜索",
+    "showing": "{n} / {total} 条记录",
+    "total": "{n} 条记录"
+  },
+  "empty": {
+    "global": "还没有下载记录",
+    "globalHint": "智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
+    "filtered": "没有符合条件的记录",
+    "filteredHint": "调整筛选，或在上方粘贴链接开始新的下载。",
+    "session": "这个会话还没有下载。"
+  },
+  "group": {
+    "unattributed": "未归属工作区",
+    "unattributedSession": "未关联会话",
+    "sessionFallback": "会话 {id}",
+    "records": "{n} 条记录",
+    "active": "{n} 个进行中",
+    "live": "活跃"
+  },
+  "session": {
+    "title": "下载",
+    "unknownScope": "此标签页尚未绑定到会话。"
+  },
+  "guide": {
+    "description": "查看本会话的下载"
+  },
+  "popup": {
+    "title": "{n} 个下载中",
+    "pill": "{n} 个下载中",
+    "tasks": "{n} 个任务",
+    "connections": "{n} 连接",
+    "openPanel": "打开下载页",
+    "collapse": "收起",
+    "expand": "展开"
   },
   "counts": {
     "active": "{n} 个进行中",
@@ -23,50 +87,55 @@
     "failed": "{n} 个失败",
     "paused": "{n} 个已暂停"
   },
-  "kernel": {
-    "running": "内核运行中",
-    "starting": "内核启动中",
-    "stopped": "内核未运行",
-    "error": "内核错误"
+  "rates": {
+    "idle": "空闲"
   },
   "route": {
     "hint": "插件的 Host 半边可能仍在启动；此页面每秒自动重试。"
   },
-  "empty": {
-    "global": "还没有下载记录。智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
-    "session": "这个会话还没有下载。"
-  },
-  "group": {
-    "unattributed": "未归属会话",
-    "session": "会话 {id}",
-    "records": "{n} 条记录"
-  },
-  "session": {
-    "title": "下载",
-    "verifiedCount": "{n} 个已校验",
-    "riskCount": "{n} 个有风险",
-    "unknownScope": "此标签页尚未绑定到会话。"
-  },
-  "guide": {
-    "description": "查看本会话的下载"
-  },
   "record": {
     "etaLabel": "剩余",
     "etaConfidence": "剩余时间置信度：{level}",
-    "toggle": "{name}，{status}。展开证据记录。",
     "pulse": "{name} 的吞吐曲线",
     "sizeUnknown": "大小未知",
     "reveal": "在侧栏打开",
     "copyPath": "复制路径",
     "copyHash": "复制哈希",
+    "copyId": "复制下载 ID",
+    "copyIdHint": "复制下载 ID {id}",
+    "idCopied": "已复制下载 ID",
     "copiedPath": "已复制路径",
     "copiedHash": "已复制哈希",
+    "select": "选择 {name}",
+    "connections": "{n} 连接",
+    "connectionsTitle": "当前 {current} · 目标 {target} · 请求 {requested} · 上限 {max}",
+    "pause": "暂停",
+    "resume": "继续",
+    "openFile": "打开文件",
+    "openFolder": "打开所在目录",
+    "delete": "删除",
+    "deleteConfirmTitle": "删除下载记录",
+    "deleteConfirmOne": "删除「{name}」？",
+    "deleteConfirmMany": "删除 {n} 条下载记录？",
+    "deleteConfirmHint": "记录会从列表中移除，已下载的文件会保留。",
+    "partialFailure": "{n} 个操作失败：{message}",
+    "pausedOne": "已暂停 {name}",
+    "pausedMany": "已暂停 {n} 个下载",
+    "resumedOne": "已继续 {name}",
+    "resumedMany": "已继续 {n} 个下载",
+    "deletedOne": "已删除 {name}",
+    "deletedMany": "已删除 {n} 条记录",
+    "agentNotified": "已告知对应会话的 Agent 这是用户操作。",
+    "openedFile": "已打开 {name}",
+    "openedFolder": "已打开所在目录",
     "stop": "停止",
-    "confirmStop": "确认停止",
-    "stopRequested": "正在停止 {name}"
+    "confirmStop": "确认停止"
   },
   "common": {
-    "copyFailed": "复制失败"
+    "copyFailed": "复制失败",
+    "dismiss": "知道了",
+    "cancel": "取消",
+    "delete": "删除"
   },
   "drawer": {
     "regionLabel": "{name} 的证据记录",
@@ -90,13 +159,14 @@
     "noMessage": "无详情",
     "eventsLoading": "正在加载事件…",
     "eventsEmpty": "没有记录到事件。",
-    "sampledNote": "曲线由本审阅页采样（每秒一个点）；上面的四个速率是内核上报的时间窗口。"
+    "sampledNote": "上面的四个速率是内核上报的时间窗口。"
   },
   "facts": {
     "url": "请求地址",
     "finalUrl": "最终地址",
     "redirects": "重定向",
     "session": "会话",
+    "taskId": "下载 ID",
     "status": "HTTP 状态",
     "http": "HTTP 版本",
     "host": "主机",
@@ -146,6 +216,9 @@
     "resumedBytes": "续传字节",
     "validatorsMatched": "校验器匹配",
     "workers": "当前工作连接",
+    "workersTarget": "目标连接",
+    "workersRequested": "请求连接",
+    "workersMax": "连接上限",
     "peakWorkers": "峰值工作连接",
     "chunkSize": "分块大小",
     "retries": "重试次数",
@@ -261,6 +334,7 @@
       "kernel_exited": "内核已退出",
       "kernel_missing": "内核可执行文件缺失",
       "protocol_mismatch": "内核协议不匹配",
+      "open_failed": "无法打开文件",
       "unknown": "未知错误"
     }
   }

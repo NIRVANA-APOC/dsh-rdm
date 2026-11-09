@@ -6,13 +6,74 @@ All notable changes to `dsh-rdm` are recorded here. The format follows
 
 **Release/tag policy:** every tag (`vX.Y.Z`) must ship with a matching
 `[X.Y.Z]` section in this file, added in the same change that bumps the version
-or creates the tag. There is no release without a changelog entry; run\n`node scripts/check-release.mjs` to enforce it (checks package/kernel version\nequality and the matching `[X.Y.Z]` section).
+or creates the tag. There is no release without a changelog entry; run
+`node scripts/check-release.mjs` to enforce it (checks package/kernel version
+equality and the matching `[X.Y.Z]` section).
 
 Starting with **0.2.2**, the resident kernel and the plugin package share one
-version number: `package.json`, `kernel/Cargo.toml` and the kernel's
-ready/initialize/stats frames all report **0.2.2** (protocol stays 2).
-Historical recordings keep the strings their binaries actually wrote
+version number. **0.3.0** ships kernel `0.3.0` (protocol stays 2); the kernel
+code is unchanged apart from its identity, because 0.3.0 is a review-surface
+release. Historical recordings keep the strings their binaries actually wrote
 (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2` builds = `1.2.0`).
+
+## [0.3.0] — 2026-11-09
+
+Download workbench rework: the human can now compose a download, filter and
+batch-manage records by workspace/session, open results on the desktop, and see
+live progress outside the plugin panel. The agent gains a cross-session record
+search tool.
+
+### Added
+- **Download workbench (left sidebar).** Paste-a-link composer, three state
+  cards (正在下载 / 已完成 / 失败任务) that double as status filters, text plus
+  suffix multi-select filters, select-all and batch pause/delete with a
+  confirmation bar, per-record pause/resume/open-file/open-containing-folder/
+  delete/copy-id actions, and the live adaptive connection count in every row.
+- **Workspace → session-title grouping.** Records are grouped by their owning
+  workspace (durable workspace registry, cwd fallback), then by the real
+  session title folded from the session log; the raw session id is only a
+  fallback and the unattributed bucket is explicit.
+- **Top-right active-download popup** on `shell.overlay` (id
+  `dsh-rdm-progress`): per-session progress, speed and connection totals, with a
+  collapsed pill. It exists only while at least one download is active.
+- **`rdm_search`**, the seventh model-facing tool: find download records across
+  sessions by keyword (id, file name, URL, host, path, session title) or exact
+  task id, with scope/status/limit, returning bounded matches with their
+  session/workspace labels.
+- **Host route v3.** `list` now returns resolved session titles and workspace
+  rows; `control` accepts `ids[]` (1–100) and returns one outcome per id;
+  `pause`/`cancel`/`remove` can queue a short user-action notice to the owning
+  live agent; a new `open` action resolves a task id to its saved file or
+  containing folder and launches the host desktop opener (the browser never
+  supplies a path). The legacy single-`id` control envelope is kept.
+- Copyable download id in both the record row and the evidence drawer; the
+  drawer also reports active / target / requested / ceiling worker counts.
+- `.design/preview-03/` static preview harness (24 states, mocked v3 route);
+  not shipped in the package.
+
+### Changed
+- Kernel status is now the words `内核正常` / `内核异常` plus one green/red dot;
+  the page waveform recorder and the top-right counts/rates line are gone.
+- The global page is a single 1040 px workbench column with the composer,
+  cards, filter/selection toolbar and a calm workspace → session ledger; the
+  session tab keeps the evidence language and row actions.
+- Retuned light/dark token usage for the new cards and popup; responsive layouts
+  for 1440 / 768 / 390, focus-visible rings, and reduced-motion handling.
+- Full Chinese/English copy for the new surfaces; English counts are
+  plural-safe.
+
+### Fixed
+- Session right-sidebar rows no longer overflow their column: the waveform is
+  styled again, the action cluster is anchored to the row, and the group-title
+  dot no longer leaks into the tab header.
+- A record without a saved path offers only the folder action; a paused record
+  no longer claims a live connection count.
+
+### Security
+- `open` accepts only a task id and a fixed target, resolves the path from the
+  kernel record, and validates absolute path/existence before spawning the OS
+  opener detached. User notices are only delivered when the owning agent is
+  live; a cold session is never resumed for a UI click.
 
 ## [0.2.2] — 2026-11-09
 
