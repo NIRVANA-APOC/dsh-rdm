@@ -483,15 +483,6 @@ export const REVIEW_CSS = `
 .rdm2-event-text { min-width: 0; overflow-wrap: anywhere; font-family: var(--rdm2-code); font-size: 11.5px; line-height: 17px; }
 .rdm2-note { margin: 0; padding: 4px 0; font-size: 12px; line-height: 18px; color: var(--rdm2-ink-2); }
 .rdm2-empty .rdm2-note { padding: 18px 16px; }
-.rdm2-footnote {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: 960px;
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 17px;
-  color: var(--rdm2-ink-3);
-}
 
 /* -------------------------------------------------------------- skeleton */
 

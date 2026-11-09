@@ -9,7 +9,6 @@
     "recorderLabel": "最近 120 秒的总吞吐",
     "recorderNow": "现在",
     "recorderAria": "最近 120 秒的下载总吞吐，当前速率 {rate}",
-    "footnote": "这里的每个下载都由智能体发起。请审阅记录，而不是操作。",
     "recorderNote": "本页自行采样绘制。内核上报的时间窗口在各条记录的证据抽屉里。"
   },
   "rates": {

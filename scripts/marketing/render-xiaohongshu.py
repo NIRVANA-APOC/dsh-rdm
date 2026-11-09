@@ -183,7 +183,7 @@ def page_necessity():
     d.text((x2 + 78, 812), "个要另装引擎", font=REG(28), fill=MUT_D, anchor="la")
     d.text((M, 900), "aria2c / Rayburst / Gopeed / qBittorrent", font=MONO(26), fill=DIM_D, anchor="la")
 
-    d.text((M, 976), "dsh-rdm：把 curl 换成一个常驻内核", font=MED(34), fill=ACC, anchor="la")
+    d.text((M, 976), "dsh-rdm：一个 Rust 常驻内核，替掉 curl", font=MED(34), fill=ACC, anchor="la")
 
     # signature: the same two rails the whole set is built on, curled small
     rail(d, M, 1122, 300, 14, LINE_D, (150, 156, 165), gap=(0.62, 26), bg=BG_D)
@@ -256,7 +256,132 @@ def page_picker():
     return c.convert("RGB")
 
 
-# ---------------------------------------------------------------- 04 light panel
+
+# ---------------------------------------------------------------- mixed-script text
+ASCII_RUN = re.compile(r"[A-Za-z0-9._/+\-%–× ]+")
+
+
+def draw_mixed(draw, xy_baseline, text, mono_size, cjk_size, fill, cjk_fill=None):
+    """Draw mono for ASCII runs and HarmonyOS for CJK, aligned on one baseline."""
+    cjk_fill = fill if cjk_fill is None else cjk_fill
+    fm, fc = MONO(mono_size), REG(cjk_size)
+    x, y = xy_baseline
+    pos = 0
+    while pos < len(text):
+        m = ASCII_RUN.match(text, pos)
+        if m:
+            chunk, font, colour = m.group(0), fm, fill
+            pos = m.end()
+        else:
+            end = pos
+            while end < len(text) and not ASCII_RUN.match(text, end):
+                end += 1
+            chunk, font, colour = text[pos:end], fc, cjk_fill
+            pos = end
+        draw.text((x, y), chunk, font=font, fill=colour, anchor="ls")
+        x += draw.textlength(chunk, font=font)
+    return x
+
+
+# ---------------------------------------------------------------- 03 rust kernel
+def page_rust():
+    c = Image.new("RGBA", (W, H), PAPER + (255,))
+    d = ImageDraw.Draw(c)
+    d.text((M, 128), "Rust 写的，按 DSH 的进程模型设计", font=REG(32), fill=MUTED, anchor="la")
+    d.text((M, 192), "不是给 curl 套层壳", font=H1(64), fill=INK, anchor="la")
+    d.text((M, 276), "是自己写了个内核", font=H1(64), fill=ACC, anchor="la")
+    d.text((M, 384), "轻量不是形容词——下面每一行都能被验证。", font=REG(32), fill=MUTED, anchor="la")
+
+    rows = [
+        ("实现语言", "Rust", "无 GC、无运行时"),
+        ("内核体积", "4.39 MiB", "静态二进制，随插件分发"),
+        ("空闲常驻", "5.7–6.7 MiB", "闲置时只占这一点内存"),
+        ("进程模型", "1 个进程", "懒启动，随 DSH 退出"),
+        ("对外接口", "stdio", "NDJSON，没有监听端口"),
+        ("预编译平台", "5 个平台", "Win / Linux / macOS，安装不跑 cargo"),
+    ]
+    y = 486
+    for label, value, note in rows:
+        d.line((M, y, W - M, y), fill=LINE, width=2)
+        d.text((M, y + 40), label, font=REG(28), fill=MUTED, anchor="la")
+        draw_mixed(d, (M + 240, y + 62), value, 44, 34, INK)
+        d.text((M + 240, y + 88), note, font=REG(25), fill=(140, 145, 152), anchor="la")
+        y += 142
+    d.line((M, y, W - M, y), fill=LINE, width=2)
+
+    d.text((M, y + 34), "实测口径见 docs/verification.md；体积与内存随平台略有差异。",
+           font=REG(23), fill=(150, 155, 162), anchor="la")
+    return c.convert("RGB")
+
+
+# ---------------------------------------------------------------- 04 adaptive concurrency
+def page_aimd():
+    c = Image.new("RGBA", (W, H), BG_D + (255,))
+    d = ImageDraw.Draw(c)
+    d.text((M, 128), "每秒评估一次，连接数自己上下", font=REG(32), fill=MUT_D, anchor="la")
+    d.text((M, 192), "不是一次拉满", font=H1(64), fill=FG_D, anchor="la")
+    d.text((M, 276), "是边走边调", font=H1(64), fill=ACC, anchor="la")
+
+    # ---- step chart of the connection target over 12 one-second windows
+    x0, x1 = M, W - M
+    top, bottom = 452, 780
+    lo, hi = 0, 10
+    marks = [4, 8, 12]
+    for m in marks:
+        gy = bottom - (m - lo) / (hi - lo) * (bottom - top)
+        d.line((x0, gy, x1, gy), fill=(32, 36, 43), width=1)
+        d.text((x0 - 8, gy - 12), str(m), font=MONO(20), fill=(96, 102, 111), anchor="ra")
+    d.line((x0, bottom, x1, bottom), fill=LINE_D, width=2)
+
+    # target over time (seconds): ramp, 429 at t=5 halves it, then ramp again, then a dip
+    steps = [(0, 8), (1, 9), (2, 10), (3, 11), (4, 12), (5, 6),
+             (6, 7), (7, 8), (8, 9), (9, 10), (10, 10), (11, 9), (12, 9)]
+    span = 12.0
+    pts = []
+    for t, v in steps:
+        px = x0 + t / span * (x1 - x0)
+        py = bottom - (v - lo) / (hi - lo) * (bottom - top)
+        pts.append((px, py))
+    for i in range(len(pts) - 1):
+        ax, ay = pts[i]
+        bx, by = pts[i + 1]
+        d.line((ax, ay, bx, ay), fill=ACC, width=4)
+        d.line((bx, ay, bx, by), fill=ACC, width=4)
+
+    # markers: vertical rules stay in the plot, captions move under the axis
+    mx, my = pts[5]
+    d.line((mx, my - 18, mx, bottom), fill=CORAL, width=2)
+    d.text((mx, bottom + 16), "429 → 目标砍半", font=REG(25), fill=CORAL, anchor="ma")
+    dx, dy = pts[11]
+    d.line((dx, dy - 14, dx, bottom), fill=(150, 156, 165), width=2)
+    d.text((dx, bottom + 16), "吞吐掉 30% → 减一", font=REG(25), fill=MUT_D, anchor="ma")
+    d.text((x0, bottom + 52), "每次调整一个 1 秒窗口；图上是一个任务的自适应轨迹",
+           font=REG(23), fill=(96, 102, 111), anchor="la")
+
+    # ---- the four rules
+    rules = [
+        ("+1", "吞吐没掉，且连接吃满 75% 以上", (150, 156, 165)),
+        ("÷2", "收到 429 / 503 的 Retry-After", CORAL),
+        ("−1", "吞吐比上一个窗口掉 30%", (150, 156, 165)),
+        ("上限", "min(你设的 1–32, 剩余块数)", (150, 156, 165)),
+    ]
+    y = 900
+    for tag, text, color in rules:
+        draw_mixed(d, (M, y), tag, 30, 30, CORAL if tag == "÷2" else ACC)
+        d.text((M + 130, y - 30), text, font=REG(30), fill=color, anchor="la")
+        y += 56
+
+    d.text((M, 1112), "同一个控制器还管尾部窃取：最慢那块会被劈开，让闲着的连接接走。",
+           font=REG(28), fill=MUT_D, anchor="la")
+
+    d.text((M, 1180), "回环多连接吞吐", font=REG(34), fill=MUT_D, anchor="la")
+    w_lbl = d.textlength("回环多连接吞吐", font=REG(34))
+    d.text((M + w_lbl + 18, 1182), "109–145 MiB/s", font=MONO(38), fill=ACC, anchor="la")
+    d.text((M, 1238), "单次测量、机器相关；14/14 个 e2e 场景覆盖多连接与退避", font=REG(24), fill=(120, 126, 135), anchor="la")
+    return c.convert("RGB")
+
+
+# ---------------------------------------------------------------- 05 light panel
 def page_light_panel():
     c = Image.new("RGBA", (W, H), PAPER + (255,))
     d = ImageDraw.Draw(c)
@@ -388,12 +513,13 @@ def page_install():
 PAGES = [
     ("01-necessity", page_necessity),
     ("02-pain", page_pain),
-    ("03-picker", page_picker),
-    ("04-panel-light", page_light_panel),
-    ("05-panel-dark", page_dark_panel),
-    ("06-details", page_details),
-    ("07-mobile", page_mobile),
-    ("08-install", page_install),
+    ("03-rust", page_rust),
+    ("04-adaptive", page_aimd),
+    ("05-panel-light", page_light_panel),
+    ("06-panel-dark", page_dark_panel),
+    ("07-details", page_details),
+    ("08-mobile", page_mobile),
+    ("09-install", page_install),
 ]
 
 

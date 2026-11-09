@@ -368,7 +368,6 @@ export function ReviewPage(props: ReviewPageProps) {
         )}
       </section>
       <LiveRegion message={feedback} />
-      <p className="rdm2-footnote">{t('page.footnote')}</p>
     </div>
   )
 }

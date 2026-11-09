@@ -9,7 +9,6 @@
     "recorderLabel": "Aggregate throughput, last 120 seconds",
     "recorderNow": "now",
     "recorderAria": "Aggregate download throughput over the last 120 seconds; current rate {rate}",
-    "footnote": "Every download here was requested by an agent. Review the record, not the controls.",
     "recorderNote": "Sampled by this review page. Kernel-reported windows are in each record's evidence drawer."
   },
   "rates": {
