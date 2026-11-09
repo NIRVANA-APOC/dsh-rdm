@@ -122,7 +122,7 @@ fn ready(kernel: &KernelProcess) -> Value {
     assert_eq!(ready["protocol"], 2, "{ready}");
     // 0.2.2 unifies the kernel and package versions: the ready frame reports
     // 0.2.2, and the history meta line records the same identity.
-    assert_eq!(ready["kernel"]["version"], "0.2.2", "{ready}");
+    assert_eq!(ready["kernel"]["version"], "0.3.0-alpha.1", "{ready}");
     assert!(ready["kernel"]["pid"].as_u64().unwrap_or(0) > 0);
     ready
 }
@@ -493,7 +493,7 @@ fn malformed_and_unknown_requests_are_reported() {
     assert_eq!(response["error"]["code"], "unsupported_method");
     let message = response["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("nope"), "message must name the method: {message}");
-    assert!(message.contains("0.2.2"), "message must name the kernel version: {message}");
+    assert!(message.contains("0.3.0-alpha.1"), "message must name the kernel version: {message}");
 
     let response = kernel.request("get", "get", json!({"id": "t_missing"}));
     assert_eq!(response["ok"], false);

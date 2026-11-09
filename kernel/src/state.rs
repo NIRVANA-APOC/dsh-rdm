@@ -60,6 +60,11 @@ pub struct ResumeState {
     /// Query-stripped identity of `final_url` (0.2.1). Older states derive it.
     #[serde(default)]
     pub final_url_identity: Option<String>,
+    /// Source-independent content identity (0.3.0 multi-source): the same
+    /// logical object fetched from a different mirror keeps this key, so a
+    /// resumed task can switch sources without discarding completed ranges.
+    #[serde(default)]
+    pub content_key: Option<String>,
 }
 
 impl ResumeState {
@@ -78,7 +83,43 @@ impl ResumeState {
             target_workers: None,
             url_identity: Some(url_identity(url)),
             final_url_identity: Some(url_identity(&meta.final_url)),
+            content_key: None,
         }
+    }
+
+    /// Attach the source-independent content key (multi-source resume).
+    pub fn with_content_key(mut self, content_key: Option<String>) -> Self {
+        self.content_key = content_key;
+        self
+    }
+
+    /// Multi-source resume decision: a shared content key wins over URL
+    /// identity; a mismatch is a hard rejection (never splice two objects).
+    /// When the legacy URL/validator path already accepts, its specific reason
+    /// (`etag`, `url`, …) is preserved so existing receipts stay meaningful.
+    pub fn is_compatible_with_content(&self, url: &str, meta: &Meta, total: u64, content_key: Option<&str>) -> ResumeOutcome {
+        if let (Some(saved), Some(current)) = (self.content_key.as_deref(), content_key) {
+            if saved != current {
+                return ResumeOutcome::Rejected("validators-mismatch");
+            }
+            let legacy = self.is_compatible(url, meta, total);
+            if let ResumeOutcome::Accepted(reason) = legacy {
+                return ResumeOutcome::Accepted(reason);
+            }
+            // The selected mirror can have a different URL (and a different
+            // volatile token); the strong content key is the better identity.
+            if self.version != STATE_VERSION {
+                return ResumeOutcome::Rejected("version-mismatch");
+            }
+            if self.completed_ranges().is_none() {
+                return ResumeOutcome::Rejected("ranges-invalid");
+            }
+            if self.total_bytes != total || meta.total_bytes != Some(total) {
+                return ResumeOutcome::Rejected("size-mismatch");
+            }
+            return ResumeOutcome::Accepted("content-key");
+        }
+        self.is_compatible(url, meta, total)
     }
 
     /// Attach the controller's current target so a later resume can restore it.

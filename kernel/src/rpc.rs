@@ -157,7 +157,7 @@ pub async fn dispatch(kernel: &Kernel, method: &str, params: Value) -> Result<Va
         }
         other => Err(ApiError::new(
             "unsupported_method",
-            format!("kernel {} does not implement `{other}`; upgrade the kernel binary (dsh-rdm 0.2.2+)", crate::protocol::VERSION),
+            format!("kernel {} does not implement `{other}`; upgrade the kernel binary (dsh-rdm 0.3.0-alpha.1+)", crate::protocol::VERSION),
         )),
     }
 }

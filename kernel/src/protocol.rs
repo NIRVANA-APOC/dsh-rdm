@@ -7,7 +7,7 @@ use std::path::PathBuf;
 /// docs/design/0.2.0-agent-native.md §2.
 pub const PROTOCOL: u32 = 2;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const DEFAULT_USER_AGENT: &str = "dsh-rdm/0.2.2";
+pub const DEFAULT_USER_AGENT: &str = "dsh-rdm/0.3.0-alpha.1";
 pub const DEFAULT_CONNECTIONS: usize = 8;
 pub const MIN_CONNECTIONS: usize = 1;
 /// Hard ceiling for one task's worker pool. 0.2.1 raises it from 32 to 128 so
@@ -35,6 +35,83 @@ pub const TLS_EXPIRING_SECS: i64 = 30 * 24 * 60 * 60;
 pub const MAX_REDIRECTS: usize = 8;
 /// Origin ledger cap; least recently seen hosts are evicted past this.
 pub const ORIGIN_LEDGER_MAX_HOSTS: usize = 256;
+/// Hard cap on candidate sources per task. Probing is bounded by this; the
+/// task view/detail also expose at most this many source rows.
+pub const MAX_SOURCES: usize = 8;
+/// Default hedge/race window. The hedge downloads this many bytes from the
+/// top two sources before committing; race uses it only as a telemetry hint.
+pub const DEFAULT_SOURCE_RACE_BYTES: u64 = 1024 * 1024;
+pub const MIN_SOURCE_RACE_BYTES: u64 = 64 * 1024;
+pub const MAX_SOURCE_RACE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// One candidate source for a task. `priority` is only an ordering hint; the
+/// measured score wins when a transfer actually selects.
+#[rustfmt::skip]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SourceInput {
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub cookie: Option<String>,
+    pub priority: Option<u32>,
+    /// Set by Metalink/HTTP discovery; used only for the task-view role.
+    #[serde(default)]
+    pub discovered: bool,
+}
+
+#[rustfmt::skip]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourcePolicy {
+    /// Only the primary URL is used (legacy behaviour).
+    #[default] Single,
+    /// Probe all candidates, pick the best one, never switch after bytes exist.
+    Select,
+    /// Select, then switch to a healthy alternate on fatal failure/stall.
+    /// Requires a strong shared content identity.
+    Failover,
+    /// Race the first bytes across the top two sources, commit to the winner,
+    /// then behave like `failover` when identity allows it.
+    Hedge,
+    /// Per-chunk dynamic assignment across the pool. Requires a strong shared
+    /// content identity (`expectedSha256` or equal strong validators).
+    Race,
+}
+
+impl SourcePolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Select => "select",
+            Self::Failover => "failover",
+            Self::Hedge => "hedge",
+            Self::Race => "race",
+        }
+    }
+    /// Policies that may move bytes after the first source is chosen.
+    pub fn may_switch(self) -> bool {
+        matches!(self, Self::Failover | Self::Hedge | Self::Race)
+    }
+}
+
+/// Redacted, bounded source projection for `TaskView`/`TaskDetail`/UI.
+#[rustfmt::skip]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SourceView {
+    pub id: usize,
+    pub url: String,
+    pub host: String,
+    /// `active` | `standby` | `bad` | `unused`.
+    pub state: String,
+    /// `primary` | `alternate` | `discovered`.
+    pub role: String,
+    pub bytes: u64,
+    pub bps: Option<u64>,
+    pub active: bool,
+    pub last_error: Option<String>,
+}
+
 
 #[rustfmt::skip]
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +195,19 @@ pub struct RequestSpec {
     pub speed_limit_bps: Option<u64>, pub resume: Option<bool>,
     pub single_stream: bool, pub proxy: Option<String>, pub insecure: bool,
     pub max_attempts: Option<u32>,
+    /// Additional candidate sources (mirrors) for the same object. The primary
+    /// `url` is always source 0; duplicates are dropped.
+    pub sources: Vec<SourceInput>,
+    /// Multi-source policy; omitted means `select` when `sources` is non-empty,
+    /// otherwise `single`.
+    pub source_policy: Option<SourcePolicy>,
+    /// Bytes to hedge across the top two sources (hedge policy).
+    pub source_race_bytes: Option<u64>,
+    /// Parse Metalink/HTTP `Link: rel=duplicate` mirrors from probe responses.
+    /// Omitted means true; only HTTP(S) mirrors are accepted.
+    pub discover_sources: Option<bool>,
+    /// Select a file by name when the URL is a Metalink `.meta4` document.
+    pub metalink_file: Option<String>,
     /// Owning agent session. The host fills this from the execution context;
     /// it is omitted for programmatic callers outside a session.
     pub session_id: Option<String>,
@@ -138,6 +228,13 @@ pub struct Spec {
     pub speed_limit_bps: u64, pub resume: bool, pub single_stream: bool, pub proxy: Option<String>,
     pub insecure: bool, pub max_attempts: u32, #[serde(default)] pub fsync_on_complete: bool,
     #[serde(default)] pub session_id: Option<String>,
+    /// Full candidate list, primary first; `url`/`headers`/`cookie` mirror
+    /// source 0 for compatibility with older code paths.
+    #[serde(default)] pub sources: Vec<SourceInput>,
+    #[serde(default)] pub source_policy: SourcePolicy,
+    #[serde(default)] pub source_race_bytes: u64,
+    #[serde(default)] pub discover_sources: bool,
+    #[serde(default)] pub metalink_file: Option<String>,
 }
 
 fn default_max_connections() -> usize {
@@ -179,6 +276,46 @@ impl Spec {
             let name = name.trim();
             (!name.is_empty()).then(|| name.to_string())
         });
+        // ── Candidate sources ──────────────────────────────────────────────
+        // Source 0 is always the requested URL with the global headers/cookie;
+        // `sources[]` entries inherit the global headers and may override them
+        // per source (so a mirror can carry its own `Authorization`/cookie).
+        // Duplicates are dropped, the caller's order is preserved, and the cap
+        // bounds probe fan-out and the task-view projection.
+        let mut sources: Vec<SourceInput> = Vec::with_capacity(1 + raw.sources.len());
+        sources.push(SourceInput {
+            url: url.to_string(),
+            headers: raw.headers.clone(),
+            cookie: raw.cookie.clone().filter(|value| !value.is_empty()),
+            priority: Some(0),
+            discovered: false,
+        });
+        for (index, candidate) in raw.sources.into_iter().enumerate() {
+            let candidate_url = url::Url::parse(candidate.url.trim()).map_err(|error| format!("invalid source url `{}`: {error}", candidate.url))?;
+            match candidate_url.scheme() {
+                "http" | "https" => {}
+                other => return Err(format!("unsupported source url scheme `{other}`")),
+            }
+            let mut headers = raw.headers.clone();
+            for (name, value) in candidate.headers {
+                headers.insert(name, value);
+            }
+            let cookie = candidate.cookie.or_else(|| raw.cookie.clone()).filter(|value| !value.is_empty());
+            let entry = SourceInput { url: candidate_url.to_string(), headers, cookie, priority: candidate.priority.or(Some((index + 1) as u32)), discovered: false };
+            if sources.len() >= MAX_SOURCES {
+                break;
+            }
+            if !sources.iter().any(|existing| existing.url == entry.url) {
+                sources.push(entry);
+            }
+        }
+        let source_policy = raw.source_policy.unwrap_or(if sources.len() > 1 { SourcePolicy::Select } else { SourcePolicy::Single });
+        let source_race_bytes = raw.source_race_bytes.unwrap_or(DEFAULT_SOURCE_RACE_BYTES).clamp(MIN_SOURCE_RACE_BYTES, MAX_SOURCE_RACE_BYTES);
+        let discover_sources = raw.discover_sources.unwrap_or(true);
+        let metalink_file = raw.metalink_file.and_then(|name| {
+            let name = name.trim();
+            (!name.is_empty()).then(|| name.to_string())
+        });
         Ok(Self {
             url: url.to_string(),
             dir,
@@ -199,7 +336,22 @@ impl Spec {
             max_attempts: raw.max_attempts.unwrap_or(config.max_attempts).max(1),
             fsync_on_complete: config.fsync_on_complete,
             session_id,
+            sources,
+            source_policy,
+            source_race_bytes,
+            discover_sources,
+            metalink_file,
         })
+    }
+    /// A single-source view of this spec (source-specific URL/header/cookie).
+    pub fn for_source(&self, source: &SourceInput) -> Self {
+        let mut clone = self.clone();
+        clone.url = source.url.clone();
+        clone.headers = source.headers.clone();
+        clone.cookie = source.cookie.clone();
+        clone.sources = vec![source.clone()];
+        clone.source_policy = SourcePolicy::Single;
+        clone
     }
     pub fn user_agent(&self) -> &str {
         self.user_agent.as_deref().unwrap_or(DEFAULT_USER_AGENT)
@@ -451,6 +603,20 @@ pub struct OriginFacts {
     pub last_at: Option<u64>,
 }
 
+/// One mirror advertised by Metalink/HTTP (`Link: rel=duplicate`) or a
+/// Metalink document. URLs are projected redacted; the raw candidates live in
+/// the task's source pool.
+#[rustfmt::skip]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MirrorSource {
+    pub url: String,
+    pub priority: Option<u32>,
+    pub geo: Option<String>,
+    /// `http-link` | `metalink` | `unknown`.
+    pub source: String,
+}
+
 #[rustfmt::skip]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -479,6 +645,8 @@ pub struct ServerFacts {
     pub warnings: Vec<String>,
     pub recommendation: Recommendation,
     pub origin: Option<OriginFacts>,
+    /// Metalink/HTTP duplicates discovered on this response (V4).
+    pub mirrors: Vec<MirrorSource>,
 }
 
 impl ServerFacts {
@@ -506,6 +674,9 @@ impl ServerFacts {
         // `auth_key` on the CDN hop); they are part of the same projection.
         for hop in &mut self.redirects {
             hop.url = redact_url(&hop.url);
+        }
+        for mirror in &mut self.mirrors {
+            mirror.url = redact_url(&mirror.url);
         }
         self
     }
@@ -571,6 +742,13 @@ pub struct TaskView {
     pub elapsed_ms: u64,
     pub signed_url_expires_at: Option<u64>,
     pub tls_not_after: Option<u64>,
+    /// `single|select|failover|hedge|race` (0.3.0 multi-source).
+    pub source_policy: String,
+    /// Index of the source currently carrying the transfer, if any.
+    pub selected_source: Option<usize>,
+    pub source_switches: u32,
+    /// Bounded per-source projection (≤ `MAX_SOURCES`), redacted URLs.
+    pub sources: Vec<SourceView>,
 }
 
 impl Default for TaskView {
@@ -622,6 +800,10 @@ impl Default for TaskView {
             elapsed_ms: 0,
             signed_url_expires_at: None,
             tls_not_after: None,
+            source_policy: "single".to_string(),
+            selected_source: None,
+            source_switches: 0,
+            sources: Vec::new(),
         }
     }
 }
@@ -720,6 +902,14 @@ pub struct TaskDetail {
     pub resume_state: ResumeStateFacts,
     pub timing: TimingDetail,
     pub diagnosis: Vec<Diagnosis>,
+    /// Bounded source pool (mirrors) for this task; empty for a single-source
+    /// download.
+    pub sources: Vec<SourceView>,
+    pub selected_source: Option<usize>,
+    pub source_switches: u32,
+    /// Effective policy (may be downgraded from race/failover when the
+    /// candidates do not share a strong content identity).
+    pub source_policy: String,
 }
 
 #[rustfmt::skip]
@@ -808,6 +998,10 @@ pub fn is_credential_param(name: &str) -> bool {
 /// projections (`ServerFacts.url/finalUrl/redirects`, `TaskView.url/finalUrl`);
 /// the raw URL is kept internally for requests, resume state and task records.
 pub fn redact_url(raw: &str) -> String {
+    // URL userinfo (`https://user:pass@host/...`) is credential material too;
+    // strip it before the query pass so no projection/event can carry it.
+    let raw = strip_userinfo(raw);
+    let raw = raw.as_str();
     let Some((base, rest)) = raw.split_once('?') else { return raw.to_string() };
     let (query, fragment) = match rest.split_once('#') {
         Some((query, fragment)) => (query, Some(fragment)),
@@ -857,6 +1051,21 @@ fn redact_token(token: &str) -> String {
     let tail = &token[start..];
     let end = tail.find(|character: char| character.is_whitespace() || matches!(character, ')' | ']' | '}' | '"' | '\'' | '>' | ',' | ';')).unwrap_or(tail.len());
     format!("{}{}{}", &token[..start], redact_url(&tail[..end]), &tail[end..])
+}
+
+/// Strip `user[:password]@` from an authority while leaving the rest of the URL
+/// byte-identical. Only the authority segment before the first `/`, `?` or `#`
+/// is considered, so an `@` in a path or query is not treated as userinfo.
+fn strip_userinfo(raw: &str) -> String {
+    let Some(scheme_end) = raw.find("://") else { return raw.to_string() };
+    let rest = &raw[scheme_end + 3..];
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let Some(at) = authority.rfind('@') else { return raw.to_string() };
+    if at == 0 {
+        return raw.to_string();
+    }
+    format!("{}<redacted>@{}", &raw[..scheme_end + 3], &rest[at + 1..])
 }
 
 /// Redact credentials inside free-form diagnostic text (event messages and
@@ -917,6 +1126,18 @@ mod redaction_tests {
         assert!(redacted.contains("<redacted>"));
         assert!(redacted.starts_with("probe HEAD failed:"), "{redacted}");
         assert_eq!(redact_text("no url here"), "no url here");
+    }
+
+    #[test]
+    fn redacts_url_userinfo() {
+        let raw = "ftp://alice:s3cret@mirror.example/pub/file.bin?token=abc";
+        let redacted = redact_url(raw);
+        assert!(!redacted.contains("alice") && !redacted.contains("s3cret"), "{redacted}");
+        assert!(redacted.contains("<redacted>@mirror.example"), "{redacted}");
+        assert!(redacted.contains("token=<redacted>"), "{redacted}");
+        // An `@` in the path/query is not userinfo.
+        let path_at = "https://example.com/a@b/file?x=1";
+        assert_eq!(redact_url(path_at), path_at);
     }
 
     #[test]

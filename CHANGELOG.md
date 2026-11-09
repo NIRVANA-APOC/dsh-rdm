@@ -14,6 +14,106 @@ ready/initialize/stats frames all report **0.2.2** (protocol stays 2).
 Historical recordings keep the strings their binaries actually wrote
 (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2` builds = `1.2.0`).
 
+## [0.3.0-alpha.1] — 2026-11-09
+
+Multi-source scheduling for one logical object: explicit candidate sources,
+measured selection, failover, hedged start, per-chunk racing, and Metalink/HTTP
+discovery. Protocol remains **2** (all additions are optional/defaulted); the
+kernel and package version is **0.3.0-alpha.1**.
+
+### Added
+- **`sources[]` on `rdm_download`**: the primary `url` plus up to seven
+  candidate mirrors, each with its own headers/cookie and optional priority.
+  `sourcePolicy` selects `single`, `select`, `failover`, `hedge` or `race`
+  (omitted = `select` when sources are present).
+- **Measured selection**: all candidates are probed concurrently; when multiple
+  sources exist the ranged probe sample is 256 KiB (above the 64 KiB
+  throughput-noise floor), ranked against the origin ledger, range support,
+  signed-URL expiry and rate-limit facts. The selected source and alternates are
+  reported in `TaskView`/`TaskDetail` as `sources[]`, `selectedSource`,
+  `sourceSwitches` and `sourcePolicy`.
+- **Failover (V1)**: a failed/stalled source is marked bad and the transfer
+  continues from a healthy alternate; completed chunk ranges are preserved.
+- **Hedged start (V2)**: `hedge` races the first 64 KiB–8 MiB (`sourceRaceBytes`,
+  default 1 MiB) across the two best sources, validates the full range, writes
+  the winner's bytes, and commits to that source.
+- **Mid-transfer switch (V2)**: controller collapse recovery now prefers a
+  healthy alternate source before rebuilding the same connection pool;
+  per-source EWMA/health is tracked for selection.
+- **Per-chunk racing (V3)**: `race` assigns each claim to the best healthy
+  source under a per-source connection cap, quarantines sources after repeated
+  failures, and reports per-source bytes/rate. It requires a strong shared
+  content identity (`expectedSha256`, a server SHA-256/Content-Digest, or equal
+  size + strong ETag); otherwise it is downgraded to `select` with a recorded
+  event.
+- **Metalink/HTTP discovery (V4)**: `Link: <mirror>; rel=duplicate; pri=N`
+  headers are parsed from probe responses and the mirrors are probed and added
+  to the pool (HTTP(S) only). A `.meta4`/`.metalink` request is resolved to the
+  selected file's HTTP(S) mirrors and SHA-256 before transfer; `metalinkFile`
+  chooses a file by name when the document contains several.
+- **Content-key resume**: `.part.json` records a source-independent
+  `contentKey`; a resumed task may continue from a different mirror when the
+  key matches, and refuses (`validators-mismatch`/`content-mismatch`) when it
+  does not.
+- **Source projections**: redacted per-source URLs/states/bytes/rates in the
+  task view/detail and evidence drawer; new `source` task events for
+  selection/switches/hedges/discovery.
+
+### Changed
+- `rdm_download` descriptions and parameter docs list the multi-source fields.
+- Controller `RebuildPool` semantics: try a source switch first, then rebuild
+  the active source's pool.
+- New `source` event kind in the bounded task-event ring and JSONL recording.
+
+### Version staging
+The feature was implemented in four stages; each stage incremented the kernel
+version by `0.0.1`, and the accepted build is the pre-release below.
+
+| Stage | Kernel version | Scope |
+|---|---|---|
+| V1 | `0.2.3` | `sources[]`, selection, failover, content-key resume, task views |
+| V2 | `0.2.4` | hedged start, mid-transfer switch, per-source health/EWMA |
+| V3 | `0.2.5` | per-chunk race scheduling, per-source caps, quarantine |
+| V4 | `0.2.6` | Metalink/HTTP `Link` discovery, `.meta4` resolution |
+| Accepted | `0.3.0-alpha.1` | version unification + acceptance tests |
+
+### Limits (documented)
+- Candidates are **HTTP(S)** only; cross-protocol sources (FTP/S3/torrent) are
+  future protocol work.
+- `race`/`failover` mix bytes only with a strong shared content identity;
+  `select`/`hedge` never mix (they commit to one source).
+- A `.meta4` document with multiple files requires `metalinkFile`; DRM/live
+  media and site extractors are out of scope.
+- Multi-source probing adds up to seven concurrent probes and, for multi-source
+  tasks, a 256 KiB sample per candidate. Single-source downloads keep the
+  64-byte probe.
+
+### Verification
+- `cargo test --manifest-path kernel/Cargo.toml --all-targets`: **157 passed / 0
+  failed** — lib 78 · engine_tests 15 · protocol_tests 5 · unit 17 ·
+  v022_integration 13 · v030_integration 21 · multi_source 8 (selection,
+  failover, unproven-identity refusal, race, race slow-source exclusion, hedge,
+  Metalink/HTTP discovery, `.meta4` resolution).
+- **Real-network benchmark** (Alpine 3.20.3 ISO, 209 MiB, SHA-256 verified;
+  official CDN vs BFSU/CERNET/NJU mirrors): `select` was **11.41× faster than
+  the single official CDN** (23.73 s → 2.08 s) and matched the best manual
+  mirror; `race` used multiple mirrors but was ~1.00× vs the best single mirror
+  on this link. The first race scheduler starved every source but the best; it
+  was replaced with weighted least-loaded assignment plus a 50 % score floor
+  (3-source race 3.99 s → 2.11 s). Evidence:
+  [session_logs/20261109-multisource/README.md](session_logs/20261109-multisource/README.md).
+- `python tests/verify_e2e.py`: **205/205** checks; `python tests/verify_extra.py`:
+  **56/56**; `python tests/verify_claims.py`: **15/15**.
+- `node tests/tools-receipts.test.mjs`: **PASS 50 checks**; `node
+  tests/kernel-e2e.mjs`: **PASS** (includes a new multi-source explicit-mirror
+  scenario).
+- `node scripts/verify-fixture.mjs`: **64/64**; `node
+  scripts/verify-kernels.mjs --host --run`: **PASS** (host win32-x64, 5.35 MB);
+  `node scripts/check-release.mjs`: **PASS** (package = kernel =
+  `0.3.0-alpha.1`).
+- Host artifacts rebuilt with `node scripts/build.mjs` (esbuild) and `npx tsc
+  --noEmit -p tsconfig.json` is clean.
+
 ## [0.2.2] — 2026-11-09
 
 Live-ModelScope optimization pass, driven by `session_logs/20261109/` and two

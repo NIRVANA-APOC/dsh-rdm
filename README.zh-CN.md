@@ -10,13 +10,14 @@
 
 ## “智能体原生”在这里的含义
 
-被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.2.2 就是围绕这些问题构建的。
+被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.3.0-alpha.1 就是围绕这些问题构建的。
 
 * **决策级探测。** `rdm_probe` 返回完整的服务器事实记录——经证实的字节范围支持、校验器与 RFC 9110 续传安全性、签名链接过期、TLS 证书有效期、重定向链、校验和可用性、速率限制响应头、耗时、稳定的警告码，以及具体建议。而不是一句“200 OK，48 MB”。
 * **启动时预检。** `rdm_download` 会把同一份服务器事实附着到任务上（有界等待，默认 2 秒），这样智能体无需第二次调用就能决定暂停、校验还是继续等待。
 * **诚实的实时遥测。** 四个实测吞吐窗口（1 s / 5 s / 30 s / 300 s）、峰值、平均、停滞时长、趋势，以及一个在数据不足时会降级为 `unknown` 的 `etaConfidence`，而不是伪造精度。
 * **可以超过请求值的自适应并发。** 任务以请求的连接数起步，但控制器可以在聚合吞吐仍有空间时把 worker 目标增长到 `maxConnections`（默认 128），在增长稀释吞吐时回退，在饱和的平台期停止增长，并在传输中途吞吐塌陷时重建连接池。`connections` 始终是初始并发规模，`requestedConnections` 保留调用方请求值；尾部排空期间目标冻结，最后几个 chunk 不会被误判为“吞吐下降”。
 * **能跨易变 URL 存活的续传。** 续传状态按稳定身份（URL 路径、大小、校验器）匹配，而不是按签名最终 URL 上按请求变化的 `auth_key` / `Expires` / `Policy` 令牌匹配——重新探测不会再丢掉已完成的字节。每次尝试都会报告 `resumeDecision` / `resumeReason`。
+* **多源调度。** `rdm_download` 可为同一对象传最多 8 个 HTTP(S) 候选源与策略：`select` 并发探测后选实测最快，`failover` 失败切换，`hedge` 用前两个源对冲首段，`race` 在每源连接上限内把分块分给池中源。只有共享强内容身份（`expectedSha256`、服务器 SHA-256/Content-Digest，或相同大小 + 强 ETag）才允许混用字节，错误镜像会被拒绝而不是静默拼接。自动解析 Metalink/HTTP `Link: rel=duplicate` 与 `.meta4` 文档；任务视图/详情展示选中源、备选、切换次数与每源字节/速率。
 * **记录下来的下载数据。** 任务运行期间，逐样本遥测与事件以 JSONL 追加到 `<dataDir>/history/`；`rdm_history` 可在事后或内核重启后按有界窗口读回，因此传输可以回放、内核可以调参，而不必手工采样。
 * **带构建归属的记录。** 每次运行先写一条 meta 记录——内核版本、pid、run、文件/总量/分块、请求/初始/上限 worker 数、续传决策——这样跨内核构建（传输中途重启）的录制仍能说明每段序列由哪个构建产生。`rdm_history` 以 build 标签呈现，而不是悄悄混合序列。
 * **续传后速率从零开始。** `transferredBytes` 以及所有速度/峰值/ETA 计算都使用本次运行的字节数；`avgBps` 则是整文件进度除以持久化的累计耗时，续传任务不会再报出从已接续 `.part` 字节继承来的多 GiB/s 速率或峰值。
@@ -42,7 +43,7 @@
 | 工具 | 作用 | 返回 |
 |---|---|---|
 | `rdm_probe` | 检查 HTTP(S) 源而不下载文件本体 | `ServerFacts`：字节范围、校验器、续传安全性、签名链接/TLS 过期、重定向、校验和、速率限制、耗时、警告、建议 |
-| `rdm_download` | 在常驻内核中启动传输 | 任务视图 + 预检 `ServerFacts`（≤2 s）+ 下一步提示；`waitSec` 可选阻塞 |
+| `rdm_download` | 在常驻内核中启动传输；可选 `sources[]` 镜像、`sourcePolicy`（`single`/`select`/`failover`/`hedge`/`race`）、`sourceRaceBytes`、`discoverSources`、`metalinkFile` | 任务视图（含选中源/备选）+ 预检 `ServerFacts`（≤2 s）+ 下一步提示；`waitSec` 可选阻塞 |
 | `rdm_tasks` | 列出本会话的下载，或深入查看单个下载 | 扁平任务视图 + 聚合；带 `taskId` 时返回遥测、服务器事实、校验、诊断、有界事件 |
 | `rdm_history` | 读取持久化的单任务记录（逐样本遥测 + 事件 + 每次运行的构建/计划 meta，位于内核数据目录下的 JSONL） | 有界的样本/事件 + `samplesPath`/`eventsPath` + 总数；带 meta 时给出 `builds` 标签（以及一行 `build=` 回执）；默认返回均匀降采样的审阅序列，传 `offset` 则按字面翻页；跨内核重启保留 |
 | `rdm_wait` | 长轮询直到终态或超时 | 已结算的任务视图 + `timedOut` |
@@ -65,7 +66,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 一次任务列表回执：
 
 ```text
-kernel state=running version=0.2.2 pid=4212
+kernel state=running version=0.3.0-alpha.1 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -82,7 +83,7 @@ range 0..300 of 1907
 
 ## 内核智能
 
-Rust 内核（`rdm-kernel` 0.2.2，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
+Rust 内核（`rdm-kernel` 0.3.0-alpha.1，协议 2）是一个常驻子进程：不监听端口，惰性启动并保持常驻。
 
 * **服务器事实** —— 手动跟随的重定向链（最多 8 跳）、经证实的字节范围支持（带已验证 `Content-Range` 的 206，而不是只看 `Accept-Ranges` 响应头）、按 RFC 9110 对校验器做强/弱分类、从最终 URL 推导的各类签名链接过期时间（AWS SigV4/SigV2、GCS SigV4、Azure SAS、通用 `Expires`、ModelScope `auth_key`）、TLS 叶子证书 `notAfter`、校验和可用性（`Content-Digest`/`Content-MD5`/S3 SHA-256/CRC32C）、`Retry-After`、探测/TTFB 耗时，以及有界警告码。携带凭据的值（含 `auth_key` 与每个重定向跳点）在所有投影中都会脱敏。
 * **保持诚实的续传** —— `.part` + 续传状态、校验器兼容性检查，以及显式的 `resumeSafety`：`strong`/`weak`/`none`。内核只为强 ETag 发送 `If-Range`；弱校验器续传会重新探测并校验 `Content-Range`/长度，若源站忽略字节范围则回退为完整响应体。兼容性按稳定身份（URL 路径、大小、校验器）判定，最终 URL 上按请求变化的 `auth_key`/`Expires`/`Policy` 令牌不会再让已完成的分块表作废；每次尝试都会报告 `resumeDecision`/`resumeReason`。进行中的下载在签名链接过期后仍会继续；过期后再续传则不会——诊断会给出“不要暂停”。
@@ -93,7 +94,7 @@ Rust 内核（`rdm-kernel` 0.2.2，协议 2）是一个常驻子进程：不监�
 * **感知尾部的收尾** —— 当剩余 chunk 数不多于 worker 目标时，claim 使用 3 秒停滞期限与快速重试（250 ms × 尝试次数，封顶 1 秒），而不是在一条失效的长尾连接上等 10 秒。
 * **有界** —— 每个任务在视图环中 ≤200 条事件、内存中 ≤3000 个遥测样本、落盘 ≤10 万个样本/任务、每次响应 ≤20 条构建/计划 meta、≤256 个来源，不缓冲完整响应体，stdout 专供协议使用。
 
-性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（0.2.2，协议 2）；历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。。
+性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（当前 `0.3.0-alpha.1`，协议 2）；历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。
 
 ## 安装
 
@@ -155,7 +156,7 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 
 ## 限制（如实说明）
 
-* 镜像、多源调度、下载审批门禁、按源站强制执行的并发预算，以及 MCP 暴露，仍然是有意的非目标。
+* **镜像/多源：** 已实现为**同一对象的 HTTP(S) 候选源**（`sources[]`，最多 8 个）。跨协议源（FTP/S3/torrent）、自动抓取公网镜像、多文件/前缀结果仍不在范围内。`race`/`failover` 只有在所有源共享强内容身份时才混用字节；`select`/`hedge` 提交到单一源。
 * `maxConnections: 128` 是安全上限，不是“128 路并发”的承诺：实际并发由控制器决定，并从 `connections` 起步。
 * 远端变化导致的续传问题通过校验器发现；只有弱校验器的源站仍可能返回在同一秒内发生变化过的字节——此时 `weak` 安全性标签就是如实的信号。被拒绝的续传会说明原因（`resumeDecision`/`resumeReason`），而不是静默清零重来。
 * JSONL 录制是诊断数据，不是持久化契约：它有界、尽力而为，录制失败绝不影响下载。0.2.1 之前开始的录制没有样本，0.2.1 时代的文件没有构建 meta——工具如实报告存在的数据，而不是编造序列。

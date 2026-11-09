@@ -706,7 +706,7 @@ async fn unknown_rpc_method_returns_unsupported_method() {
             assert_eq!(error.code, "unsupported_method", "{error:?}");
             assert!(error.message.contains("nope"), "message must name the method: {}", error.message);
             assert!(error.message.contains(VERSION), "message must name the kernel version: {}", error.message);
-            assert!(error.message.contains("0.2.2"), "message must carry the upgrade hint: {}", error.message);
+            assert!(error.message.contains("0.3.0-alpha.1"), "message must carry the upgrade hint: {}", error.message);
         }
         Ok(value) => panic!("unknown method must fail, got {value}"),
     }

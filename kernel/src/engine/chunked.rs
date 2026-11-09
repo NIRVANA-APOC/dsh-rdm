@@ -7,10 +7,11 @@ use crate::plan::{self, ChunkPlan};
 use crate::protocol::{Meta, Spec, Status};
 use crate::rate::TokenBucket;
 use crate::scheduler::{Claim, Scheduler, COALESCE_MAX_BYTES, COALESCE_MIN_BYTES};
+use crate::source::SourcePool;
 use crate::state::{self, ResumeOutcome, ResumeState};
 use crate::task::{Control, StopKind, Task};
 use reqwest::header::{CONTENT_RANGE, IF_RANGE, RANGE};
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -26,11 +27,11 @@ const GATE_POLL: Duration = Duration::from_millis(10);
 const CONTROL_WINDOW: Duration = Duration::from_secs(1);
 struct Shared {
     total: u64,
-    /// Spec snapshot; a collapse recovery needs it to build a fresh client.
+    /// Spec snapshot; a collapse recovery needs it to rebuild a source client.
     spec: Spec,
-    client: Mutex<Client>,
-    url: String,
-    if_range: Option<String>,
+    /// Multi-source pool (0.3.0). One active source for select/failover/hedge;
+    /// per-claim choice for race.
+    pool: Arc<SourcePool>,
     part: PathBuf,
     state_path: PathBuf,
     spec_url: String,
@@ -79,8 +80,8 @@ impl Shared {
     fn take_failure(&self) -> Option<EngineError> {
         self.failure.lock().expect("failure mutex poisoned").take()
     }
-    fn client(&self) -> Client {
-        self.client.lock().expect("client mutex poisoned").clone()
+    fn refresh_sources(&self) {
+        self.task.set_sources(self.pool.snapshot(), Some(self.pool.active_index()), self.pool.policy().as_str(), self.pool.switches());
     }
     fn note_pushback(&self, delay: Duration) {
         let deadline = Instant::now() + delay;
@@ -131,7 +132,9 @@ impl Shared {
         // Range count and covered-chunk count are different numbers: 17 merged
         // ranges can cover 422 chunks (20261109 report confused the two).
         let covered_chunks = plan::covered_chunks(&plan::ChunkPlan::with_chunk_size(self.total, self.chunk_size), &ranges);
-        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, ranges.clone(), downloaded).with_target_workers(self.target_workers.load(Ordering::SeqCst));
+        let state = ResumeState::new(&self.spec_url, &self.meta, self.total, self.chunk_size, ranges.clone(), downloaded)
+            .with_target_workers(self.target_workers.load(Ordering::SeqCst))
+            .with_content_key(self.pool.resume_content_key().map(str::to_string));
         if let Err(error) = state::save_atomic(&self.state_path, &state, durable).await {
             klog!(warn, "could not save resume state: {error}");
         }
@@ -193,8 +196,9 @@ enum BodyResult {
     Fatal(EngineError),
 }
 #[allow(clippy::too_many_arguments)]
-pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, total: u64, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
+pub async fn run(task: &Arc<Task>, spec: &Spec, pool: &Arc<SourcePool>, total: u64, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
     let control = task.control();
+    let meta = pool.selected_meta().ok_or_else(|| EngineError::network("no active source for chunked transfer".to_string()))?;
     let plan = ChunkPlan::new(total, spec.connections, spec.chunk_size_bytes);
     let mut done: Vec<(u64, u64)> = Vec::new();
     let mut resumed_chunks = 0u64;
@@ -217,7 +221,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         match state::load_outcome(state_path).await {
             state::LoadOutcome::State(saved) => {
                 let saved = *saved;
-                let outcome = saved.is_compatible(&spec.url, meta, total);
+                let outcome = saved.is_compatible_with_content(&spec.url, &meta, total, pool.content_key());
                 let part_len = tokio::fs::metadata(part).await.ok().map(|metadata| metadata.len());
                 let accepted = match &outcome {
                     ResumeOutcome::Accepted(reason) => {
@@ -285,10 +289,43 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     prepare_part(part, total).await?;
     let resumed_bytes: u64 = done.iter().map(|(start, end)| end - start).sum();
+    // ── v2 hedge: race the first range across the two best sources ─────────
+    // Only on a fresh transfer. The winner's bytes are complete and validated
+    // before they are written; the loser is cancelled. This avoids trusting a
+    // single-source probe, and it never mixes bytes because the engine then
+    // commits to the winner (failover remains gated on a strong content key).
+    let mut hedge_bytes = 0u64;
+    if spec.source_policy == crate::protocol::SourcePolicy::Hedge && done.is_empty() && pool.len() >= 2 {
+        if let Some((start, end)) = state::missing_ranges(&done, total).first().copied() {
+            let len = spec.source_race_bytes.min(end - start).min(8 * 1024 * 1024);
+            if len >= 64 * 1024 {
+                if let Some((winner, bytes)) = pool.hedge_first_range(start, len).await {
+                    if let Ok(mut file) = tokio::fs::OpenOptions::new().write(true).open(part).await {
+                        let write = async {
+                            file.seek(SeekFrom::Start(start)).await?;
+                            file.write_all(&bytes).await?;
+                            file.flush().await
+                        }
+                        .await;
+                        if write.is_ok() {
+                            hedge_bytes = bytes.len() as u64;
+                            done.push((start, start + hedge_bytes));
+                            done = state::merge_ranges(done);
+                            task.set_sources(pool.snapshot(), Some(winner), pool.policy().as_str(), pool.switches());
+                            task.add_event("source", Some(format!("hedged {hedge_bytes} bytes from source {winner}")), None, None, None);
+                        }
+                    }
+                    if hedge_bytes == 0 {
+                        task.add_event("source", Some("hedge winner could not be written; continuing with the active source".to_string()), None, None, None);
+                    }
+                }
+            }
+        }
+    }
     let missing = state::missing_ranges(&done, total);
     let scheduler = Arc::new(Scheduler::new(total, done, missing, plan.chunk_size));
     let counters = Arc::new(Counters::default());
-    counters.downloaded.store(resumed_bytes, Ordering::Relaxed);
+    counters.downloaded.store(resumed_bytes + hedge_bytes, Ordering::Relaxed);
     let chunk_units = plan.total_chunks.max(1) as usize;
     let base_workers = spec.connections.min(chunk_units).max(1);
     let max_worker_tasks = spec.max_connections.clamp(base_workers, crate::protocol::MAX_CONNECTIONS).min(chunk_units);
@@ -337,9 +374,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     let shared = Arc::new(Shared {
         total,
         spec: spec.clone(),
-        client: Mutex::new(client.clone()),
-        url: meta.final_url.clone(),
-        if_range: crate::facts::if_range_etag(meta.etag.as_deref()).map(str::to_string),
+        pool: Arc::clone(pool),
         part: part.to_path_buf(),
         state_path: state_path.to_path_buf(),
         spec_url: spec.url.clone(),
@@ -415,6 +450,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     reporter.stop().await;
     if let Some(outcome) = control.stop_kind() {
         shared.save_state(true).await;
+        shared.refresh_sources();
         task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(match outcome {
             StopKind::Paused => EngineError::Paused,
@@ -423,20 +459,24 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     }
     if shared.downgrade.load(Ordering::SeqCst) {
         task.add_event("retry", Some("server ignored Range; falling back to a single stream".to_string()), None, None, None);
+        shared.refresh_sources();
         let _ = tokio::fs::remove_file(state_path).await;
-        return super::single::run(task, spec, client, meta, Some(total), target, part, state_path).await;
+        return super::single::run(task, spec, pool, Some(total), target, part, state_path).await;
     }
     if let Some(error) = shared.take_failure() {
         shared.save_state(true).await;
+        shared.refresh_sources();
         task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(error);
     }
     if !scheduler.is_finished() {
         shared.save_state(true).await;
+        shared.refresh_sources();
         task.report(counters.downloaded(), counters.downloaded().saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
         return Err(EngineError::internal("transfer ended before every byte range completed"));
     }
     counters.downloaded.store(total, Ordering::Relaxed);
+    shared.refresh_sources();
     task.report(total, total.saturating_sub(resumed_bytes), Some(total), 0, counters.peak());
     task.add_event("info", Some(format!("finished in {} ms", shared.started.elapsed().as_millis())), None, None, None);
     finalize(task, spec, part, state_path, target, Some(total)).await
@@ -482,18 +522,24 @@ async fn controller_loop(shared: Arc<Shared>, done: Arc<Notify>) {
                         shared.spawn_workers(target - spawned);
                     }
                 }
-                ControllerEffect::RebuildPool { message } => match http::client_for_spec(&shared.spec) {
-                    Ok(fresh) => {
-                        *shared.client.lock().expect("client mutex poisoned") = fresh;
+                ControllerEffect::RebuildPool { message } => {
+                    if let Some(switch) = shared.pool.switch_active() {
+                        shared.task.set_sources(shared.pool.snapshot(), Some(switch.to), shared.pool.policy().as_str(), shared.pool.switches());
+                        shared.task.add_event("source", Some(format!("switched source {} -> {} after throughput collapse", switch.from, switch.to)), None, None, None);
                         shared.task.add_event("controller", Some(message), None, None, None);
+                    } else {
+                        match shared.pool.rebuild_active(&shared.spec) {
+                            Ok(()) => shared.task.add_event("controller", Some(message), None, None, None),
+                            Err(error) => klog!(warn, "could not rebuild connection pool: {}", error.info().message),
+                        }
                     }
-                    Err(error) => klog!(warn, "could not rebuild connection pool: {}", error.info().message),
-                },
+                }
                 ControllerEffect::Note { message } => {
                     shared.task.add_event("controller", Some(message), None, None, None);
                 }
             }
         }
+        shared.refresh_sources();
     }
     shared.task.set_controller_target(state.target());
 }
@@ -582,16 +628,29 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         attempt += 1;
         let start = claim.start + written;
         let end_inclusive = claim.end - 1;
-        let mut request = shared.client().get(&shared.url).header(RANGE, format!("bytes={start}-{end_inclusive}"));
+        let Some(source) = shared.pool.acquire(start) else {
+            drop(slot);
+            if shared.control.stop_kind().is_some() {
+                shared.scheduler.complete(claim, written);
+                return ClaimOutcome::Stopped;
+            }
+            shared.fail(EngineError::network(format!("no healthy source for bytes {start}-{end_inclusive}")));
+            return ClaimOutcome::Failed;
+        };
+        shared.refresh_sources();
+        let request_started = Instant::now();
+        let mut request = source.client().get(source.url()).header(RANGE, format!("bytes={start}-{end_inclusive}"));
         // If-Range is only valid with a strong validator (RFC 9110 §13.1.5);
         // weak ETags and Last-Modified must not be used for conditional ranges.
-        if let Some(etag) = shared.if_range.as_deref() {
+        // Each source has its own validator: never reuse source A's ETag on B.
+        if let Some(etag) = source.if_range() {
             request = request.header(IF_RANGE, etag);
         }
         let response = tokio::select! {
             result = request.send() => result,
             _ = shared.control.wait_stopped() => {
                 drop(slot);
+                shared.pool.cancel(source.id);
                 shared.scheduler.complete(claim, written);
                 return ClaimOutcome::Stopped;
             }
@@ -600,7 +659,9 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
             Ok(response) => response,
             Err(error) => {
                 drop(slot);
-                if let Some(delay) = retry_schedule(shared, &claim, attempt, written, format!("request failed: {error}"), None) {
+                let reason = format!("request failed: {error}");
+                shared.pool.failure(source.id, false, &reason);
+                if let Some(delay) = retry_schedule(shared, &claim, attempt, written, reason, None) {
                     if !shared.control.sleep(delay).await {
                         shared.scheduler.complete(claim, written);
                         return ClaimOutcome::Stopped;
@@ -619,7 +680,9 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
                     && range.total.map(|total| total == shared.total).unwrap_or(true));
             if !valid {
                 drop(slot);
-                if let Some(delay) = retry_schedule(shared, &claim, attempt, written, format!("invalid Content-Range for bytes {start}-{end_inclusive}"), Some(status.as_u16())) {
+                let reason = format!("invalid Content-Range for bytes {start}-{end_inclusive}");
+                shared.pool.failure(source.id, false, &reason);
+                if let Some(delay) = retry_schedule(shared, &claim, attempt, written, reason, Some(status.as_u16())) {
                     if !shared.control.sleep(delay).await {
                         shared.scheduler.complete(claim, written);
                         return ClaimOutcome::Stopped;
@@ -638,23 +701,28 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
             match outcome {
                 BodyResult::Complete => {
                     let length = claim.len();
+                    shared.pool.success(source.id, length, request_started.elapsed());
                     shared.scheduler.complete(claim, length);
                     return ClaimOutcome::Done;
                 }
                 BodyResult::Split(covered) => {
+                    shared.pool.success(source.id, covered, request_started.elapsed());
                     shared.scheduler.complete(claim, covered);
                     return ClaimOutcome::Done;
                 }
                 BodyResult::Stopped(new_written) => {
+                    shared.pool.success(source.id, new_written, request_started.elapsed());
                     shared.scheduler.complete(claim, new_written);
                     return ClaimOutcome::Stopped;
                 }
                 BodyResult::Fatal(error) => {
+                    shared.pool.failure(source.id, true, &error.info().message);
                     shared.fail(error);
                     return ClaimOutcome::Failed;
                 }
                 BodyResult::Retry(new_written, reason) => {
                     written = new_written;
+                    shared.pool.failure(source.id, false, &reason);
                     if let Some(delay) = retry_schedule(shared, &claim, attempt, written, reason, None) {
                         if !shared.control.sleep(delay).await {
                             shared.scheduler.complete(claim, written);
@@ -668,10 +736,13 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         }
         drop(slot);
         if status == StatusCode::OK {
+            shared.pool.cancel(source.id);
             return ClaimOutcome::Downgrade;
         }
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
-            shared.fail(EngineError::remote_changed(format!("server rejected range bytes {start}-{end_inclusive} (HTTP 416)")));
+            let reason = format!("server rejected range bytes {start}-{end_inclusive} (HTTP 416)");
+            shared.pool.failure(source.id, true, &reason);
+            shared.fail(EngineError::remote_changed(reason));
             return ClaimOutcome::Failed;
         }
         let retry_after = http::retry_after(response.headers());
@@ -679,7 +750,9 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
             shared.task.note_throttled();
             shared.note_pushback(retry_after.unwrap_or_else(|| http::backoff(attempt)));
         }
-        if let Some(delay) = retry_schedule(shared, &claim, attempt, written, format!("server returned HTTP {}", status.as_u16()), Some(status.as_u16())) {
+        let reason = format!("server returned HTTP {}", status.as_u16());
+        shared.pool.failure(source.id, false, &reason);
+        if let Some(delay) = retry_schedule(shared, &claim, attempt, written, reason, Some(status.as_u16())) {
             let delay = retry_after.unwrap_or(delay);
             if !shared.control.sleep(delay).await {
                 shared.scheduler.complete(claim, written);
@@ -688,7 +761,7 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
             continue;
         }
         let _ = shared.take_failure();
-        shared.fail(EngineError::http_status(status.as_u16(), &shared.url));
+        shared.fail(EngineError::http_status(status.as_u16(), source.url()));
         return ClaimOutcome::Failed;
     }
 }

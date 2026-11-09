@@ -1,13 +1,13 @@
 use crate::engine::{control_error, finalize, Counters, EngineError, Reporter, STALL_TIMEOUT};
 use crate::error::EngineResult;
 use crate::http;
-use crate::protocol::{Meta, Spec, Status};
+use crate::protocol::{Spec, Status};
 use crate::rate::TokenBucket;
+use crate::source::SourcePool;
 use crate::task::{Control, Task};
-use reqwest::Client;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 enum AttemptError {
@@ -15,8 +15,9 @@ enum AttemptError {
     Retry { reason: String, retry_after: Option<Duration> },
     Fatal(EngineError),
 }
-pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, total: Option<u64>, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
+pub async fn run(task: &Arc<Task>, spec: &Spec, pool: &Arc<SourcePool>, total: Option<u64>, target: &Path, part: &Path, state_path: &Path) -> EngineResult<Option<String>> {
     let control = task.control();
+    let meta = pool.selected_meta().ok_or_else(|| EngineError::network("no active source for single-stream transfer".to_string()))?;
     let _ = tokio::fs::remove_file(state_path).await;
     task.set_plan(1, None, 0, 0);
     task.set_controller_target(1);
@@ -58,17 +59,34 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         }
         attempt += 1;
         counters.downloaded.store(0, std::sync::atomic::Ordering::Relaxed);
-        match attempt_once(task, &control, client, meta, total, part, &counters, limiter.as_ref()).await {
-            Ok(()) => break,
+        let Some(source) = pool.acquire(0) else {
+            result = Err(EngineError::network("no healthy source for single-stream transfer".to_string()));
+            break;
+        };
+        let started = Instant::now();
+        match attempt_once(task, &control, &source, total, part, &counters, limiter.as_ref()).await {
+            Ok(()) => {
+                pool.success(source.id, counters.downloaded(), started.elapsed());
+                break;
+            }
             Err(AttemptError::Stopped) => {
+                pool.cancel(source.id);
                 result = Err(control_error(&control).unwrap_or(EngineError::Cancelled));
                 break;
             }
             Err(AttemptError::Fatal(error)) => {
+                pool.failure(source.id, true, &error.info().message);
                 result = Err(error);
                 break;
             }
             Err(AttemptError::Retry { reason, retry_after }) => {
+                pool.failure(source.id, false, &reason);
+                let switched = pool.switch_active();
+                if let Some(switch) = switched {
+                    task.set_sources(pool.snapshot(), Some(switch.to), pool.policy().as_str(), pool.switches());
+                    task.add_event("source", Some(format!("switched source {} -> {} after single-stream failure", switch.from, switch.to)), None, None, None);
+                    attempt = 0;
+                }
                 if attempt >= spec.max_attempts.max(1) {
                     result = Err(EngineError::network(format!("single-stream download failed after {attempt} attempts: {reason}")));
                     break;
@@ -84,6 +102,7 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
         }
     }
     reporter.stop().await;
+    task.set_sources(pool.snapshot(), Some(pool.active_index()), pool.policy().as_str(), pool.switches());
     let final_bytes = counters.downloaded();
     task.report(final_bytes, final_bytes, total, 0, counters.peak());
     result?;
@@ -94,9 +113,9 @@ pub async fn run(task: &Arc<Task>, spec: &Spec, client: &Client, meta: &Meta, to
     Ok(sha)
 }
 #[allow(clippy::too_many_arguments)]
-async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client, meta: &Meta, total: Option<u64>, part: &Path, counters: &Arc<Counters>, limiter: Option<&Arc<TokenBucket>>) -> Result<(), AttemptError> {
+async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, source: &crate::source::SourceRuntime, total: Option<u64>, part: &Path, counters: &Arc<Counters>, limiter: Option<&Arc<TokenBucket>>) -> Result<(), AttemptError> {
     let response = tokio::select! {
-        result = client.get(&meta.final_url).send() => result,
+        result = source.client().get(&source.meta.final_url).send() => result,
         _ = control.wait_stopped() => return Err(AttemptError::Stopped),
     };
     let mut response = match response {
@@ -112,7 +131,7 @@ async fn attempt_once(task: &Arc<Task>, control: &Arc<Control>, client: &Client,
         if http::is_retryable_status(status.as_u16()) {
             return Err(AttemptError::Retry { reason: format!("server returned HTTP {}", status.as_u16()), retry_after: http::retry_after(response.headers()) });
         }
-        return Err(AttemptError::Fatal(EngineError::http_status(status.as_u16(), &meta.final_url)));
+        return Err(AttemptError::Fatal(EngineError::http_status(status.as_u16(), &source.meta.final_url)));
     }
     if let (Some(expected), Some(advertised)) = (total, response.content_length()) {
         if advertised != expected {

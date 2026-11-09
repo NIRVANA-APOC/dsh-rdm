@@ -16,7 +16,7 @@ The agent operates. The human reviews.
 A downloader used by a model is not a GUI that happens to have an API. The agent
 has to answer, in as few model steps as possible: *is this URL usable, how should
 I fetch it, what is happening now, should I intervene, and can I trust the
-result?* `dsh-rdm` 0.2.2 is built around those questions.
+result?* `dsh-rdm` 0.3.0-alpha.1 is built around those questions.
 
 * **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
   proven range support, validators and RFC 9110 resume safety, signed-URL
@@ -42,6 +42,18 @@ result?* `dsh-rdm` 0.2.2 is built around those questions.
   `Expires` / `Policy` token on a signed final URL — so a fresh probe no longer
   throws away already-completed bytes. Every attempt reports `resumeDecision` /
   `resumeReason`.
+* **Multi-source scheduling.** `rdm_download` accepts up to eight HTTP(S)
+  candidates for one object and a policy: `select` probes them concurrently and
+  picks the measured fastest, `failover` switches on failure, `hedge` races the
+  first range across the top two, and `race` assigns chunks across the pool under
+  per-source caps. Mixing bytes requires a strong shared content identity
+  (`expectedSha256`, a server SHA-256/Content-Digest, or equal size + strong
+  ETag), so a wrong mirror is refused rather than silently spliced. Metalink/HTTP
+  `Link: rel=duplicate` mirrors and `.meta4` documents are discovered
+  automatically. The task view/detail show the selected source, alternates,
+  switches and per-source bytes/rates. On a real Alpine ISO run, `select` was
+  **11.4×** the single official CDN and matched the best manual mirror; see
+  [session_logs/20261109-multisource/README.md](session_logs/20261109-multisource/README.md).
 * **Recorded download data.** While a task runs, its per-sample telemetry and
   events are appended as JSONL under `<dataDir>/history/`; `rdm_history` reads
   the recording back (bounded) after the fact or after a kernel restart, so a
@@ -95,7 +107,7 @@ canonical JSON.
 | tool | what it does | what comes back |
 |---|---|---|
 | `rdm_probe` | inspect an HTTP(S) source without downloading the file body | `ServerFacts`: ranges, validators, resume safety, signed-URL/TLS expiry, redirects, checksums, rate limit, timing, warnings, recommendation |
-| `rdm_download` | start a transfer in the resident kernel | task view + preflight `ServerFacts` (≤2 s) + next-step hint; `waitSec` optionally blocks |
+| `rdm_download` | start a transfer in the resident kernel; optional `sources[]` mirrors, `sourcePolicy` (`single`/`select`/`failover`/`hedge`/`race`), `sourceRaceBytes`, `discoverSources`, `metalinkFile` | task view (with selected source/alternates) + preflight `ServerFacts` (≤2 s) + next-step hint; `waitSec` optionally blocks |
 | `rdm_tasks` | list this session's downloads, or inspect one in depth | flat task views + aggregate; with `taskId`: telemetry, server facts, verification, diagnosis, bounded events |
 | `rdm_history` | read the persisted per-task recording (telemetry samples + events + per-run build/plan meta, JSONL under the kernel data dir) | bounded samples/events + `samplesPath`/`eventsPath` + totals; `builds` tags (and one `build=` receipt line) when a recording carries meta; evenly downsampled review series by default, `offset` pages the literal recording; survives kernel restarts |
 | `rdm_wait` | long-poll until terminal or timeout | settled task views + `timedOut` |
@@ -135,7 +147,7 @@ range 0..300 of 1907
 
 ## Kernel intelligence
 
-The Rust kernel (`rdm-kernel` 0.2.2, protocol 2) is a resident child process; it
+The Rust kernel (`rdm-kernel` 0.3.0-alpha.1, protocol 2) is a resident child process; it
 does not listen on a port, starts lazily and stays warm.
 
 * **Server facts** — manual redirect chain (up to 8 hops), proven range support
@@ -193,12 +205,18 @@ real-data evidence and fixes are
 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md),
 with a research note at
 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md).
+The 0.3.0 multi-source decision and design options are in
+[docs/research/multi-source-scheduling.md](docs/research/multi-source-scheduling.md)
+and [docs/research/protocol-extension-priorities.md](docs/research/protocol-extension-priorities.md);
+the stage/version record is
+[docs/design/0.3.0-multi-source-stages.md](docs/design/0.3.0-multi-source-stages.md).
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md) with one section per tag;
 the same change must update both the version and this changelog. From 0.2.2 the
-kernel and plugin package share one version number (0.2.2, protocol 2);
-historical recordings keep the strings their binaries actually wrote (0.2.1
-kernel = `1.1.0`, pre-unification 0.2.2 builds = `1.2.0`).
+kernel and plugin package share one version number (currently
+`0.3.0-alpha.1`, protocol 2); historical recordings keep the strings their
+binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2 builds =
+`1.2.0`).
 
 ## Install
 
@@ -282,8 +300,13 @@ The measured QA report for the release lives in
 
 ## Limits (honest)
 
-* Mirrors, multi-source scheduling, download approval gates, per-origin enforced
-  concurrency budgets and MCP exposure remain deliberate non-goals.
+* **Mirrors/multi-source:** implemented as **HTTP(S) candidates for one
+  object** (`sources[]`, up to 8). Cross-protocol sources (FTP/S3/torrent),
+  automatic public-mirror scraping, and multi-file/prefix results remain out of
+  scope. `race`/`failover` only mix bytes when every source has the same strong
+  content identity; `select`/`hedge` commit to one source.
+* Download approval gates, per-origin enforced concurrency budgets and MCP
+  exposure remain deliberate non-goals.
 * `maxConnections: 128` is a safety ceiling, not a promise of 128 parallel
   connections: actual concurrency is controller-driven and starts at
   `connections`.

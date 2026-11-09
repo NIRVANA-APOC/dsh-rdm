@@ -79,6 +79,7 @@
     "verification": "校验",
     "destination": "保存位置",
     "resume": "续传状态",
+    "sources": "源",
     "risk": "风险",
     "diagnosis": "诊断",
     "events": "事件",
@@ -90,6 +91,7 @@
     "noMessage": "无详情",
     "eventsLoading": "正在加载事件…",
     "eventsEmpty": "没有记录到事件。",
+    "mirrorMore": "另有 {n} 个",
     "sampledNote": "曲线由本审阅页采样（每秒一个点）；上面的四个速率是内核上报的时间窗口。"
   },
   "facts": {
@@ -149,6 +151,12 @@
     "peakWorkers": "峰值工作连接",
     "chunkSize": "分块大小",
     "retries": "重试次数",
+    "sourcePolicy": "源策略",
+    "selectedSource": "已选源",
+    "sourceSwitches": "源切换次数",
+    "sourceCount": "源数量",
+    "sourceSelected": "已选中",
+    "mirrors": "镜像",
     "signedState": "签名链接状态",
     "signedExpires": "签名链接剩余",
     "tlsState": "TLS 状态",
@@ -214,6 +222,25 @@
       "strong": "可靠",
       "weak": "较弱",
       "none": "不可用"
+    }
+  },
+  "source": {
+    "policy": {
+      "single": "单源",
+      "select": "择优",
+      "failover": "故障转移",
+      "hedge": "对冲",
+      "race": "竞速"
+    },
+    "state": {
+      "active": "活跃",
+      "standby": "备用",
+      "bad": "故障"
+    },
+    "role": {
+      "primary": "主源",
+      "alternate": "候选",
+      "discovered": "发现"
     }
   },
   "status": {

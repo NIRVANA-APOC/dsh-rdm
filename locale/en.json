@@ -79,6 +79,7 @@
     "verification": "Verification",
     "destination": "Destination",
     "resume": "Resume state",
+    "sources": "Sources",
     "risk": "Risk",
     "diagnosis": "Diagnosis",
     "events": "Events",
@@ -90,6 +91,7 @@
     "noMessage": "No detail",
     "eventsLoading": "Loading events…",
     "eventsEmpty": "No events recorded.",
+    "mirrorMore": "+{n} more",
     "sampledNote": "The waveform is sampled by this review page (one point per second). The four rates above are kernel-reported windows."
   },
   "facts": {
@@ -149,6 +151,12 @@
     "peakWorkers": "Peak workers",
     "chunkSize": "Chunk size",
     "retries": "Retries",
+    "sourcePolicy": "Source policy",
+    "selectedSource": "Selected source",
+    "sourceSwitches": "Source switches",
+    "sourceCount": "Sources",
+    "sourceSelected": "selected",
+    "mirrors": "Mirrors",
     "signedState": "Signed URL state",
     "signedExpires": "Signed URL expires in",
     "tlsState": "TLS state",
@@ -214,6 +222,25 @@
       "strong": "strong",
       "weak": "weak",
       "none": "unsafe"
+    }
+  },
+  "source": {
+    "policy": {
+      "single": "single",
+      "select": "select",
+      "failover": "failover",
+      "hedge": "hedge",
+      "race": "race"
+    },
+    "state": {
+      "active": "active",
+      "standby": "standby",
+      "bad": "bad"
+    },
+    "role": {
+      "primary": "primary",
+      "alternate": "alternate",
+      "discovered": "discovered"
     }
   },
   "status": {

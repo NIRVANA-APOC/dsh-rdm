@@ -2,10 +2,14 @@
  * TypeScript mirrors of `dsh-rdm/PROTOCOL.md` — the NDJSON contract between
  * this plugin (parent) and the resident `rdm-kernel` child process.
  *
- * Protocol 2 (kernel 0.2.2) is the agent-native revision: tasks carry session
+ * Protocol 2 (kernel 0.3.0-alpha.1) is the agent-native revision: tasks carry session
  * attribution and live telemetry windows, `probe`/`get` return a full
  * `ServerFacts` / `TaskDetail`, and the hot path (`list` / notifications) stays
  * a flat, cheap `TaskView`.
+ *
+ * 0.3.0 adds multi-source scheduling additively on the same generation:
+ * optional `sources[]`/policy request fields, per-source rows and the effective
+ * policy in task views/details, and discovered mirrors in `ServerFacts`.
  *
  * The kernel is authoritative for every value here; the plugin never invents
  * task state. Runtime constants shared by the client, tools and browser route
@@ -57,6 +61,7 @@ export type TaskEventKind =
   | 'started'
   | 'retry'
   | 'controller'
+  | 'source'
   | 'paused'
   | 'resumed'
   | 'verify'
@@ -72,6 +77,7 @@ export const TASK_EVENT_KINDS: readonly TaskEventKind[] = [
   'started',
   'retry',
   'controller',
+  'source',
   'paused',
   'resumed',
   'verify',
@@ -196,6 +202,85 @@ export type DiagnosisCode =
   | 'disk-slow'
   | 'retrying'
   | 'almost-done'
+
+// ── Multi-source scheduling (0.3.0) ─────────────────────────────────────────
+
+/**
+ * How the kernel may use a task's candidate sources.
+ *
+ * `single` uses only the primary URL; `select` probes every candidate and
+ * commits to the best; `failover` additionally switches on fatal failure/stall;
+ * `hedge` races the first bytes across the top two and commits to the winner;
+ * `race` assigns chunks dynamically across the pool.
+ */
+export type SourcePolicy = 'single' | 'select' | 'failover' | 'hedge' | 'race'
+
+/** Every source policy, in declaration order. */
+export const SOURCE_POLICIES: readonly SourcePolicy[] = ['single', 'select', 'failover', 'hedge', 'race']
+
+/** Pool health state of one candidate source. */
+export type SourceState = 'active' | 'standby' | 'bad'
+
+/** Every source state the kernel can report. */
+export const SOURCE_STATES: readonly SourceState[] = ['active', 'standby', 'bad']
+
+/** How one candidate source entered the task's pool. */
+export type SourceRole = 'primary' | 'alternate' | 'discovered'
+
+/** Every source role the kernel can report. */
+export const SOURCE_ROLES: readonly SourceRole[] = ['primary', 'alternate', 'discovered']
+
+/**
+ * One candidate source supplied with `start` (the request `sources[]` entry).
+ * Source-specific headers override the request-wide ones.
+ */
+export interface SourceInput {
+  /** Absolute http(s) URL of the mirror. */
+  url: string
+  /** Extra headers for this source only. */
+  headers?: Record<string, string>
+  /** Cookie header value for this source only. */
+  cookie?: string
+  /** Ordering hint; measured throughput wins at selection time. */
+  priority?: number
+}
+
+/**
+ * One redacted source row in a {@link TaskView} / {@link TaskDetail}.
+ *
+ * `url` is redacted by the kernel (credential-bearing query values become
+ * `<redacted>`); receipt and UI surfaces should prefer `host`.
+ */
+export interface SourceView {
+  /** Index in the task's pool (0 is the requested URL). */
+  id: number
+  /** Redacted source URL. */
+  url: string
+  host: string
+  state: SourceState
+  role: SourceRole
+  /** Bytes transferred from this source. */
+  bytes: number
+  /** This source's EWMA rate, `null` when never measured. */
+  bps: number | null
+  /** This source currently carries (or waits to carry) the transfer. */
+  active: boolean
+  /** Last bounded error text, `null` when healthy. */
+  lastError: string | null
+}
+
+/**
+ * One mirror discovered on a probe response (Metalink/HTTP
+ * `Link: rel=duplicate` or a Metalink document); `url` is redacted.
+ */
+export interface MirrorSource {
+  url: string
+  priority: number | null
+  /** Geographic/administrative hint (`geo` from a Metalink document). */
+  geo: string | null
+  /** Discovery channel: `http-link`, `metalink` or `unknown`. */
+  source: string
+}
 
 // ── Server facts (probe result, retained on a task) ─────────────────────────
 
@@ -344,6 +429,8 @@ export interface ServerFacts {
   warnings: ServerWarningCode[]
   recommendation: Recommendation
   origin: OriginFacts | null
+  /** Mirrors discovered on this response (Metalink/HTTP `Link`), redacted. */
+  mirrors: MirrorSource[]
 }
 
 // ── Task view (list / notification hot path) ────────────────────────────────
@@ -418,6 +505,14 @@ export interface TaskView {
   elapsedMs: number
   signedUrlExpiresAt: number | null
   tlsNotAfter: number | null
+  /** Effective multi-source policy (0.3.0). */
+  sourcePolicy: SourcePolicy
+  /** Pool index currently carrying the transfer, `null` before selection. */
+  selectedSource: number | null
+  /** Count of active-source changes during this run. */
+  sourceSwitches: number
+  /** Bounded per-source projection (kernel max {@link MAX_SOURCES}). */
+  sources: SourceView[]
 }
 
 /** One diagnostic task event from the kernel's bounded per-task ring. */
@@ -616,6 +711,17 @@ export interface TaskDetail {
   timing: DetailTiming
   /** Bounded list (kernel max 4). */
   diagnosis: Diagnosis[]
+  /**
+   * Effective multi-source policy. Kernel detail frames omit it; the host
+   * carries the same task's {@link TaskView.sourcePolicy} into the detail.
+   */
+  sourcePolicy: SourcePolicy
+  /** Pool index currently carrying the transfer, `null` before selection. */
+  selectedSource: number | null
+  /** Count of active-source changes during this run. */
+  sourceSwitches: number
+  /** Bounded per-source projection (kernel max {@link MAX_SOURCES}). */
+  sources: SourceView[]
 }
 
 // ── Aggregates ──────────────────────────────────────────────────────────────
@@ -682,6 +788,16 @@ export interface RequestSpec {
   maxAttempts?: number
   /** Owning agent session (≤160 chars of `[A-Za-z0-9._:-]`). */
   sessionId?: string
+  /** Additional candidate sources (mirrors); the primary `url` is source 0 (0.3.0). */
+  sources?: SourceInput[]
+  /** Multi-source policy; kernel default: `select` when `sources` is non-empty, else `single`. */
+  sourcePolicy?: SourcePolicy
+  /** Hedge window in bytes (0.3.0; kernel clamps to 64 KiB..64 MiB). */
+  sourceRaceBytes?: number
+  /** Parse Metalink/HTTP `Link: rel=duplicate` mirrors from probe responses (default true). */
+  discoverSources?: boolean
+  /** Select a file by name when `url` is a `.meta4`/`.metalink` document. */
+  metalinkFile?: string
   /**
    * Host-side helper only: max ms to wait for the preflight `ServerFacts`
    * before returning. Never sent to the kernel.
@@ -705,6 +821,14 @@ export const DEFAULT_CONNECTIONS = 8
 export const DEFAULT_MAX_CONNECTIONS = 128
 export const MIN_CHUNK_BYTES = 256 * KIB
 export const MAX_CHUNK_BYTES = 64 * MIB
+/** Hard cap on candidate sources per task (kernel `MAX_SOURCES`). */
+export const MAX_SOURCES = 8
+/** Additional candidates accepted over the required primary `url`. */
+export const MAX_ADDITIONAL_SOURCES = MAX_SOURCES - 1
+/** Hedge window bounds (kernel `MIN/MAX/DEFAULT_SOURCE_RACE_BYTES`). */
+export const MIN_SOURCE_RACE_BYTES = 64 * KIB
+export const MAX_SOURCE_RACE_BYTES = 64 * MIB
+export const DEFAULT_SOURCE_RACE_BYTES = 1 * MIB
 export const DEFAULT_MAX_ATTEMPTS = 6
 export const MIN_WAIT_MS = 100
 export const MAX_WAIT_MS = 300_000

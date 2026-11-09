@@ -9,7 +9,7 @@ use crate::error::{EngineError, EngineResult};
 use crate::facts::{self, RecommendationInput, WarningsInput};
 use crate::filename;
 use crate::http::{self, content_length, header_string, parse_content_range, version_string};
-use crate::protocol::{now_ms, AcceptRanges, Meta, OriginFacts, ProbeParams, ProbedBy, RangeFacts, RedirectHop, ServerFacts, Spec, MAX_REDIRECTS};
+use crate::protocol::{now_ms, AcceptRanges, Meta, MirrorSource, OriginFacts, ProbeParams, ProbedBy, RangeFacts, RedirectHop, ServerFacts, Spec, MAX_REDIRECTS, MAX_SOURCES};
 use crate::tls;
 use reqwest::header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_RANGE, CONTENT_TYPE, ETAG, LAST_MODIFIED, LOCATION, RANGE};
 use reqwest::{Client, Method, Response, StatusCode};
@@ -21,6 +21,10 @@ use url::Url;
 pub const PROBE_RANGE_HEADER: &str = "bytes=0-63";
 const PROBE_SAMPLE_BYTES: usize = 64;
 const PROBE_BODY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Multi-source selection needs a throughput sample above the 64 KiB noise
+/// floor in `facts::sample_bps`; 256 KiB distinguishes a slow mirror from a
+/// fast one without downloading a meaningful fraction of a large object.
+pub const MULTI_PROBE_SAMPLE_BYTES: usize = 256 * 1024;
 
 /// The probe result plus the compact engine metadata derived from it.
 pub struct ProbeOutcome {
@@ -130,13 +134,22 @@ async fn read_sample(response: &mut Response, limit: usize) -> (u64, Option<u64>
             _ => break,
         }
     }
-    let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let elapsed_ms = started.elapsed().as_millis().max(1).min(u128::from(u64::MAX)) as u64;
     (total, facts::sample_bps(total, elapsed_ms))
 }
 
 /// Probe `url` and return the complete `ServerFacts`. `origin` is the ledger
 /// snapshot for the requested host (null when never seen).
 pub async fn probe_with(client: &Client, url: &str, origin: Option<OriginFacts>) -> EngineResult<ProbeOutcome> {
+    probe_with_sample(client, url, origin, PROBE_SAMPLE_BYTES).await
+}
+
+/// Probe with a caller-selected ranged sample. The sample must stay a single
+/// 206 body read; multi-source selection uses 256 KiB so `sampleBps` is a real
+/// measurement instead of the 64-byte probe noise.
+pub async fn probe_with_sample(client: &Client, url: &str, origin: Option<OriginFacts>, sample_bytes: usize) -> EngineResult<ProbeOutcome> {
+    let sample_bytes = sample_bytes.max(PROBE_SAMPLE_BYTES);
+    let range_header = format!("bytes=0-{}", sample_bytes.saturating_sub(1));
     let started = Instant::now();
     let now = now_ms();
     let request_url = Url::parse(url).map_err(|error| EngineError::invalid(format!("invalid url `{url}`: {error}")))?;
@@ -165,7 +178,7 @@ pub async fn probe_with(client: &Client, url: &str, origin: Option<OriginFacts>)
     let mut range_failure: Option<EngineError> = None;
     if should_prove_ranges {
         let start_url = head.as_ref().map(|fetched| fetched.url.clone()).unwrap_or_else(|| request_url.clone());
-        match fetch(client, &start_url, Method::GET, Some(PROBE_RANGE_HEADER)).await {
+        match fetch(client, &start_url, Method::GET, Some(&range_header)).await {
             Ok(fetched) => ranged = Some(fetched),
             Err(error) => range_failure = Some(error),
         }
@@ -197,7 +210,7 @@ pub async fn probe_with(client: &Client, url: &str, origin: Option<OriginFacts>)
             code if code == StatusCode::PARTIAL_CONTENT.as_u16() => {
                 supported = true;
                 if let Some(response) = candidate.response.as_mut() {
-                    let (bytes, bps) = read_sample(response, PROBE_SAMPLE_BYTES).await;
+                    let (bytes, bps) = read_sample(response, sample_bytes).await;
                     probe_bytes = bytes;
                     sample_bps = bps;
                 }
@@ -270,6 +283,17 @@ pub async fn probe_with(client: &Client, url: &str, origin: Option<OriginFacts>)
     let checksum = facts::checksum_facts(&header_map);
     let rate_limit = facts::rate_limit_facts(&header_map);
     let headers = facts::header_facts(&header_map);
+    let mut mirrors = discover_link_mirrors(&header_map, &final_url);
+    if let Some(head) = head.as_ref() {
+        for mirror in discover_link_mirrors(&head.headers, &head.url.to_string()) {
+            if !mirrors.iter().any(|existing| existing.url == mirror.url) {
+                mirrors.push(mirror);
+            }
+            if mirrors.len() >= MAX_SOURCES {
+                break;
+            }
+        }
+    }
     let content_disposition = snapshot.content_disposition.clone();
     let file_name = filename::derive(content_disposition.as_deref(), &final_url);
     let file_name_source = facts::file_name_source(content_disposition.as_deref());
@@ -313,6 +337,7 @@ pub async fn probe_with(client: &Client, url: &str, origin: Option<OriginFacts>)
         warnings,
         recommendation,
         origin,
+        mirrors,
     };
     let meta = facts.meta();
     Ok(ProbeOutcome { facts, meta })
@@ -343,4 +368,69 @@ pub async fn probe_params(params: &ProbeParams) -> EngineResult<ProbeOutcome> {
 
 pub async fn probe_spec(client: &Client, spec: &Spec, origin: Option<OriginFacts>) -> EngineResult<ProbeOutcome> {
     probe_with(client, &spec.url, origin).await
+}
+
+/// Parse `Link: <url>; rel=duplicate; pri=2; geo=...` response headers
+/// (Metalink/HTTP, RFC 6249). Only absolute/relative HTTP(S) mirrors are
+/// accepted; the list is bounded by `MAX_SOURCES` and deduplicated.
+fn discover_link_mirrors(headers: &HeaderMap, base: &str) -> Vec<MirrorSource> {
+    let base_url = Url::parse(base).ok();
+    let mut mirrors: Vec<MirrorSource> = Vec::new();
+    for value in headers.get_all("link") {
+        let Ok(text) = value.to_str() else { continue };
+        for entry in split_link_entries(text) {
+            let Some((target, params)) = entry.trim().split_once('>') else { continue };
+            let Some(target) = target.trim().strip_prefix('<') else { continue };
+            let mut rel_duplicate = false;
+            let mut priority = None;
+            let mut geo = None;
+            for param in params.split(';') {
+                let (key, value) = param.trim().split_once('=').unwrap_or((param.trim(), ""));
+                let value = value.trim().trim_matches('"');
+                match key.trim().to_ascii_lowercase().as_str() {
+                    "rel" => rel_duplicate = value.split_whitespace().any(|token| token.eq_ignore_ascii_case("duplicate")),
+                    "pri" => priority = value.parse::<u32>().ok(),
+                    "geo" => geo = (!value.is_empty()).then(|| value.to_string()),
+                    _ => {}
+                }
+            }
+            if !rel_duplicate {
+                continue;
+            }
+            let resolved = base_url.as_ref().and_then(|base| base.join(target).ok()).or_else(|| Url::parse(target).ok());
+            let Some(resolved) = resolved else { continue };
+            if !matches!(resolved.scheme(), "http" | "https") {
+                continue;
+            }
+            let url = resolved.to_string();
+            if mirrors.iter().any(|mirror| mirror.url == url) {
+                continue;
+            }
+            mirrors.push(MirrorSource { url, priority, geo, source: "http-link".to_string() });
+            if mirrors.len() >= MAX_SOURCES {
+                return mirrors;
+            }
+        }
+    }
+    mirrors
+}
+
+/// Split a comma-separated `Link` header without splitting inside `<...>`.
+fn split_link_entries(value: &str) -> Vec<&str> {
+    let mut entries = Vec::new();
+    let mut start = 0;
+    let mut in_angle = false;
+    for (index, character) in value.char_indices() {
+        match character {
+            '<' => in_angle = true,
+            '>' => in_angle = false,
+            ',' if !in_angle => {
+                entries.push(&value[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    entries.push(&value[start..]);
+    entries
 }

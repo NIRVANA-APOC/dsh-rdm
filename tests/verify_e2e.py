@@ -1033,7 +1033,7 @@ def scenario_v022(fixture: Fixture, binary: str) -> None:
     try:
         kernel.request("initialize", init_params)
         kernel_version = str(field(kernel.ready, "kernel", "version", default=""))
-        check("v022.kernel version is 0.2.2 (unified with package)", kernel_version == "0.2.2", kernel_version)
+        check("v022.kernel version is 0.3.0-alpha.1 (unified with package)", kernel_version == "0.3.0-alpha.1", kernel_version)
 
         # ── 1. plan receipt fields + this-run view counters ────────────────
         plan_size = 256 * 1024

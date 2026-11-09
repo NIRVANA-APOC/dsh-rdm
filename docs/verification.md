@@ -162,3 +162,22 @@ rustc -O -o tests/.tmp-e2e/perf-origin.exe tests/perf-origin.rs
 python tests/bench_native.py --old <pristine-0.1.2-kernel> \
   --new kernel/target/release/rdm-kernel.exe --origin tests/.tmp-e2e/perf-origin.exe
 ```
+
+## 0.3.0-alpha.1 — multi-source acceptance (2026-11-09)
+
+Gate run on the final artifacts (Windows 11 x64, rustc 1.99.1, Node 24.19.0):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | cargo test --all-targets | **157/157** (lib 78, engine 15, protocol 5, unit 17, v022 13, v030 21, multi_source 8) |
+| 2 | python tests/verify_e2e.py | **205/205** |
+| 3 | python tests/verify_extra.py / verify_claims.py | **56/56** / **15/15** |
+| 4 | node tests/kernel-e2e.mjs (incl. multi-source select scenario) | **PASS** |
+| 5 | node tests/tools-receipts.test.mjs | **PASS 50 checks** |
+| 6 | node scripts/verify-fixture.mjs / verify-kernels.mjs --host --run | **64/64** / **PASS** (win32-x64 5.35 MB) |
+| 7 | node scripts/check-release.mjs | **PASS** (package = kernel = 0.3.0-alpha.1) |
+| 8 | npx tsc --noEmit -p tsconfig.json | **clean** |
+
+Multi-source behavior is covered by the kernel multi_source suite (explicit selection, failover, unproven-identity refusal, 2-source race, slow-source exclusion, hedged first range, Metalink/HTTP Link discovery, .meta4 resolution and SHA-256). Intermediate versions 0.2.3–0.2.6 are recorded in the CHANGELOG stage table; the accepted artifact is the 0.3.0-alpha.1 pre-release.
+
+A real-network benchmark (Alpine 3.20.3 ISO, 209 MiB) measured `select` at **11.41×** the single official CDN and matched the best manual mirror; the opt-in `race` policy was ~1.00× of the best single mirror on that link. See [session_logs/20261109-multisource/README.md](../session_logs/20261109-multisource/README.md).

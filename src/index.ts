@@ -59,15 +59,20 @@ export {
   renderTaskRecord,
   renderTasksListReceipt,
   renderWaitReceipt,
+  renderSourceLine,
+  renderSourceRow,
   sessionIdFromExec,
 } from './tools'
 export {
   KernelError,
   normalizeAggregate,
+  normalizeRequestSpec,
   normalizeServerFacts,
+  normalizeSourcePolicy,
   normalizeTaskDetail,
   normalizeTaskHistory,
   normalizeTaskView,
+  normalizeSources,
   protocolMismatchMessage,
 } from './kernel-client'
 export { PROTOCOL_VERSION } from './protocol'

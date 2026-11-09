@@ -27,7 +27,7 @@ const TERMINAL = ['completed', 'failed', 'cancelled']
 // NDJSON protocol generation spoken by the shipped kernel (PROTOCOL.md §1).
 const PROTOCOL = 2
 const TASK_STATUSES = ['queued', 'probing', 'running', 'paused', 'completed', 'failed', 'cancelled', 'interrupted']
-const EVENT_KINDS = ['info', 'probe', 'plan', 'started', 'retry', 'controller', 'paused', 'resumed', 'verify', 'completed', 'failed', 'cancelled']
+const EVENT_KINDS = ['info', 'probe', 'source', 'plan', 'started', 'retry', 'controller', 'paused', 'resumed', 'verify', 'completed', 'failed', 'cancelled']
 
 // ── tiny assertion/case framework ───────────────────────────────────────────
 
@@ -364,6 +364,30 @@ scenario('download: full ranged transfer', 'completed status, byte equality, no 
   t.assert('list status=completed filter returns only completed tasks', completedOnly.tasks.every((entry) => entry.status === 'completed'), formatDetail(completedOnly.tasks.map((e) => e.status)))
   const limited = await kernel.list({ limit: 1 })
   t.assert('list limit=1 honoured', limited.tasks.length <= 1, limited.tasks.length)
+})
+
+scenario('multi-source: explicit mirror selection', 'sources[] + sourcePolicy select probes both candidates, reports the pool and completes with exact bytes', async (t, ctx) => {
+  const { kernel } = await makeKernel(t, ctx)
+  const size = 2 * MIB
+  const name = 'multi-source.bin'
+  const mirrorName = 'multi-source-mirror.bin'
+  const url = ctx.fixture.urlFor('ranged', size, name)
+  const mirrorUrl = ctx.fixture.urlFor('ranged', size, mirrorName)
+  const started = await startTask(t, kernel, {
+    url,
+    dir: t.downloadDir,
+    connections: 2,
+    sources: [{ url: mirrorUrl, priority: 2 }],
+    sourcePolicy: 'select',
+  })
+  const task = await waitCompleted(t, kernel, started.id, { timeoutMs: 120000, label: 'multi-source' })
+  t.eq('multi-source: policy reported', task?.sourcePolicy, 'select')
+  t.eq('multi-source: both candidates reported', task?.sources?.length, 2)
+  t.assert('multi-source: selected source is a pool index', Number.isInteger(task?.selectedSource), task?.selectedSource)
+  t.assert('multi-source: selected source is active', task?.sources?.some((source) => source.active === true), task?.sources)
+  t.eq('multi-source: switches', task?.sourceSwitches, 0)
+  await assertFileBytes(t, task?.path, ctx.fixture.expected(size), 'multi-source')
+  await assertNoPartLeftovers(t, t.downloadDir)
 })
 
 scenario('multi-connection: 12 MiB with connections=8 + singleStream control', 'overlapping range requests, peakWorkers, and a forced single rangeless GET', async (t, ctx) => {

@@ -33,6 +33,13 @@ growth on **aggregate** throughput with saturation backoff and tail freeze, tail
 chunks retry fast, and an unknown RPC method returns the stable
 `unsupported_method` error. See [0.2.2 additive changes](#022-additive-changes).
 
+0.3.0-alpha.1 is the **multi-source pass** (protocol stays **2**, all changes
+additive/defaulted): `start` accepts candidate `sources[]` plus
+`sourcePolicy`/`sourceRaceBytes`/`discoverSources`/`metalinkFile`,
+`TaskView`/`TaskDetail` expose the selected source pool, `ServerFacts` exposes
+Metalink/HTTP mirrors, and `.part.json` gains a source-independent `contentKey`.
+See [0.3.0 additive changes](#030-additive-changes).
+
 This protocol is private to the plugin: it is versioned here, and no
 compatibility with other downloaders, their CLIs or their persisted state is
 promised or implemented.
@@ -920,3 +927,54 @@ Protocol stays **2** and the envelope is unchanged; release 0.2.2 (kernel
 9. No tool parameter changes; `rdm_history` derives `builds` tags from the meta
    records and adds one `build=` receipt line when they exist. No new event
    kinds.
+
+## 0.3.0 additive changes
+
+Protocol stays **2**; release **0.3.0-alpha.1** (kernel identity
+`0.3.0-alpha.1`) adds multi-source scheduling with defaulted fields, so an older
+task record still loads and a single-URL request is unchanged.
+
+1. **`start` request fields** (all optional):
+   - `sources[]` — up to seven additional HTTP(S) candidates:
+     `{url, headers?, cookie?, priority?}`; the primary `url` is always source 0.
+     Duplicate URLs are dropped and the list is capped at 8.
+   - `sourcePolicy` — `single | select | failover | hedge | race`. Omitted means
+     `select` when `sources[]` is non-empty, otherwise `single`.
+   - `sourceRaceBytes` — hedge window, clamped to 64 KiB..64 MiB (default 1 MiB).
+   - `discoverSources` — parse Metalink/HTTP `Link: rel=duplicate` mirrors
+     (default true; HTTP(S) only).
+   - `metalinkFile` — select a file by name when `url` is a `.meta4`/`.metalink`
+     document. A single-file document needs no selector.
+2. **`ServerFacts.mirrors[]`** — discovered mirrors
+   `{url, priority, geo, source}`; URLs are redacted. Only HTTP(S) mirrors are
+   accepted; FTP/torrent entries in a Metalink document are ignored.
+3. **`TaskView`/`TaskDetail`** gain:
+   - `sourcePolicy` (effective policy; a `race`/`failover` without a strong
+     shared content identity is downgraded to `select` and a `source` event says
+     why),
+   - `selectedSource` (index into `sources[]` or `null`),
+   - `sourceSwitches` (count of active-source changes),
+   - `sources[]` — bounded to 8 rows:
+     `{id, url, host, state:"active"|"standby"|"bad",
+       role:"primary"|"alternate"|"discovered", bytes, bps, active, lastError}`.
+     `url` is redacted.
+4. **Resume state** `.part.json` gains `contentKey`: a source-independent
+   identity (`sha256:<hex>`, or `size:<n>;etag:<strong>`, or a weak
+   size/mtime key). When both saved and current keys are strong and equal, a
+   resumed task may continue from a different mirror and reports
+   `resumeDecision: "accepted"` with a `content-key` reason; a mismatch is
+   `validators-mismatch`. Legacy records without `contentKey` keep the
+   URL/validator identity path.
+5. **New `source` event kind** (free-form, bounded): selection, switch, hedge,
+   quarantine, discovery and policy-downgrade messages. Receipts add a
+   `source=` line (policy/selected/count/switches) and per-source lines in the
+   task detail; probe receipts add `mirrors=` when discovery found any.
+6. **Safety**: `race`/`failover` may move bytes between sources only when every
+   source has the same strong content identity (`expectedSha256`, server
+   SHA-256/Content-Digest, or equal size + strong ETag). `select`/`hedge` never
+   mix bytes: they choose/commit to one source. This is a product contract, not
+   just an implementation detail.
+7. **No RPC or envelope changes**; `stats`/`list`/`wait`/`control`/`history`
+   keep their shapes. Single-source requests keep the 64-byte probe; multi-source
+   probes use a 256 KiB ranged sample so the selection is measured rather than
+   noise.

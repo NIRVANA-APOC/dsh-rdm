@@ -1,4 +1,4 @@
-# dsh-rdm — architecture (0.2.2)
+# dsh-rdm — architecture (0.3.0-alpha.1)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
@@ -23,7 +23,15 @@ changes are explained in
 changes are specified in [`.design/0.2.2-spec.md`](../.design/0.2.2-spec.md) and
 explained in
 [design/0.2.2-live-modelscope-pass.md](design/0.2.2-live-modelscope-pass.md).
-The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md) v2.
+0.3.0-alpha.1 adds **multi-source scheduling**: a task may carry up to eight
+HTTP(S) candidates for one object; the engine probes them, selects by measured
+throughput/health, and applies `select`, `failover`, `hedge` or `race` per the
+task policy. A source pool (`kernel/src/source.rs`) owns one client per source,
+content identity and per-source health; the chunk engine asks the pool for a
+source per claim. Mixing bytes is gated on a strong shared content identity.
+Metalink/HTTP `Link: rel=duplicate` mirrors and `.meta4` documents are resolved
+before the transfer. The kernel wire contract is [PROTOCOL.md](../PROTOCOL.md)
+v2 (0.3.0 additions are additive).
 
 ## Goals
 
@@ -77,7 +85,7 @@ dsh-rdm/
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml            # rdm-kernel 0.2.2, protocol 2 (version unified with package.json since 0.2.2)
+│   ├── Cargo.toml            # rdm-kernel 0.3.0-alpha.1, protocol 2 (version unified with package.json since 0.2.2)
 │   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine,
 │   │                         #   controller (adaptive growth/collapse/rebuild), history (JSONL recording)
 │   └── tests/…               # unit + protocol smoke + in-process fixture e2e
@@ -94,7 +102,7 @@ dsh-rdm/
 A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
 plugin's protocol.
 
-| Concern | 0.2.2 kernel |
+| Concern | 0.3.0-alpha.1 kernel |
 |---|---|
 | Public API | NDJSON server + task manager (protocol 2; 0.2.1 additive fields + `history`, 0.2.2 `transferredBytes`/`requestedConnections`/history meta, `unsupported_method`) |
 | GUI/CLI/IPC/MCP/resolver | not present |

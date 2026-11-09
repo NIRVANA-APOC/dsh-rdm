@@ -34,6 +34,11 @@ pub struct Shared {
     pub retry_after: Mutex<Option<String>>,
     pub chunk_delay: Mutex<Option<Duration>>,
     pub redirect: AtomicBool,
+    /// After this many successful GETs, answer 500. 0 disables the failure
+    /// mode. The probe's ranged GET counts, so `1` lets the probe succeed and
+    /// makes the first transfer claim fail (multi-source failover tests).
+    pub fail_after: AtomicUsize,
+    pub gets: AtomicUsize,
     pub requests: AtomicUsize,
     pub range_requests: AtomicUsize,
     pub active: AtomicUsize,
@@ -61,6 +66,8 @@ impl Fixture {
             retry_after: Mutex::new(None),
             chunk_delay: Mutex::new(None),
             redirect: AtomicBool::new(false),
+            fail_after: AtomicUsize::new(0),
+            gets: AtomicUsize::new(0),
             requests: AtomicUsize::new(0),
             range_requests: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
@@ -110,6 +117,11 @@ impl Fixture {
 
     pub fn set_redirect(&self, redirect: bool) {
         self.shared.redirect.store(redirect, Ordering::SeqCst);
+    }
+
+    /// Let this many GETs succeed, then answer 500 (0 disables).
+    pub fn set_fail_after(&self, gets: usize) {
+        self.shared.fail_after.store(gets, Ordering::SeqCst);
     }
 
     pub fn requests(&self) -> usize {
@@ -207,6 +219,17 @@ fn handle(stream: &mut TcpStream, shared: &Arc<Shared>) -> std::io::Result<()> {
         let location = format!("http://{}/redirect", stream.local_addr()?);
         return write_response(stream, "302 Found", &[("Location".to_string(), location)], &[]);
     }
+    if path == "/metalink.meta4" {
+        // A one-file Metalink document whose URL points back at this fixture.
+        let location = format!("http://{}/file", stream.local_addr()?);
+        let body = format!(
+            "<?xml version=\"1.0\"?>\n<metalink xmlns=\"urn:ietf:params:xml:ns:metalink\">\n  <file name=\"file\">\n    <size>{}</size>\n    <hash type=\"sha-256\">{}</hash>\n    <url priority=\"1\">{}</url>\n  </file>\n</metalink>\n",
+            shared.bytes.len(),
+            sha256_hex(&shared.bytes),
+            location,
+        );
+        return write_response(stream, "200 OK", &[("Content-Type".to_string(), "application/metalink4+xml".to_string())], body.as_bytes());
+    }
     if path != "/file" && path != "/redirect" {
         return write_response(stream, "404 Not Found", &[], b"not found");
     }
@@ -231,6 +254,13 @@ fn handle(stream: &mut TcpStream, shared: &Arc<Shared>) -> std::io::Result<()> {
     if request.method == "HEAD" {
         headers.push(("Content-Length".to_string(), total.to_string()));
         return write_response(stream, "200 OK", &headers, &[]);
+    }
+
+    let gets = shared.gets.fetch_add(1, Ordering::SeqCst) + 1;
+    let fail_after = shared.fail_after.load(Ordering::SeqCst);
+    if fail_after > 0 && gets > fail_after {
+        headers.push(("Content-Length".to_string(), "0".to_string()));
+        return write_response(stream, "500 Internal Server Error", &headers, b"");
     }
 
     // One-shot 429 pushback (counted per GET on the main file route).
@@ -302,9 +332,12 @@ fn write_chunked_response(stream: &mut TcpStream, status: &str, headers: &[(Stri
         }
         Some(delay) => {
             for chunk in body.chunks(32 * 1024) {
+                // Delay before the bytes so a probe's tiny ranged sample also
+                // observes the slow source (otherwise it reads the first 64
+                // bytes before the fixture sleeps).
+                thread::sleep(delay);
                 stream.write_all(chunk)?;
                 stream.flush()?;
-                thread::sleep(delay);
             }
         }
     }
