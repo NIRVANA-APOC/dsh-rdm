@@ -13,6 +13,65 @@ without leaving the panel.
 
 ![Download workbench — light](assets/screenshots/review-light.png)
 
+## Install
+
+The package ships prebuilt kernels for Windows x64, Linux x64/arm64 and macOS
+x64/arm64; installing never compiles Rust.
+
+### Install from the DSH plugin page (recommended)
+
+This project is published to npm: open DSH's Plugins page, choose **Add plugin**,
+enter `dsh-rdm`, and click **Install**. The install source only affects download
+speed, not package contents; in mainland China you can pick the mainland mirror.
+
+![Install dsh-rdm from the DSH plugin page](assets/screenshots/install-dsh-rdm.png)
+
+### Other ways to install
+
+From GitHub into a DSH profile:
+
+```bash
+dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
+```
+
+From a release tarball:
+
+```bash
+dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
+```
+
+Local checkout as a directory bundle (DSH UI → Plugins → Install from folder, or
+the `plugin_manager` tool):
+
+```text
+plugin_manager install_bundle target=<absolute path to dsh-rdm>
+```
+
+After installing, agents see `rdm_*`; the left sidebar gains the downloads
+workbench, the right sidebar guide gains a “Downloads” tab, and the frame gains
+the active-download popup (it stays hidden until a download runs). The host half
+reloads with the plugin row; the client surfaces need one page refresh before
+they appear (this desktop build exposes no reload menu item). The browser route
+(`POST /api/dsh-rdm/api`) is documented in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api).
+
+### Configuration
+
+| key | default | meaning |
+|---|---|---|
+| `defaultDir` | `<data-dir>/downloads` when `defaultDir` is unset | directory for downloads started without `dir` |
+| `connections` | `8` | default parallel connections per task (1–128) — the initial worker population |
+| `maxConnections` | `128` | authoritative adaptive ceiling per task, clamped to `connections..128`; the controller may grow beyond `connections` up to this while throughput is healthy |
+| `chunkSizeMiB` | `0` (auto) | fixed chunk size; 0 = four chunks per connection, 256 KiB–8 MiB |
+| `speedLimitBps` | `0` | profile-wide default bandwidth cap; 0 = unlimited |
+| `maxAttempts` | `6` | per-chunk retry budget |
+| `autoResume` | `true` | resume interrupted tasks when the kernel starts |
+| `dataDir` | `$DSH_HOME/dsh-rdm` | kernel data (task records, origin ledger, `history/` recordings) |
+| `kernelPath` | bundled `bin/<platform>-<arch>/rdm-kernel` | override the kernel binary |
+| `startOnDemand` | `true` | spawn the kernel on first use instead of at plugin load |
+| `fsyncOnComplete` | `false` | flush each completed file to stable storage before the atomic rename |
+| `logLevel` | `warn` | kernel stderr log level |
+
 ## What "agent-native" means here
 
 A downloader used by a model is not a GUI that happens to have an API. The agent
@@ -245,65 +304,6 @@ kernel and plugin package share one version number (currently
 work and the multi-source scheduling pass. Historical recordings keep the strings
 their binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2
 builds = `1.2.0`).
-
-## Install
-
-The package ships prebuilt kernels for Windows x64, Linux x64/arm64 and macOS
-x64/arm64; installing never compiles Rust.
-
-### Install from the DSH plugin page (recommended)
-
-This project is published to npm: open DSH's Plugins page, choose **Add plugin**,
-enter `dsh-rdm`, and click **Install**. The install source only affects download
-speed, not package contents; in mainland China you can pick the mainland mirror.
-
-![Install dsh-rdm from the DSH plugin page](assets/screenshots/install-dsh-rdm.png)
-
-### Other ways to install
-
-From GitHub into a DSH profile:
-
-```bash
-dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
-```
-
-From a release tarball:
-
-```bash
-dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
-```
-
-Local checkout as a directory bundle (DSH UI → Plugins → Install from folder, or
-the `plugin_manager` tool):
-
-```text
-plugin_manager install_bundle target=<absolute path to dsh-rdm>
-```
-
-After installing, agents see `rdm_*`; the left sidebar gains the downloads
-workbench, the right sidebar guide gains a “Downloads” tab, and the frame gains
-the active-download popup (it stays hidden until a download runs). The host half
-reloads with the plugin row; the client surfaces need one page refresh before
-they appear (this desktop build exposes no reload menu item). The browser route
-(`POST /api/dsh-rdm/api`) is documented in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api).
-
-### Configuration
-
-| key | default | meaning |
-|---|---|---|
-| `defaultDir` | `<data-dir>/downloads` when `defaultDir` is unset | directory for downloads started without `dir` |
-| `connections` | `8` | default parallel connections per task (1–128) — the initial worker population |
-| `maxConnections` | `128` | authoritative adaptive ceiling per task, clamped to `connections..128`; the controller may grow beyond `connections` up to this while throughput is healthy |
-| `chunkSizeMiB` | `0` (auto) | fixed chunk size; 0 = four chunks per connection, 256 KiB–8 MiB |
-| `speedLimitBps` | `0` | profile-wide default bandwidth cap; 0 = unlimited |
-| `maxAttempts` | `6` | per-chunk retry budget |
-| `autoResume` | `true` | resume interrupted tasks when the kernel starts |
-| `dataDir` | `$DSH_HOME/dsh-rdm` | kernel data (task records, origin ledger, `history/` recordings) |
-| `kernelPath` | bundled `bin/<platform>-<arch>/rdm-kernel` | override the kernel binary |
-| `startOnDemand` | `true` | spawn the kernel on first use instead of at plugin load |
-| `fsyncOnComplete` | `false` | flush each completed file to stable storage before the atomic rename |
-| `logLevel` | `warn` | kernel stderr log level |
 
 ## Verification
 

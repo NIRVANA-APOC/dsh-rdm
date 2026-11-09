@@ -22,9 +22,10 @@ runtime behavior is unchanged.
 
 ### Changed
 - **README install path**: `README.md` and `README.en.md` now show the DSH plugin
-  page screenshot and make "enter `dsh-rdm` on the Plugins page" the primary
-  installation method; GitHub, release tarball and local-bundle installs remain
-  as alternatives.
+  page screenshot, make "enter `dsh-rdm` on the Plugins page" the primary
+  installation method, and move the whole Install section ahead of the
+  "what agent-native means" section; GitHub, release tarball and local-bundle
+  installs remain as alternatives.
 - **README defaults to Chinese**: `README.md` is now Simplified Chinese; the
   English version moved to `README.en.md`, with both language-switch links
   updated.

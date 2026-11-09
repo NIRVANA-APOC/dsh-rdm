@@ -8,6 +8,55 @@
 
 ![下载工作台 — 浅色](assets/screenshots/review-light.png)
 
+## 安装
+
+包内附带 Windows x64、Linux x64/arm64 与 macOS x64/arm64 的预编译内核；安装过程从不编译 Rust。
+
+### 在 DSH 插件页安装（推荐）
+
+本项目同步发布到 npm：打开 DSH 的插件页，点击「添加插件」，输入 `dsh-rdm` 后点「安装」即可。安装源只影响下载速度，不会改变包内容；在中国大陆可以选择「中国大陆镜像源」。
+
+![在 DSH 插件页输入 dsh-rdm 安装](assets/screenshots/install-dsh-rdm.png)
+
+### 其他安装方式
+
+从 GitHub 安装到某个 DSH profile：
+
+```bash
+dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
+```
+
+从 release tarball 安装：
+
+```bash
+dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
+```
+
+把本地检出作为目录 bundle 安装（DSH UI → Plugins → Install from folder，或 `plugin_manager` 工具）：
+
+```text
+plugin_manager install_bundle target=<absolute path to dsh-rdm>
+```
+
+安装后，智能体可以看到 `rdm_*`；左侧边栏出现下载工作台，右侧边栏指南新增一个“下载”标签页，整帧还会出现活跃下载弹窗（没有下载时保持隐藏）。Host 半边会随插件行重载；客户端界面需要刷新一次页面后才会出现（这个桌面版本没有暴露刷新菜单项）。浏览器路由（`POST /api/dsh-rdm/api`）的契约见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api)。
+
+### 配置
+
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `defaultDir` | `<data-dir>/downloads`（`defaultDir` 未设置时） | 未指定 `dir` 时启动的下载所用目录 |
+| `connections` | `8` | 每个任务默认并行连接数（1–128）——初始 worker 规模 |
+| `maxConnections` | `128` | 每个任务的权威自适应上限，收敛到 `connections..128`；控制器可在吞吐健康时越过 `connections` 增长到该值 |
+| `chunkSizeMiB` | `0`（自动） | 固定分块大小；0 = 每连接四块，256 KiB–8 MiB |
+| `speedLimitBps` | `0` | profile 级默认带宽上限；0 = 不限速 |
+| `maxAttempts` | `6` | 每块重试预算 |
+| `autoResume` | `true` | 内核启动时续传被中断的任务 |
+| `dataDir` | `$DSH_HOME/dsh-rdm` | 内核数据（任务记录、来源台账、`history/` 录制） |
+| `kernelPath` | 随包的 `bin/<platform>-<arch>/rdm-kernel` | 覆盖内核二进制路径 |
+| `startOnDemand` | `true` | 首次使用时启动内核，而不是插件加载时启动 |
+| `fsyncOnComplete` | `false` | 原子重命名前把已完成文件刷入稳定存储（fsync） |
+| `logLevel` | `warn` | 内核 stderr 日志级别 |
+
 ## “智能体原生”在这里的含义
 
 被模型使用的下载器，不是“恰好带 API 的 GUI”。智能体必须用尽可能少的模型步数回答：*这个 URL 是否可用、应该怎么取、现在发生了什么、是否需要干预、结果是否可信？* `dsh-rdm` 0.3.0-alpha.2 就是围绕这些问题构建的。
@@ -111,55 +160,6 @@ Rust 内核（`rdm-kernel` 0.3.0-alpha.2，协议 2）是一个常驻子进程�
 * **有界** —— 每个任务在视图环中 ≤200 条事件、内存中 ≤3000 个遥测样本、落盘 ≤10 万个样本/任务、每次响应 ≤20 条构建/计划 meta、≤256 个来源，不缓冲完整响应体，stdout 专供协议使用。
 
 性能工作与测量见 [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md)；架构与协议见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [PROTOCOL.md](PROTOCOL.md)。0.2.0 的设计推理见 [docs/design/0.2.0-agent-native.md](docs/design/0.2.0-agent-native.md)；0.2.1 的真实数据证据与修复见 [docs/design/0.2.1-real-data-fixes.md](docs/design/0.2.1-real-data-fixes.md)；0.2.2 的 ModelScope 实测与控制器/尾部/计量改动见 [docs/design/0.2.2-live-modelscope-pass.md](docs/design/0.2.2-live-modelscope-pass.md)，证据笔记见 [docs/research/agent-native-downloader.md](docs/research/agent-native-downloader.md)；版本记录见 [CHANGELOG.md](CHANGELOG.md)（每个 tag 一节，版本号与 changelog 必须同一次改动一起更新）。从 0.2.2 起，内核与插件包共用同一版本号（当前 `0.3.0-alpha.2`，协议 2）；本次预发布合并 0.3.0 工作台/搜索与多源调度。历史录制保留二进制实际写入的版本串（0.2.1 内核 = `1.1.0`，版本统一前的 0.2.2 构建 = `1.2.0`）。
-
-## 安装
-
-包内附带 Windows x64、Linux x64/arm64 与 macOS x64/arm64 的预编译内核；安装过程从不编译 Rust。
-
-### 在 DSH 插件页安装（推荐）
-
-本项目同步发布到 npm：打开 DSH 的插件页，点击「添加插件」，输入 `dsh-rdm` 后点「安装」即可。安装源只影响下载速度，不会改变包内容；在中国大陆可以选择「中国大陆镜像源」。
-
-![在 DSH 插件页输入 dsh-rdm 安装](assets/screenshots/install-dsh-rdm.png)
-
-### 其他安装方式
-
-从 GitHub 安装到某个 DSH profile：
-
-```bash
-dsh plugin --profile web add github:NIRVANA-APOC/dsh-rdm
-```
-
-从 release tarball 安装：
-
-```bash
-dsh plugin --profile web add https://github.com/NIRVANA-APOC/dsh-rdm/releases/download/<tag>/dsh-rdm-<version>.tgz
-```
-
-把本地检出作为目录 bundle 安装（DSH UI → Plugins → Install from folder，或 `plugin_manager` 工具）：
-
-```text
-plugin_manager install_bundle target=<absolute path to dsh-rdm>
-```
-
-安装后，智能体可以看到 `rdm_*`；左侧边栏出现下载工作台，右侧边栏指南新增一个“下载”标签页，整帧还会出现活跃下载弹窗（没有下载时保持隐藏）。Host 半边会随插件行重载；客户端界面需要刷新一次页面后才会出现（这个桌面版本没有暴露刷新菜单项）。浏览器路由（`POST /api/dsh-rdm/api`）的契约见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#browser-route-api)。
-
-### 配置
-
-| 键 | 默认值 | 含义 |
-|---|---|---|
-| `defaultDir` | `<data-dir>/downloads`（`defaultDir` 未设置时） | 未指定 `dir` 时启动的下载所用目录 |
-| `connections` | `8` | 每个任务默认并行连接数（1–128）——初始 worker 规模 |
-| `maxConnections` | `128` | 每个任务的权威自适应上限，收敛到 `connections..128`；控制器可在吞吐健康时越过 `connections` 增长到该值 |
-| `chunkSizeMiB` | `0`（自动） | 固定分块大小；0 = 每连接四块，256 KiB–8 MiB |
-| `speedLimitBps` | `0` | profile 级默认带宽上限；0 = 不限速 |
-| `maxAttempts` | `6` | 每块重试预算 |
-| `autoResume` | `true` | 内核启动时续传被中断的任务 |
-| `dataDir` | `$DSH_HOME/dsh-rdm` | 内核数据（任务记录、来源台账、`history/` 录制） |
-| `kernelPath` | 随包的 `bin/<platform>-<arch>/rdm-kernel` | 覆盖内核二进制路径 |
-| `startOnDemand` | `true` | 首次使用时启动内核，而不是插件加载时启动 |
-| `fsyncOnComplete` | `false` | 原子重命名前把已完成文件刷入稳定存储（fsync） |
-| `logLevel` | `warn` | 内核 stderr 日志级别 |
 
 ## 验证
 

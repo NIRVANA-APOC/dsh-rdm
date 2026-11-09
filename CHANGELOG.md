@@ -19,8 +19,8 @@ ready/initialize/stats 帧都报告 `0.3.0-alpha.2`。历史录制保留二进�
 
 ### 变更
 - **README 安装方式**：`README.md` 与 `README.en.md` 增加 DSH 插件页安装截图，
-  并把「插件页输入 `dsh-rdm`」作为首推安装方式；GitHub、release tarball 与本地
-  bundle 保留为其他安装方式。
+  把「插件页输入 `dsh-rdm`」作为首推安装方式，并把整个安装章节移到「智能体原生」
+  之前；GitHub、release tarball 与本地 bundle 保留为其他安装方式。
 - **README 默认中文**：`README.md` 现在是简体中文版；原英文版迁移为
   `README.en.md`，中英文语言切换链接同步更新。
 - **CHANGELOG 默认中文**：`CHANGELOG.md` 现在是简体中文版；原英文记录保留为
