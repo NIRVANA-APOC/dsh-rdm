@@ -72,12 +72,35 @@ they appear (this desktop build exposes no reload menu item). The browser route
 | `fsyncOnComplete` | `false` | flush each completed file to stable storage before the atomic rename |
 | `logLevel` | `warn` | kernel stderr log level |
 
+## Benchmark snapshot (2026-11-10)
+
+On Windows 11 / Ryzen 7 9700X, four HTTP(S) tasks were compared across aria2
+1.37.0 and Gopeed 1.9.3: a 3.3 MiB small file, a 61 MiB ISO, a 986 MiB ISO, and
+a 38.5 MiB GitHub 302/signed-URL redirect. **62 runs, 20.65 GiB downloaded, every
+file SHA-256 verified** (measured build `0.3.0-alpha.2`, identical runtime
+behavior to 0.3.0).
+
+| Scenario | dsh-rdm | aria2 | Gopeed | Outcome |
+|---|---:|---:|---:|---|
+| 3.3 MiB small file | **0.138 s** | 0.247 s | 0.202 s | **44.1% faster** than aria2 |
+| 61 MiB ISO | **0.719 s** | 0.865 s | 0.851 s | **16.9% faster** than aria2 |
+| 986 MiB ISO | **9.272 s** (adaptive) | 9.608 s | 10.826 s | adaptive **3.5% faster**; 16-connection run 9.526 s |
+| 38.5 MiB GitHub redirect | 7.311 s | **7.085 s** | 7.480 s | 3.2% slower than aria2; aria2 wins this link |
+
+For the 986 MiB task, dsh-rdm adaptive used 6.06 s CPU and 37.5 MB peak RSS;
+aria2 used 6.88 s / 29.2 MB and Gopeed 8.38 s / 53.1 MB. dsh-rdm led on the
+small file, medium ISO and stable large mirror; aria2 led on the slow GitHub
+redirect.
+
+Full method, per-run data and reproduction scripts:
+[session_logs/20261110-downloader-bench/README.md](session_logs/20261110-downloader-bench/README.md).
+
 ## What "agent-native" means here
 
 A downloader used by a model is not a GUI that happens to have an API. The agent
 has to answer, in as few model steps as possible: *is this URL usable, how should
 I fetch it, what is happening now, should I intervene, and can I trust the
-result?* `dsh-rdm` 0.3.0-alpha.2 is built around those questions.
+result?* `dsh-rdm` 0.3.0 is built around those questions.
 
 * **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
   proven range support, validators and RFC 9110 resume safety, signed-URL
@@ -233,7 +256,7 @@ range 0..300 of 1907
 
 ## Kernel intelligence
 
-The Rust kernel (`rdm-kernel` 0.3.0-alpha.2, protocol 2) is a resident child process; it
+The Rust kernel (`rdm-kernel` 0.3.0, protocol 2) is a resident child process; it
 does not listen on a port, starts lazily and stays warm.
 
 * **Server facts** — manual redirect chain (up to 8 hops), proven range support
@@ -300,7 +323,7 @@ the stage/version record is
 Release notes live in [CHANGELOG.en.md](CHANGELOG.en.md) with one section per tag;
 the same change must update both the version and this changelog. From 0.2.2 the
 kernel and plugin package share one version number (currently
-`0.3.0-alpha.2`, protocol 2); this pre-release merges the 0.3.0 workbench/search
+`0.3.0`, protocol 2); this release merges the workbench/search
 work and the multi-source scheduling pass. Historical recordings keep the strings
 their binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2
 builds = `1.2.0`).

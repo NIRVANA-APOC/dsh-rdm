@@ -9,11 +9,51 @@ All notable changes to `dsh-rdm` are recorded here. The format follows
 or creates the tag. There is no release without a changelog entry; run\n`node scripts/check-release.mjs` to enforce it (checks package/kernel version\nequality and the matching `[X.Y.Z]` section).
 
 Starting with **0.2.2**, the resident kernel and the plugin package share one
-version number. The current merged tree is **0.3.0-alpha.2** (protocol 2):
+version number. The current merged tree is **0.3.0** (protocol 2):
 `package.json`, `kernel/Cargo.toml` and the kernel's ready/initialize/stats
-frames all report `0.3.0-alpha.2`. Historical recordings keep the strings their
+frames all report `0.3.0`. Historical recordings keep the strings their
 binaries actually wrote (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2`
 builds = `1.2.0`).
+
+## [0.3.0] — 2026-11-10
+
+0.3.0 finalizes the release: the workbench/search and multi-source scheduling
+work are merged, README/CHANGELOG default to Chinese, and real downloader
+benchmarks are included. Protocol stays **2**.
+
+### Added
+- **Multi-source scheduling V1–V4**: `sources[]`, measured selection, failover,
+  hedged start, per-chunk racing, Metalink/HTTP `Link` and `.meta4` resolution.
+  See the [0.3.0-alpha.1] section for details.
+- **Download workbench and `rdm_search`**: the left-sidebar workbench with
+  workspace/session grouping, batch actions and the active-download popup; the
+  seventh model tool searches records across sessions.
+- **Install path**: README now leads with installing from the DSH plugin page by
+  entering `dsh-rdm` (npm package).
+- **Real downloader benchmark**: four HTTP(S) tasks (3.3 MiB, 61 MiB, 986 MiB
+  and a 38.5 MiB GitHub redirect), 62 runs, 20.65 GiB, every file SHA-256
+  verified. dsh-rdm was faster on the small file (−44.1% wall), medium ISO
+  (−16.9%) and stable large mirror (adaptive −3.5%); aria2 led the slow GitHub
+  redirect (dsh-rdm +3.2% wall). Full data:
+  [session_logs/20261110-downloader-bench/README.md](session_logs/20261110-downloader-bench/README.md).
+
+### Changed
+- **Chinese by default**: `README.md` and `CHANGELOG.md` are now Simplified
+  Chinese; English copies live in `README.en.md` and `CHANGELOG.en.md`.
+- **Unified version**: package, kernel and default User-Agent report `0.3.0`;
+  the win32-x64 kernel is rebuilt and protocol stays 2.
+- README adds a benchmark snapshot with the four scenarios and the full-data
+  link.
+
+### Verification
+- `cargo test --all-targets`: **157 passed / 0 failed**.
+- Python e2e **205/205**; extra **56/56**; claims **15/15**.
+- Tool receipts **56 checks**; host-api **21/21**; kernel-e2e **PASS**.
+- Fixture **64/64**; `verify-kernels --host --run` **PASS**;
+  `check-release` **PASS** (package = kernel = `0.3.0`); `tsc --noEmit` clean.
+- Benchmark: **62/62** SHA-256 checks, 20.65 GiB; Gopeed's default Chrome UA was
+  rejected with 403 by BFSU/TUNA, so the benchmark normalized all clients to
+  `curl/8.9.1`; see the benchmark report.
 
 ## [0.3.0-alpha.2] — 2026-11-10
 

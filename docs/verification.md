@@ -1,23 +1,26 @@
-# dsh-rdm 0.3.0-alpha.2 — verification report
+# dsh-rdm 0.3.0 — verification report
 
 Status: **PASS** — all nine brief items, the active-download popup, host route v3,
 the session/workspace catalog, user-action notices, the desktop open action and
 `rdm_search` pass. No HIGH or MEDIUM defect remains; the verifier's five LOW
 findings were fixed in this build (see §6).
 
-> **0.3.0-alpha.2 note:** this release only localizes `README.md`/`CHANGELOG.md`
-> and bumps the package/kernel identity; protocol and behavior are unchanged
-> from `0.3.0-alpha.1`. The rebuilt win32-x64 kernel is 5,349,376 B, SHA-256
-> `17FDD85D71B5801B1248622A3E08C1C6FC940BD14498298884A9A5A1E7CDD6A2`.
+> **0.3.0 note:** this final release merges the workbench/search and multi-source
+> scheduling work, defaults README/CHANGELOG to Chinese, and adds the real
+> downloader benchmark. Protocol and behavior are unchanged from
+> `0.3.0-alpha.1`. The rebuilt win32-x64 kernel is 5,349,376 B, SHA-256
+> `A143800B3E03270F6D40C5B44CE06D1E5000D1B73A1115E461E38208D5E0EDD9`.
 > Gates re-run after the bump: cargo **157/157**, Python e2e **205/205**, extra
 > **56/56**, claims **15/15**, tools **56**, host-api **21/21**, kernel-e2e
 > **PASS**, fixture **64/64**, `verify-kernels --host --run` **PASS**,
 > `check-release` **PASS**, `tsc --noEmit` clean.
+> Benchmark: **62/62** SHA-256 checks, 20.65 GiB;
+> [session_logs/20261110-downloader-bench/README.md](../session_logs/20261110-downloader-bench/README.md).
 
 - Contract: [`.design/0.3.0-ui-spec.md`](../.design/0.3.0-ui-spec.md)
-- Kernel protocol: [PROTOCOL.md](../PROTOCOL.md) v2, kernel `0.3.0-alpha.2`
-  (identity bump; wire format unchanged from 0.2.2)
-- Package: `dsh-rdm` 0.3.0-alpha.2
+- Kernel protocol: [PROTOCOL.md](../PROTOCOL.md) v2, kernel `0.3.0`
+  (wire format unchanged from 0.2.2)
+- Package: `dsh-rdm` 0.3.0
 - Verifier: independent `verifier` teammate; implementation Lead; verification
   report and scripts under [`.design/verify-03/`](../.design/verify-03/).
 
@@ -25,9 +28,9 @@ findings were fixed in this build (see §6).
 
 | artifact | sha256 | bytes |
 |---|---|---|
-| `lib/index.js` | `b9ac8976242777a6c24f073a625dfc39559e8eb66350aecb899cd18b44de9276` | 205,157 |
-| `lib/client.js` | `d70c5abaa9c9a44f7eb1bdb15f1f344d7c6b62cf3d55d50357f590b146cb258a` | 219,152 |
-| `bin/win32-x64/rdm-kernel.exe` | `7760ef7a82e5d4ff87aaed2d8ad78a4428095d7d9fc499b2b54453ac94839c27` | 5,101,056 |
+| `lib/index.js` | `0D1E96289CFCB4F285C4E7D9007BE8701D6279AFB621C02C0509FDB46BFC8482` | 213,490 |
+| `lib/client.js` | `FBE71DE51AD04319A8F774CE146D5DBC41BB6C58130018F1BF68B394489FCDE8` | 227,949 |
+| `bin/win32-x64/rdm-kernel.exe` | `A143800B3E03270F6D40C5B44CE06D1E5000D1B73A1115E461E38208D5E0EDD9` | 5,349,376 |
 
 Environment: Windows x64, Node v24.19.0, TypeScript 5.9, esbuild 0.25,
 rustc/cargo 1.99.1, Chrome 157.0.8103.38 (headless, CDP), DSH desktop profile

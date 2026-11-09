@@ -9,9 +9,43 @@
 `node scripts/check-release.mjs` 会检查 package/kernel 版本一致性和对应章节是否存在。
 
 从 **0.2.2** 起，常驻内核与插件包共用同一版本号。当前合并树为
-**0.3.0-alpha.2**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
-ready/initialize/stats 帧都报告 `0.3.0-alpha.2`。历史录制保留二进制实际写入的
+**0.3.0**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
+ready/initialize/stats 帧都报告 `0.3.0`。历史录制保留二进制实际写入的
 版本串（0.2.1 内核 = `1.1.0`；版本统一前的 0.2.2 构建 = `1.2.0`）。
+
+## [0.3.0] — 2026-11-10
+
+0.3.0 正式版：合并下载工作台/搜索与多源调度，中文化 README/CHANGELOG，并补齐
+与 aria2、Gopeed 的真实下载对比。协议仍为 **2**。
+
+### 新增
+- **多源调度 V1–V4**：`sources[]`、实测选择、失败切换、首段对冲、按分块竞速、
+  Metalink/HTTP `Link` 与 `.meta4` 解析；`race`/`failover` 只在强共享内容身份
+  下混用字节。详见 [0.3.0-alpha.1] 章节。
+- **下载工作台与 `rdm_search`**：左侧边栏工作台、工作区/会话分组、批量操作、
+  右上角活动下载弹窗；第七个模型工具 `rdm_search` 支持跨会话记录检索。
+- **安装体验**：README 首推 DSH 插件页安装，输入 `dsh-rdm` 即可从 npm 安装。
+- **真实下载基准**：4 个 HTTP(S) 任务（3.3 MiB / 61 MiB / 986 MiB / 38.5 MiB
+  GitHub 重定向）共 62 次下载、20.65 GiB，SHA-256 全部通过。dsh-rdm 在小文件
+  （−44.1%）、中文件（−16.9%）和稳定大镜像（自适应 −3.5%）上快于 aria2；
+  GitHub 慢链路由 aria2 领先（dsh-rdm +3.2% 耗时）。完整数据见
+  [session_logs/20261110-downloader-bench/README.md](session_logs/20261110-downloader-bench/README.md)。
+
+### 变更
+- **README/CHANGELOG 默认中文**：`README.md`、`CHANGELOG.md` 为简体中文；
+  英文版分别保留为 `README.en.md`、`CHANGELOG.en.md`。
+- **版本统一**：包、内核与默认 User-Agent 统一为 `0.3.0`；`bin/win32-x64`
+  预编译内核重建，协议保持 2。
+- README 新增「实测成绩」区块，直接给出四个场景的结果与复现入口。
+
+### 验证
+- `cargo test --all-targets`：**157 通过 / 0 失败**。
+- Python e2e **205/205**；extra **56/56**；claims **15/15**。
+- 工具回执 **56 项通过**；host-api **21/21**；kernel-e2e **PASS**。
+- fixture **64/64**；`verify-kernels --host --run` **PASS**；
+  `check-release` **PASS**（package = kernel = `0.3.0`）；`tsc --noEmit` 干净。
+- 基准：**62/62** SHA-256 校验通过，20.65 GiB；Gopeed 的默认 Chrome UA 在
+  BFSU/TUNA 返回 403，基准统一使用 `curl/8.9.1`，详见基准报告。
 
 ## [0.3.0-alpha.2] — 2026-11-10
 

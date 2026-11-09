@@ -1,4 +1,4 @@
-# dsh-rdm — architecture (0.3.0-alpha.2)
+# dsh-rdm — architecture (0.3.0)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
@@ -16,7 +16,7 @@ ModelScope pass** (kernel identity 0.2.2 at the time): recordings gain a per-run
 meta record for build attribution, rate accounting moves to this-run bytes
 (`transferredBytes`), the controller judges growth on aggregate throughput with
 saturation and tail-freeze policies, tail chunks retry fast, and an unknown RPC
-method returns `unsupported_method`. 0.3.0-alpha.2 combines the **download workbench**
+method returns `unsupported_method`. 0.3.0 combines the **download workbench**
 (the human can compose a download, filter/batch-manage records grouped by workspace
 and real session title, open results on the desktop, and follow live progress in
 a frame-wide top-right popup; the agent gains `rdm_search`) with **multi-source
@@ -100,7 +100,7 @@ dsh-rdm/
 ├── vendor/                   # schemastery + cosmokit (MIT), bundled into lib/
 ├── lib/                      # generated: index.js (host), client.js (browser)
 ├── kernel/                   # standalone Rust crate (own workspace)
-│   ├── Cargo.toml            # rdm-kernel 0.3.0-alpha.2, protocol 2 (version unified with package.json)
+│   ├── Cargo.toml            # rdm-kernel 0.3.0, protocol 2 (version unified with package.json)
 │   ├── src/…                 # protocol, task, kernel, probe, telemetry, origins, engine,
 │   │                         #   controller (adaptive growth/collapse/rebuild), history (JSONL recording)
 │   └── tests/…               # unit + protocol smoke + in-process fixture e2e
@@ -117,7 +117,7 @@ dsh-rdm/
 A standalone Cargo workspace (own `[workspace]`) built for one purpose: serve the
 plugin's protocol.
 
-| Concern | 0.3.0-alpha.2 kernel |
+| Concern | 0.3.0 kernel |
 |---|---|
 | Public API | NDJSON server + task manager (protocol 2; 0.2.1 additive fields + `history`, 0.2.2 `transferredBytes`/`requestedConnections`/history meta, `unsupported_method`) |
 | GUI/CLI/IPC/MCP/resolver | not present |

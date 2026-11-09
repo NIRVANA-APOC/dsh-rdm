@@ -456,7 +456,7 @@ function pickOrNull<T extends string>(value: unknown, allowed: readonly T[]): T 
 
 /**
  * The actionable error shown when a kernel reports a protocol this plugin does
- * not speak. Protocol 1 binaries are not compatible with 0.3.0-alpha.2.
+ * not speak. Protocol 1 binaries are not compatible with 0.3.0.
  */
 export function protocolMismatchMessage(
   reported: number,
@@ -469,7 +469,7 @@ export function protocolMismatchMessage(
     : ''
   return (
     `The RDM kernel at "${binaryPath}" reported ${seen} in its ready frame${version}, ` +
-    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.3.0-alpha.2). ` +
+    `but this plugin requires protocol ${PROTOCOL_VERSION} (dsh-rdm 0.3.0). ` +
     'Rebuild the kernel for this plugin with "bash scripts/dev-build.sh kernel" ' +
     '(or "node scripts/build-kernel.mjs") or set the plugin config "kernelPath" to a matching kernel.'
   )

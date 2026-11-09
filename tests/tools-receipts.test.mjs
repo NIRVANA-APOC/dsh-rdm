@@ -274,7 +274,7 @@ check('protocol mismatch error is actionable', () => {
   assert.match(message, /requires protocol 2/)
   assert.match(message, /build-kernel/)
   // 0.3.0 versioning: the plugin/kernel versions named in the hint are current.
-  assert.match(message, /dsh-rdm 0\.3\.0-alpha\.2/)
+  assert.match(message, /dsh-rdm 0\.3\.0/)
   assert.match(message, /matching kernel/)
 })
 
@@ -1722,7 +1722,7 @@ check('canonical values validate against their output schemas', () => {
       .map((block) => block.text)
       .join('\n')
     assert.match(text, /^error code=unsupported_method message=/m)
-    assert.match(text, /^next upgrade the kernel binary to 0\.3\.0-alpha\.2 \(dsh-rdm 0\.3\.0-alpha\.2\+\)/m)
+    assert.match(text, /^next upgrade the kernel binary to 0\.3\.0 \(dsh-rdm 0\.3\.0\+\)/m)
     assert.ok(text.split('\n').length <= 6, 'error receipt stays bounded to 6 lines')
     assertReceiptLines(text)
     passed += 1
