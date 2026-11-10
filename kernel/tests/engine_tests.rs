@@ -261,7 +261,8 @@ async fn pause_then_resume_preserves_bytes() {
     assert!(part_bytes > 0);
 
     let resumed = control(&kernel, &view.id, "resume").await;
-    assert_eq!(resumed.status, Status::Queued);
+    // The engine may start (Probing/Running) before the control reply is observed.
+    assert!(matches!(resumed.status, Status::Queued | Status::Probing | Status::Running), "resume accepted: {:?}", resumed.status);
     let view = wait_task(&kernel, &view.id, 60_000).await;
     assert_eq!(view.status, Status::Completed, "{:?}", view.error);
     assert!(view.resumed_chunks > 0, "expected resumed chunks");
@@ -314,7 +315,8 @@ async fn changed_etag_rejects_resume_state() {
 
     fixture.set_etag("\"v2-changed\"");
     let resumed = control(&kernel, &view.id, "resume").await;
-    assert_eq!(resumed.status, Status::Queued);
+    // The engine may start (Probing/Running) before the control reply is observed.
+    assert!(matches!(resumed.status, Status::Queued | Status::Probing | Status::Running), "resume accepted: {:?}", resumed.status);
     let view = wait_task(&kernel, &view.id, 60_000).await;
     assert_eq!(view.status, Status::Completed, "{:?}", view.error);
     assert_eq!(view.resumed_chunks, 0, "changed validators must restart");

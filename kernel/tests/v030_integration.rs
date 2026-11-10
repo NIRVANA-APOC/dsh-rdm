@@ -303,7 +303,8 @@ async fn resume_accepts_a_volatile_final_url_from_a_legacy_020_state() {
     write_state(&suffixed(&path, ".part.json"), &state);
 
     let resumed = control(&kernel, &id, "resume").await;
-    assert_eq!(resumed.status, Status::Queued);
+    // The engine may start (Probing/Running) before the control reply is observed.
+    assert!(matches!(resumed.status, Status::Queued | Status::Probing | Status::Running | Status::Paused), "resume accepted: {:?}", resumed.status);
     let view = wait_task(&kernel, &id, 60_000).await;
     assert_eq!(view.status, Status::Completed, "{:?}", view.error);
     assert!(view.resumed_bytes > 0, "the legacy state must be adopted: {view:?}");
