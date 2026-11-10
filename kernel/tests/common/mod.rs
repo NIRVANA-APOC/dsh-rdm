@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -44,6 +44,12 @@ pub struct Shared {
     pub active: AtomicUsize,
     pub max_active: AtomicUsize,
     pub extra_headers: Mutex<Vec<(String, String)>>,
+    /// When non-zero: once this many bytes have been served through ranged 206
+    /// responses, later ranged GETs ignore `Range` and answer 200 with the full
+    /// body (RFC 9110 §14.2: a server may ignore Range; also what an If-Range
+    /// mismatch looks like). 0 disables the behaviour.
+    pub ignore_range_after_bytes: AtomicU64,
+    pub range_served_bytes: AtomicU64,
 }
 
 pub struct Fixture {
@@ -73,6 +79,8 @@ impl Fixture {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
             extra_headers: Mutex::new(Vec::new()),
+            ignore_range_after_bytes: AtomicU64::new(0),
+            range_served_bytes: AtomicU64::new(0),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let accept_shared = Arc::clone(&shared);
@@ -134,6 +142,14 @@ impl Fixture {
 
     pub fn max_active(&self) -> usize {
         self.shared.max_active.load(Ordering::SeqCst)
+    }
+
+    /// Answer ranged GETs with 200 (full body) once this many bytes have been
+    /// served through 206 responses; 0 disables. Simulates a server/edge that
+    /// stops honouring Range mid-transfer (the t_c88d0535089afb3c stall).
+    pub fn set_ignore_range_after_bytes(&self, bytes: u64) {
+        self.shared.ignore_range_after_bytes.store(bytes, Ordering::SeqCst);
+        self.shared.range_served_bytes.store(0, Ordering::SeqCst);
     }
 
     /// Add a static response header to every 200/206 response (checksum,
@@ -277,15 +293,21 @@ fn handle(stream: &mut TcpStream, shared: &Arc<Shared>) -> std::io::Result<()> {
     let range = request.headers.get("range").cloned().filter(|_| supports);
     if let Some(range) = range {
         shared.range_requests.fetch_add(1, Ordering::SeqCst);
-        let Some((start, end_inclusive)) = parse_range(&range, total) else {
-            headers.push(("Content-Range".to_string(), format!("bytes */{total}")));
-            return write_response(stream, "416 Range Not Satisfiable", &headers, b"");
-        };
-        let len = end_inclusive - start + 1;
-        headers.push(("Content-Range".to_string(), format!("bytes {start}-{end_inclusive}/{total}")));
-        headers.push(("Content-Length".to_string(), len.to_string()));
-        let body = shared.bytes[start as usize..=(end_inclusive as usize)].to_vec();
-        return write_chunked_response(stream, "206 Partial Content", &headers, &body, shared);
+        let ignore_after = shared.ignore_range_after_bytes.load(Ordering::SeqCst);
+        let ignored = ignore_after > 0 && shared.range_served_bytes.load(Ordering::SeqCst) >= ignore_after;
+        if !ignored {
+            let Some((start, end_inclusive)) = parse_range(&range, total) else {
+                headers.push(("Content-Range".to_string(), format!("bytes */{total}")));
+                return write_response(stream, "416 Range Not Satisfiable", &headers, b"");
+            };
+            let len = end_inclusive - start + 1;
+            headers.push(("Content-Range".to_string(), format!("bytes {start}-{end_inclusive}/{total}")));
+            headers.push(("Content-Length".to_string(), len.to_string()));
+            let body = shared.bytes[start as usize..=(end_inclusive as usize)].to_vec();
+            shared.range_served_bytes.fetch_add(len, Ordering::SeqCst);
+            return write_chunked_response(stream, "206 Partial Content", &headers, &body, shared);
+        }
+        // Fall through: the server ignores Range and sends the whole object.
     }
 
     headers.push(("Content-Length".to_string(), total.to_string()));

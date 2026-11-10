@@ -2,6 +2,7 @@
 //! rules, chunk geometry, scheduler, protocol defaults).
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rdm_kernel::filename;
@@ -131,7 +132,7 @@ fn chunk_plan_geometry() {
 #[test]
 fn scheduler_merges_completed_ranges_incrementally() {
     use rdm_kernel::scheduler::Scheduler;
-    let scheduler = Scheduler::new(16, Vec::new(), vec![(0, 16)], 4);
+    let scheduler = Arc::new(Scheduler::new(16, Vec::new(), vec![(0, 16)], 4));
     let first = scheduler.claim_with(0, 0).expect("claim 1");
     let second = scheduler.claim_with(0, 0).expect("claim 2");
     let third = scheduler.claim_with(0, 0).expect("claim 3");
@@ -179,14 +180,18 @@ fn resume_state_ranges_are_validated_and_merged() {
 
 #[test]
 fn scheduler_subdivides_and_merges() {
-    let scheduler = Scheduler::new(10, Vec::new(), vec![(0, 10)], 4);
+    let scheduler = Arc::new(Scheduler::new(10, Vec::new(), vec![(0, 10)], 4));
     let mut ranges = Vec::new();
+    // Complete each claim: a claim dropped without `complete` is now re-queued
+    // by `Claim::drop`, so a bare drain loop would never terminate.
     while let Some(claim) = scheduler.claim_with(usize::MAX, 0) {
         ranges.push((claim.start, claim.end));
+        let len = claim.len();
+        scheduler.complete(claim, len);
     }
     assert_eq!(ranges, vec![(0, 4), (4, 8), (8, 10)]);
 
-    let scheduler = Scheduler::new(8 * MB, Vec::new(), vec![(0, 8 * MB)], MB);
+    let scheduler = Arc::new(Scheduler::new(8 * MB, Vec::new(), vec![(0, 8 * MB)], MB));
     let first = scheduler.claim_with(2, COALESCE_MAX_BYTES).unwrap();
     assert_eq!((first.start, first.end), (0, 4 * MB));
     let second = scheduler.claim_with(2, COALESCE_MAX_BYTES).unwrap();
@@ -195,7 +200,7 @@ fn scheduler_subdivides_and_merges() {
 
 #[test]
 fn scheduler_steals_the_tail() {
-    let scheduler = Scheduler::new(4 * MB, Vec::new(), vec![(0, 4 * MB)], 4 * MB);
+    let scheduler = Arc::new(Scheduler::new(4 * MB, Vec::new(), vec![(0, 4 * MB)], 4 * MB));
     let owner = scheduler.claim_with(usize::MAX, 0).unwrap();
     assert!(owner.len() >= MIN_STEAL_REMAINING);
     owner.update_progress(MB);
@@ -210,6 +215,46 @@ fn scheduler_steals_the_tail() {
     assert_eq!((suffix.start, suffix.end), (target, 4 * MB));
     assert_eq!(scheduler.completed_ranges(), vec![(0, target)]);
     assert!(COALESCE_MIN_BYTES > MB);
+}
+
+#[test]
+fn scheduler_requeues_claim_dropped_by_a_dead_worker() {
+    // Regression for the 2026-11-10 incident (t_c88d0535089afb3c): a worker task
+    // that ends without calling `complete` used to strand its claim in `active`
+    // forever, so the engine spun at "running" with zero connections and never
+    // issued the missing range again. `Claim::drop` now re-queues it.
+    let scheduler = Arc::new(Scheduler::new(32, Vec::new(), vec![(0, 32)], 8));
+    let dead = scheduler.claim_with(usize::MAX, 0).expect("claim");
+    assert_eq!((dead.start, dead.end), (0, 8));
+    dead.update_progress(3);
+    drop(dead); // worker panicked / was cancelled while holding the claim
+    assert_eq!(scheduler.abandoned(), 1);
+    // The whole range is re-queued, not just the suffix: progress covers bytes
+    // that may still sit in the dead task's unflushed file buffer.
+    assert_eq!(scheduler.done_bytes(), 0);
+    assert!(scheduler.completed_ranges().is_empty());
+    let successor = scheduler.claim_with(usize::MAX, 0).expect("re-queued range");
+    assert_eq!((successor.start, successor.end), (0, 8));
+    let successor_len = successor.len();
+    scheduler.complete(successor, successor_len);
+    while let Some(claim) = scheduler.claim_with(usize::MAX, 0) {
+        let len = claim.len();
+        scheduler.complete(claim, len);
+    }
+    assert!(scheduler.is_finished(), "all bytes must be accounted for");
+    assert_eq!(scheduler.done_bytes(), 32);
+}
+
+#[test]
+fn scheduler_completing_a_claim_disarms_its_drop() {
+    // `complete` must not let the claim's `Drop` re-queue it a second time.
+    let scheduler = Arc::new(Scheduler::new(8, Vec::new(), vec![(0, 8)], 4));
+    let claim = scheduler.claim_with(usize::MAX, 0).expect("claim");
+    let len = claim.len();
+    scheduler.complete(claim, len); // claim dropped inside complete
+    assert_eq!(scheduler.abandoned(), 0);
+    assert_eq!(scheduler.done_bytes(), len);
+    assert!(scheduler.completed_ranges() == vec![(0, len)]);
 }
 
 // ---------------------------------------------------------------------------

@@ -142,6 +142,55 @@ async fn no_range_server_uses_single_stream() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn range_ignored_before_any_progress_downgrades_to_single_stream() {
+    // The probe proves ranges work, then the transfer request is answered 200
+    // (server ignored Range / If-Range mismatch). With nothing settled yet the
+    // engine must fall back to a single stream instead of hanging.
+    let bytes = payload(1024 * 1024);
+    let fixture = Fixture::start(bytes.clone());
+    fixture.set_ignore_range_after_bytes(1); // probe's 206 sample already exceeds it
+    let dir = TempDir::new("downgrade");
+    let kernel = kernel(&dir);
+    let view = start_task(&kernel, download_params(&fixture, &dir, json!({"connections": 2}))).await;
+    let view = wait_task(&kernel, &view.id, 30_000).await;
+    assert_eq!(view.status, Status::Completed, "{:?}", view.error);
+    assert_eq!(std::fs::read(view.path.clone().expect("path")).unwrap(), bytes);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn range_ignored_mid_transfer_fails_resumably_instead_of_hanging() {
+    // Regression for t_c88d0535089afb3c (2026-11-10): a single mid-transfer 200
+    // left the claim stranded in `Scheduler::active`; the downgrade flag was
+    // invisible to the parked engine loop, so the task spun at "running" with
+    // zero connections and had to be paused+resumed by hand. Now it must fail
+    // with a resumable `remote_changed` error and resume to completion.
+    let bytes = payload(4 * 1024 * 1024);
+    let fixture = Fixture::start(bytes.clone());
+    fixture.set_ignore_range_after_bytes(1024 * 1024);
+    let dir = TempDir::new("midrange");
+    let kernel = kernel(&dir);
+    let params = download_params(&fixture, &dir, json!({"connections": 4, "maxConnections": 8, "chunkSizeBytes": 262144}));
+    let started = start_task(&kernel, params).await;
+    let view = wait_task(&kernel, &started.id, 30_000).await;
+    assert_eq!(view.status, Status::Failed, "expected a resumable failure, got {view:?}");
+    let code = view.error.as_ref().map(|error| error.code.clone());
+    assert_eq!(code.as_deref(), Some("remote_changed"), "{:?}", view.error);
+    // The partial .part and its resume state must survive so resume can finish.
+    let target = PathBuf::from(view.path.clone().expect("path"));
+    assert!(suffixed(&target, ".part").exists(), "partial file removed");
+    assert!(suffixed(&target, ".part.json").exists(), "resume state removed");
+
+    // Once the server honours Range again, resume must complete with the full,
+    // byte-identical object (this is exactly how the 98 % stall was recovered).
+    fixture.set_ignore_range_after_bytes(0);
+    let _ = control(&kernel, &started.id, "resume").await;
+    let view = wait_task(&kernel, &started.id, 60_000).await;
+    assert_eq!(view.status, Status::Completed, "{:?}", view.error);
+    assert!(view.resumed_bytes > 0, "resume must reuse the completed chunks");
+    assert_eq!(std::fs::read(view.path.clone().expect("path")).unwrap(), bytes);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn follows_redirects() {
     let bytes = payload(256 * 1024);
     let fixture = Fixture::start(bytes.clone());

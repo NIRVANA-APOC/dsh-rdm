@@ -62,9 +62,21 @@ struct Shared {
     max_attempts: u32,
     started: Instant,
 }
+
+/// How many worker tasks may end unexpectedly (panic/cancel) before the engine
+/// gives up and fails the task instead of re-queueing their claims forever.
+const MAX_WORKER_ABANDONS: u64 = 3;
 impl Shared {
     fn stopped(&self) -> bool {
-        self.control.is_stopped() || self.failure.lock().map(|slot| slot.is_some()).unwrap_or(false)
+        // `downgrade` is a terminal decision, not just a note: the engine falls
+        // back to a single stream. It must be part of `stopped()` so the parked
+        // engine loop and every worker observe it. Without this the 200-ignored-
+        // Range path abandoned the in-flight claim and left the engine waiting
+        // forever on its JoinHandles with zero connections (t_c88d0535089afb3c,
+        // 2026-11-10, stalled at 98 %).
+        self.control.is_stopped()
+            || self.downgrade.load(Ordering::SeqCst)
+            || self.failure.lock().map(|slot| slot.is_some()).unwrap_or(false)
     }
     fn has_failure(&self) -> bool {
         self.failure.lock().map(|slot| slot.is_some()).unwrap_or(false)
@@ -173,7 +185,32 @@ impl Shared {
         let mut handles = self.worker_handles.lock().expect("worker handles mutex poisoned");
         for _ in 0..count {
             let shared = Arc::clone(self);
-            handles.push(tokio::spawn(async move { worker(shared).await }));
+            // Run the worker body in an inner task so that a panic or cancel is
+            // observable instead of silently killing this handle: report it, but
+            // keep the transfer alive. `Claim::drop` has already handed the
+            // abandoned claim's range back to the scheduler, so the remaining
+            // workers pick it up and the download still completes. This is the
+            // same failure signature as the 20261110 downgrade stall
+            // (t_c88d0535089afb3c): one claim stranded in `active` with a live
+            // engine and zero connections.
+            handles.push(tokio::spawn(async move {
+                let inner = Arc::clone(&shared);
+                match tokio::spawn(async move { worker(inner).await }).await {
+                    Ok(()) => {}
+                    Err(error) => {
+                        let detail = worker_exit_detail(error);
+                        let message = format!("worker task ended unexpectedly ({detail}); its unfinished range was re-queued");
+                        klog!(warn, "{}", message);
+                        shared.task.add_event("info", Some(message), None, None, None);
+                        let abandoned = shared.scheduler.abandoned();
+                        if abandoned >= MAX_WORKER_ABANDONS {
+                            shared.fail(EngineError::internal(format!(
+                                "{abandoned} worker tasks ended unexpectedly; aborting instead of re-queueing forever"
+                            )));
+                        }
+                    }
+                }
+            }));
         }
         drop(handles);
         self.wake.notify_waiters();
@@ -543,6 +580,22 @@ async fn controller_loop(shared: Arc<Shared>, done: Arc<Notify>) {
     }
     shared.task.set_controller_target(state.target());
 }
+/// Human-readable cause of a worker task ending without returning (panic or
+/// cancellation), for the task timeline. `JoinError`'s Display only says
+/// "task panicked", so recover the payload the panic hook would have printed.
+fn worker_exit_detail(error: tokio::task::JoinError) -> String {
+    if !error.is_panic() {
+        return "worker task cancelled".to_string();
+    }
+    let payload = error.into_panic();
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "panic without a message payload".to_string()
+    }
+}
 async fn worker(shared: Arc<Shared>) {
     let mut file = match tokio::fs::OpenOptions::new().write(true).open(&shared.part).await {
         Ok(file) => file,
@@ -603,7 +656,7 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
     let mut written: u64 = 0;
     let mut attempt: u32 = 0;
     loop {
-        if shared.control.stop_kind().is_some() {
+        if shared.stopped() {
             shared.scheduler.complete(claim, written);
             return ClaimOutcome::Stopped;
         }
@@ -630,7 +683,7 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         let end_inclusive = claim.end - 1;
         let Some(source) = shared.pool.acquire(start) else {
             drop(slot);
-            if shared.control.stop_kind().is_some() {
+            if shared.stopped() {
                 shared.scheduler.complete(claim, written);
                 return ClaimOutcome::Stopped;
             }
@@ -736,7 +789,20 @@ async fn download_claim(shared: &Arc<Shared>, file: &mut tokio::fs::File, claim:
         }
         drop(slot);
         if status == StatusCode::OK {
+            // The server ignored our Range (or If-Range no longer matched). The
+            // body we are holding is the whole object, not this claim's range, so
+            // it is dropped here. With bytes already on disk this is a
+            // mid-transfer change: keep the .part and fail resumably instead of
+            // silently discarding 98 % of a transfer via the single-stream
+            // fallback (single::run deletes the resume state and starts over).
+            // Only a transfer that has not settled anything falls back.
             shared.pool.cancel(source.id);
+            if shared.scheduler.done_bytes() > 0 {
+                shared.fail(EngineError::remote_changed(format!(
+                    "server answered 200 instead of 206 for bytes {start}-{end_inclusive} after part of the file was downloaded"
+                )));
+                return ClaimOutcome::Failed;
+            }
             return ClaimOutcome::Downgrade;
         }
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
