@@ -9,9 +9,78 @@
 `node scripts/check-release.mjs` 会检查 package/kernel 版本一致性和对应章节是否存在。
 
 从 **0.2.2** 起，常驻内核与插件包共用同一版本号。当前合并树为
-**0.3.1**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
-ready/initialize/stats 帧都报告 `0.3.1`。历史录制保留二进制实际写入的
+**0.3.3**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
+ready/initialize/stats 帧都报告 `0.3.3`。历史录制保留二进制实际写入的
 版本串（0.2.1 内核 = `1.1.0`；版本统一前的 0.2.2 构建 = `1.2.0`）。
+
+## [0.3.3] — 2026-11-10
+
+0.3.3 补丁版：移除下载界面里“用户操作下载记录时通知对应会话 Agent”的行为，
+并移除右侧边栏的会话级“下载”标签页；人类界面只剩左侧下载工作台与右下角
+活跃下载弹窗。下载策略节与 Agent 工作流对齐：策略节移入工具指引区、按工具
+可见性渲染，并声明静默面板操作、破坏性操作需用户授权、`rdm_probe` 镜像作为
+`rdm_download` 源三条事实。用户在下载工作台操作记录时，宿主只执行该操作并把
+结果渲染回界面，不再向所属会话的 Agent 投递提示；浏览器路由的 `control` 不再
+接受 `notify`、结果不再返回 `notified`，宿主 catalog 也不再暴露任何 Agent
+通知面。协议仍为 **2**。
+
+### 变更
+- **移除“UI 操作下载记录 → 通知会话 Agent”的行为。** 客户端不再在 `control`
+  请求里发送 `notify`，也不再显示“已告知对应会话的 Agent”文案；宿主
+  `control` 路由删除了活跃 Agent 判断、操作前任务快照、
+  `sessionController.prompt` 投递与 `notified` 结果字段，
+  `SessionCatalog.notify` 一并移除。控制操作仍逐项执行并返回结果，失败项也
+  照旧逐项报错。
+- 同步清理 `record.agentNotified` locale 文案，以及 host-api 测试和文档中
+  对通知门控、移除前通知快照的描述。
+- **系统提示词与 Agent 工作流对齐。** `dsh-rdm:downloads` 策略节从
+  `DEPLOYMENT_PERSONA_SUFFIX + 1`（环境后缀之后）移到工具指引区的
+  `MCP_SERVERS + 1`，并改为按当前 Agent/步骤是否可见 `rdm_download` 决定是否
+  渲染（工具被限制时不再误导模型）；文案补充静默面板操作、破坏性操作需用户
+  授权、`rdm_probe` 镜像作为 `sources` 三条工作流事实（111 → 160 words）。
+  研究结论与后续修复项（receipt 与 canonical `hint` 的偏差、`rdm_history`
+  样本对模型不可见、`timeoutMs` 未声明等）见
+  [docs/research/agent-prompt-and-workflow.md](docs/research/agent-prompt-and-workflow.md)。
+- **移除右侧边栏的会话级“下载”界面。** 客户端不再注册
+  `dsh-rdm/downloads` 原生 tab（tab type、guide、body/title 槽位），也不再
+  需要 `@deepseek-ai/dsh-client-ui-sidebar-right` 注入；删除
+  `src/client/native.ts`、`src/client/session-tab.tsx`、`src/client/wave.tsx`、
+  session-scoped 轮询与波形数据、`reveal`/`stop` 抽屉动作及其 locale/CSS，
+  并同步更新 README、架构文档与截图（`review-session-*` 截图随界面移除）。
+  `lib/client.js` 由 235,036 B 缩到 204,807 B（−12.9%）。
+
+### 验证
+- `tests/host-api.test.mjs` **22/22**；`tests/client-activation.test.mjs`
+  **8/8**；`tests/session-catalog-open.test.mjs` **13/13**；
+  `tests/tools-receipts.test.mjs` **56/56**。
+- `node scripts/check-release.mjs` **PASS**（package = kernel = `0.3.3`）；
+  `tsc --noEmit` 无新增报错（既有 10 个报错中有 1 个位于本次删除的 `session-tab.tsx`，删除后为 9 个）。
+- 构建产物 `lib/index.js` / `lib/client.js` 由 `bash scripts/dev-build.sh all`
+  重建；两个产物中都不再包含 `notified` / `agentNotified` 或通知提示文本。
+
+## [0.3.2] — 2026-11-10
+
+0.3.2 补丁版：修复活跃下载弹窗“打开下载页”点击无响应，以及“打开所在目录 /
+打开文件”在无图形桌面的远程宿主上无任何可见反馈；弹窗移到右下角并按下载逐行
+展示文件名，成功/失败都会给出可见提示。协议仍为 **2**。
+
+### 修复
+- **活跃下载弹窗的“打开下载页”点击无响应。** 0.3.1 在客户端 `apply` 阶段就把
+  `layout` 服务缓存成了常量；DSH 页面在同一次启动里并发加载所有客户端条目，
+  `layout` 所在的条目此时往往还没 `active`，`ctx.get` 返回 `undefined` 并永久
+  固化，按钮于是静默失效。改为在点击时解析服务，并在客户端清单里声明
+  `@deepseek-ai/dsh-client-ui-layout` 组合依赖。
+- **“打开所在目录 / 打开文件”点击无视觉反馈。** 宿主此前把 `spawn` 的异步
+  `error` 吞掉并总是返回 `opened:true`，无图形桌面的远程/无头部署里
+  `xdg-open` 什么都没打开，界面上也没有任何提示。宿主现在先检查桌面能力并等待
+  启动结果，不可用时返回 `unsupported`；客户端把成功/失败渲染成可见提示条，
+  失败时给出原因与“复制路径”退路。
+
+### 变更
+- **README 截图全部换成当前版本的原生 DSH 截图**（中文与英文界面各一套；`assets/screenshots/review-*` 与安装页截图均重新从真实运行的 DSH Web GUI 截取，弹窗截图体现右下角位置与“每个下载一行”）。
+- **活跃下载弹窗移到右下角**（原右上角），不再遮住顶部导航与设置入口。
+- **活跃下载弹窗改为“每个下载一行”**：标题是文件名；所属会话只作为次要
+  元信息，避免弹窗把同一会话的多个文件显示成一个会话标题。
 
 ## [0.3.1] — 2026-11-10
 

@@ -6,14 +6,102 @@ All notable changes to `dsh-rdm` are recorded here. The format follows
 
 **Release/tag policy:** every tag (`vX.Y.Z`) must ship with a matching
 `[X.Y.Z]` section in this file, added in the same change that bumps the version
-or creates the tag. There is no release without a changelog entry; run\n`node scripts/check-release.mjs` to enforce it (checks package/kernel version\nequality and the matching `[X.Y.Z]` section).
+or creates the tag. There is no release without a changelog entry; run
+`node scripts/check-release.mjs` to enforce it (checks package/kernel version
+equality and the matching `[X.Y.Z]` section).
 
 Starting with **0.2.2**, the resident kernel and the plugin package share one
-version number. The current merged tree is **0.3.1** (protocol 2):
+version number. The current merged tree is **0.3.3** (protocol 2):
 `package.json`, `kernel/Cargo.toml` and the kernel's ready/initialize/stats
-frames all report `0.3.1`. Historical recordings keep the strings their
+frames all report `0.3.3`. Historical recordings keep the strings their
 binaries actually wrote (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2`
 builds = `1.2.0`).
+
+## [0.3.3] — 2026-11-10
+
+0.3.3 is a patch release that removes the "notify the owning session agent when a
+user acts on a download record in the download UI" behavior, removes the
+session-scoped "Downloads" tab from the right sidebar (leaving the workbench
+page and the active-download popup as the two human surfaces), and aligns the
+download policy section with the agent workflow: the section moves into the
+tool-guidance band, renders only while the rdm_* tools are visible, and states
+the post-0.3.3 facts (silent panel actions, user consent for destructive verbs,
+`rdm_probe` mirrors as `rdm_download` sources). Acting on a record now only
+performs the action and renders the result; the host no longer posts an
+`[dsh-rdm] The user ...` prompt to the owning agent, the `control` route no
+longer accepts `notify` or returns `notified`, and the catalog no longer exposes
+an agent notification surface. Protocol stays **2**.
+
+### Changed
+- **Removed the UI-action → session-agent notice.** The client no longer sends
+  `notify` on `control` requests and no longer renders the "the session agent was
+  told..." copy; the host route dropped the live-agent gate, the pre-action task
+  snapshot, the `sessionController.prompt` delivery and the `notified` result
+  field, and `SessionCatalog.notify` is gone. Control actions still execute per
+  id with per-id outcomes and failures.
+- Cleaned up the `record.agentNotified` locale strings, the host-api tests and
+  the docs that described notification gating and pre-remove notification
+  snapshots.
+- **System prompt and agent workflow aligned.** The `dsh-rdm:downloads` policy
+  section moved from `DEPLOYMENT_PERSONA_SUFFIX + 1` (after the environment
+  suffix) to the tool-guidance band at `MCP_SERVERS + 1`, and now renders only
+  while `rdm_download` is visible for the current agent/step, so a restricted
+  agent is not told to call tools it does not have. The text gained the silent
+  panel actions, destructive-verb consent, and `rdm_probe`-mirror→`sources`
+  workflow facts (111 → 160 words). Findings and follow-ups (canonical `hint`
+  vs rendered receipt drift, `rdm_history` samples invisible to the model,
+  missing `timeoutMs`, …) are in
+  [docs/research/agent-prompt-and-workflow.md](docs/research/agent-prompt-and-workflow.md).
+- **Removed the session-scoped "Downloads" tab from the right sidebar.** The
+  client no longer registers the `dsh-rdm/downloads` native tab (tab type,
+  guide, body/title slots) and no longer needs
+  `@deepseek-ai/dsh-client-ui-sidebar-right` injected. `native.ts`,
+  `session-tab.tsx`, `wave.tsx`, the session-scoped poll and pulse data, the
+  `reveal`/`stop` drawer actions and their locale/CSS are gone; README,
+  architecture docs and screenshots were updated (the `review-session-*`
+  screenshots are removed with the surface). `lib/client.js` shrank from
+  235,036 B to 204,807 B (−12.9%).
+
+### Verified
+- `tests/host-api.test.mjs` **22/22**; `tests/client-activation.test.mjs`
+  **8/8**; `tests/session-catalog-open.test.mjs` **13/13**;
+  `tests/tools-receipts.test.mjs` **56/56**.
+- `node scripts/check-release.mjs` **PASS** (package = kernel = `0.3.3`);
+  `tsc --noEmit` has no new errors (one of the 10 pre-existing errors lived in
+  the deleted `session-tab.tsx`, so the count is now 9).
+- `lib/index.js` / `lib/client.js` rebuilt with `bash scripts/dev-build.sh all`;
+  neither bundle contains `notified` / `agentNotified` or the notice prose.
+
+## [0.3.2] — 2026-11-10
+
+0.3.2 is a patch release: it fixes the active-download popup's dead "Open
+downloads" action and the silent open file/folder action on remote hosts
+without a graphical desktop, moves the popup to the bottom-right with one row
+per download titled by file name, and renders success/failure as visible
+feedback. Protocol stays **2**.
+
+### Fixed
+- **The popup's "Open downloads" button did nothing.** 0.3.1 captured the
+  optional `layout` service during client `apply`; DSH starts every client entry
+  in the same boot pass, so the layout package's fiber is usually not `active`
+  yet at that point. `ctx.get` returned `undefined`, the value was frozen, and
+  the button silently stayed a no-op. The service is now resolved at click time,
+  and `@deepseek-ai/dsh-client-ui-layout` is declared in the client manifest.
+- **"Open file / open containing folder" gave no visible response.** The host
+  swallowed the asynchronous `spawn` error and always returned `opened:true`,
+  so on a remote/headless deployment without a graphical desktop `xdg-open`
+  opened nothing while the UI said nothing. The host now checks desktop
+  capability and awaits the launch result, answering `unsupported` when it
+  cannot open; the client renders the success/failure as a visible notice with
+  the reason and a copy-path fallback on failure.
+
+### Changed
+- **Every README screenshot is now a native capture of the current version** (one set per UI language; `assets/screenshots/review-*` and the install-page shot were re-captured from a real running DSH Web GUI, and the popup shot shows the bottom-right placement with one row per download).
+- **The active-download popup moved to the bottom-right corner** (was
+  top-right), so it no longer covers the top navigation and settings entry.
+- **The popup is now one row per download**, titled by file name; the owning
+  session appears only as secondary metadata instead of standing in for the
+  download title.
 
 ## [0.3.1] — 2026-11-10
 

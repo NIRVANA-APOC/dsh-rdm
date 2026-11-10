@@ -2003,7 +2003,7 @@ export function createRdmTools(
       name: 'rdm_wait',
       description:
         'Wait until every given task is terminal (completed/failed/cancelled) or timeoutSec expires. ' +
-        'Returns the final task views and timedOut; prefer it over polling rdm_tasks.',
+        'Returns the final task views and timedOut.',
       parameters: {
         taskIds: {
           type: 'array',

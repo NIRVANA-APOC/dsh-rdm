@@ -3,15 +3,14 @@
 [English](README.en.md) | [简体中文](README.md)
 
 **An agent-native downloader for DeepSeek Harness.** One resident Rust kernel,
-seven model-facing tools that return decision-grade facts, and three human
-surfaces: a workspace/session download workbench in the left sidebar, a
-session-scoped tab in the right sidebar, and a top-right popup that appears only
-while downloads are running.
+seven model-facing tools that return decision-grade facts, and two human
+surfaces: a workspace/session download workbench in the left sidebar, and a
+bottom-right popup that appears only while downloads are running.
 
 The agent operates. The human reviews — and can pause, delete, open or filter
 without leaving the panel.
 
-![Download workbench — light](assets/screenshots/review-light.png)
+![Download workbench — light](assets/screenshots/review-light-en.png)
 
 ## Install
 
@@ -24,7 +23,7 @@ This project is published to npm: open DSH's Plugins page, choose **Add plugin**
 enter `dsh-rdm`, and click **Install**. The install source only affects download
 speed, not package contents; in mainland China you can pick the mainland mirror.
 
-![Install dsh-rdm from the DSH plugin page](assets/screenshots/install-dsh-rdm.png)
+![Install dsh-rdm from the DSH plugin page](assets/screenshots/install-dsh-rdm-en.png)
 
 ### Other ways to install
 
@@ -48,8 +47,8 @@ plugin_manager install_bundle target=<absolute path to dsh-rdm>
 ```
 
 After installing, agents see `rdm_*`; the left sidebar gains the downloads
-workbench, the right sidebar guide gains a “Downloads” tab, and the frame gains
-the active-download popup (it stays hidden until a download runs). The host half
+workbench and the frame gains the active-download popup (it stays hidden until a
+download runs). The host half
 reloads with the plugin row; the client surfaces need one page refresh before
 they appear (this desktop build exposes no reload menu item). The browser route
 (`POST /api/dsh-rdm/api`) is documented in
@@ -100,7 +99,7 @@ Full method, per-run data and reproduction scripts:
 A downloader used by a model is not a GUI that happens to have an API. The agent
 has to answer, in as few model steps as possible: *is this URL usable, how should
 I fetch it, what is happening now, should I intervene, and can I trust the
-result?* `dsh-rdm` 0.3.1 is built around those questions.
+result?* `dsh-rdm` 0.3.3 is built around those questions.
 
 * **Decision-grade probe.** `rdm_probe` returns a full server-fact record —
   proven range support, validators and RFC 9110 resume safety, signed-URL
@@ -166,10 +165,12 @@ result?* `dsh-rdm` 0.3.1 is built around those questions.
 * **Findable records.** `rdm_search` finds existing downloads across every
   session by keyword (file name, URL, host, path, id, session title) or by exact
   task id; every row also exposes a copyable download id for the human.
-* **One policy, stated once.** A short system-prompt section tells every agent
-  to route downloads through `rdm_*`; the tool definitions stay small (0.2.0 cut
-  the first-turn schema cost 7241 → 4966 chars, −31 % vs 0.1.2; the receipt test
-  guards the seven-tool surface under 7241 chars, measured 6909).
+* **One policy, stated once.** A short, tool-aware system-prompt section tells
+  every agent to route downloads through `rdm_*` and states the 0.3.3 workflow
+  rules (silent panel actions, user consent for destructive verbs); the tool
+  definitions stay small — the receipt test guards the seven-tool surface under
+  7,241 chars (measured 6,925). The prompt/workflow research note is
+  [docs/research/agent-prompt-and-workflow.md](docs/research/agent-prompt-and-workflow.md).
 
 ## The three review surfaces
 
@@ -182,22 +183,18 @@ result?* `dsh-rdm` 0.3.1 is built around those questions.
   pause/resume/open-file/open-folder/delete actions and an evidence drawer
   (request chain, server facts, timing, worker plan, resume state, verification,
   bounded event log).
-* **Session review** (right sidebar tab, “Downloads”): the same record language
-  and actions, filtered to the active session; no composer or batch toolbar.
-* **Active-download popup** (top-right, frame-wide): one row per session with
-  running work — progress, speed and connection totals — collapsed to a pill or
-  expanded. It does not exist when nothing is downloading.
-* **Evidence language**: a **throughput pulse** (client-sampled, honestly
-  labelled) and a **verification seal** (expected vs actual hash, only when a
-  hash was compared). Unknowns render `—`.
+* **Active-download popup** (bottom-right, frame-wide): one row per running
+  download, titled by file name (the owning session is secondary metadata) —
+  progress, speed and connection totals — collapsed to a pill or expanded. It
+  does not exist when nothing is downloading.
+* **Evidence language**: a **verification seal** (expected vs actual hash, only
+  when a hash was compared). Unknowns render `—`.
 
-![Session download review — dark](assets/screenshots/review-session-dark.png)
-
-![Active-download popup over a conversation](assets/screenshots/review-popup.png)
+![Active-download popup in the bottom-right corner over a conversation](assets/screenshots/review-popup-en.png)
 
 Batch selection with the composition toolbar:
 
-![Download workbench — batch selection](assets/screenshots/review-batch.png)
+![Download workbench — batch selection](assets/screenshots/review-batch-en.png)
 
 ## Tools
 
@@ -218,7 +215,7 @@ A search receipt:
 
 ```text
 search scope=all matches=2 total=14
-task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.1-win32-x64.zip" connections=12/16
+task t_9f3a1c2d5e6b7a80 state=running progress=42% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="dsh-rdm-0.3.3-win32-x64.zip" connections=12/16
 task t_1a2b3c4d5e6f7a80 state=completed progress=100% session="重构下载面板与进度弹窗" workspace="dsh-rdm" file="design-critique-notes.pdf" connections=0/0
 ```
 
@@ -239,7 +236,7 @@ next rdm_download url=https://cdn.example.com/app.zip?sig=<redacted>
 A task list receipt:
 
 ```text
-kernel state=running version=0.3.1 pid=4212
+kernel state=running version=0.3.3 pid=4212
 scope=session count=1
 aggregate total=3 active=1 paused=0 failed=1 completed=1 bytes=2.5GiB now=12.4MiB/s w5=12MiB/s w30=11.5MiB/s w300=- risk=0
 t_9f3a1c2d5e6b7a80 running 68% 1.6/2.4GiB 12.4MiB/s w5=12.0MiB/s eta=1m12s(high) workers=8/8 range=bytes resume=strong name=ubuntu-24.04.iso
@@ -256,7 +253,7 @@ range 0..300 of 1907
 
 ## Kernel intelligence
 
-The Rust kernel (`rdm-kernel` 0.3.1, protocol 2) is a resident child process; it
+The Rust kernel (`rdm-kernel` 0.3.3, protocol 2) is a resident child process; it
 does not listen on a port, starts lazily and stays warm.
 
 * **Server facts** — manual redirect chain (up to 8 hops), proven range support
@@ -323,11 +320,15 @@ the stage/version record is
 Release notes live in [CHANGELOG.en.md](CHANGELOG.en.md) with one section per tag;
 the same change must update both the version and this changelog. From 0.2.2 the
 kernel and plugin package share one version number (currently
-`0.3.1`, protocol 2); 0.3.0 merged the workbench/search work and the
-multi-source scheduling pass, and 0.3.1 fixes the client activation failure
-that took the whole harness page down. Historical recordings keep the strings
-their binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification 0.2.2
-builds = `1.2.0`).
+`0.3.3`, protocol 2); 0.3.0 merged the workbench/search work and the
+multi-source scheduling pass, 0.3.1 fixes the client activation failure
+that took the whole harness page down, and 0.3.2 is a patch release that
+repairs the popup's dead "Open downloads" action and the silent open
+file/folder action, moves the popup to the bottom-right with one row per
+download, and renders action feedback visibly; 0.3.3 removes the download-UI
+action notice to the owning session agent. Historical recordings keep the
+strings their binaries actually wrote (0.2.1 kernel = `1.1.0`, pre-unification
+0.2.2 builds = `1.2.0`).
 
 ## Verification
 
@@ -343,8 +344,8 @@ builds = `1.2.0`).
 * `node tests/tools-receipts.test.mjs` — receipt contract, policy-once,
   schema-cost guard, recoverable-error receipts.
 * `node tests/host-api.test.mjs` — browser-route v3 contract: catalog
-  enrichment/failure, batch control partial failures, live-agent notification
-  gating, pre-remove notification snapshot, `open` path resolution/rejection,
+  enrichment/failure, batch control partial failures, `open` path
+  resolution/rejection,
   catalog caches/single-flight, and an `apply()` wiring smoke.
 * `node node_modules/typescript/bin/tsc --noEmit` — strict TypeScript check of
   the host and client sources.
@@ -401,18 +402,17 @@ The measured QA report for the release lives in
 * The workbench composer starts a download with the plugin's configured
   defaults; connection count, headers and checksum are still agent-side
   parameters (`rdm_download`), not composer fields.
-* Pausing or deleting an unfinished download from the UI notifies the owning
-  agent only while that agent is live. A cold session is never resumed just to
-  read a UI click; the result reports `notified=false` instead.
 * Open-file / open-folder delegates to the host desktop's default handler
   (`explorer`, `open`, `xdg-open`) and requires the task record to still exist;
-  it does not embed a file viewer.
+  it does not embed a file viewer. A host without a graphical desktop (remote or
+  headless deployment) reports that clearly instead of pretending to open, and
+  offers the resolved path for copying.
 * Workspace and session titles come from the host's workspace registry and
   session log. A deployment without those services still renders the ledger,
   grouped by the short session id.
 * The active-download popup is frame-wide and intentionally overlays the
-  top-right corner while work is running; collapse it to a pill if it covers a
-  control.
+  bottom-right corner while work is running; collapse it to a pill if it covers
+  a control.
 * The five-platform prebuilt kernels are built by the release workflow on native
   runners; a local checkout only contains the current host's freshly built
   kernel until the workflow refreshes `bin/`.
@@ -447,9 +447,9 @@ publishing and retry semantics — is documented in
 
 The host half imports only Node built-ins (the schema library is vendored); the
 client half registers into `sidebar.panellist`, the keyed `main` slot, the
-frame-wide `shell.overlay` seat and the native right-sidebar tab seat, with host
-theme tokens only. The client is self-contained: the popup and the workbench
-share one poll of the browser route, and the session tab polls its own scope.
+frame-wide `shell.overlay` seat, with host theme tokens only. The client is
+self-contained: the popup and the workbench share one poll of the browser
+route.
 
 ## License
 

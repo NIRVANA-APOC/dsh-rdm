@@ -1,11 +1,10 @@
 // Wire and service types for the dsh-rdm client half.
 //
 // 0.2.0 protocol v2 (docs/design/0.2.0-agent-native.md §2) plus the client
-// services this plugin consumes: locale, slots, and — when the host profile
-// provides them — the native right Sidebar tab registry (`ctx.sidebarRightTabs`)
-// and navigation controller (`ctx.sidebarRight`). The standalone plugin is
-// built without the Harness type packages, so every surface below is the
-// subset used here, declared structurally.
+// services this plugin consumes: locale, slots, and the optional layout service
+// the active-download popup uses. The standalone plugin is built without the
+// Harness type packages, so every surface below is the subset used here,
+// declared structurally.
 
 /** Bound translate function returned by `ctx.locale.bind(ns)`. */
 export type TFunction = (key: string, params?: Record<string, string | number>) => string
@@ -21,78 +20,6 @@ export interface LocaleService {
 export interface SlotsService {
   inject(owner: string, callback: () => unknown): unknown
   register(options: Record<string, unknown>, component: unknown): () => void
-}
-
-/** Values of a `ctx.inject([...])` dependency bag (cordis-style). */
-export interface InjectBag {
-  get(name: string): unknown
-}
-
-/** Disposer returned by `ctx.inject`; `dispose` may be absent on some runtimes. */
-export interface InjectSeat {
-  dispose?: () => void
-}
-
-/** Native right Sidebar navigation controller subset (`ctx.sidebarRight`). */
-export interface SidebarRightService {
-  openResource?(address: string, options?: Record<string, unknown>): void
-  openTab?(kind: string, options?: Record<string, unknown>): void
-}
-
-/** Per-tab actions injected by the native Sidebar (`tab.actions`). */
-export interface SidebarTabActions {
-  openResource?(address: string, options?: Record<string, unknown>): void
-  openTab?(kind: string, options?: Record<string, unknown>): void
-  close?(): void
-}
-
-/** One native Sidebar tab record (`useTabInfo().tab`). */
-export interface NativeTabRecord {
-  id: string
-  kind?: string
-  title?: string
-  contentId?: string
-  visible?: boolean
-  navigation?: { params?: Record<string, unknown>; revision?: number }
-  actions?: SidebarTabActions
-}
-
-/** `useTabInfo()` result subset. */
-export interface NativeTabInfo {
-  tab: NativeTabRecord
-}
-
-/** Framework props every `sidebar.right.pane.tab` body/title receives. */
-export interface NativeTabFrameworkProps {
-  useTabInfo?: () => NativeTabInfo
-  sessionId?: string
-}
-
-/** One guide entry a tab type contributes. */
-export interface SidebarGuideEntry {
-  id: string
-  order: number
-  title: () => string
-  description?: () => string
-  icon?: (props: { size?: number }) => unknown
-}
-
-/** A native tab-type declaration (`ctx.sidebarRightTabs.register`). */
-export interface SidebarTabTypeDefinition {
-  id: string
-  kind: string
-  multiple?: boolean
-  keepMounted?: boolean
-  patterns?: readonly string[]
-  priority?: 'extension' | 'builtin' | 'fallback'
-  canOpen?: (address: string) => boolean
-  title: (address: string) => string
-  guide?: readonly SidebarGuideEntry[]
-}
-
-/** Native tab-type registry subset (`ctx.sidebarRightTabs`). */
-export interface SidebarTabRegistry {
-  register(definition: SidebarTabTypeDefinition): () => void
 }
 
 /** Client layout service subset (`ctx.layout`): panel selection and rightbar. */
@@ -115,11 +42,6 @@ export interface ClientContext {
   locale: LocaleService
   slots: SlotsService
   effect?(callback: () => unknown, label?: string): unknown
-  inject?(deps: string[], callback: (injected: InjectBag) => unknown): InjectSeat | undefined
-  /** Present only when `@deepseek-ai/dsh-client-ui-sidebar-right` is injected. */
-  sidebarRight?: SidebarRightService
-  /** Present only when `@deepseek-ai/dsh-client-ui-sidebar-right` is injected. */
-  sidebarRightTabs?: SidebarTabRegistry
   /** Panel navigation exposed by the shell (`ctx.layout`). */
   layout?: LayoutService
   get?(name: string): unknown
@@ -558,8 +480,6 @@ export interface ControlOutcome {
   ok: boolean
   task: TaskView | null
   error: { code: string; message: string } | null
-  /** Whether the owning agent was told this was a user action. */
-  notified: boolean
 }
 
 /** `control` action value after normalization. */

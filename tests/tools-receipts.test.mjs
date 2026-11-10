@@ -376,6 +376,12 @@ check('policy is stated only in the system-prompt section', () => {
   assert.match(PROMPT_SECTION_TEXT, /rdm_probe first/)
   assert.match(PROMPT_SECTION_TEXT, /rdm_history/)
   assert.match(PROMPT_SECTION_TEXT, /structured key=value/)
+  // 0.3.3 workflow facts: panel actions are silent, destructive verbs need a
+  // user request, and discovered mirrors are the multi-source path.
+  assert.match(PROMPT_SECTION_TEXT, /not announced to you/)
+  assert.match(PROMPT_SECTION_TEXT, /re-read rdm_tasks before acting/)
+  assert.match(PROMPT_SECTION_TEXT, /only when the user asks/)
+  assert.match(PROMPT_SECTION_TEXT, /mirrors reported by rdm_probe/)
 })
 check('first-turn schema cost stays under the 0.1.2 baseline', () => {
   const surface = tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters }))
@@ -385,9 +391,11 @@ check('first-turn schema cost stays under the 0.1.2 baseline', () => {
   // 0.3.0 surface still fits: ~6.9k chars rather than the old six-tool 6000 guard.
   assert.ok(chars <= 7241, `schema cost is ${chars} characters`)
 })
-check('prompt section is about 90 words', () => {
+check('prompt section stays a bounded policy block', () => {
   const words = PROMPT_SECTION_TEXT.split(/\s+/).filter(Boolean).length
-  assert.ok(words >= 70 && words <= 120, `prompt section is ${words} words`)
+  // 0.3.3 adds the silent-panel/consent/mirror workflow facts; the section is
+  // still one policy block (~160 words / ~1.0k chars), not tool documentation.
+  assert.ok(words >= 120 && words <= 200, `prompt section is ${words} words`)
 })
 
 // ── Formatting primitives ───────────────────────────────────────────────────

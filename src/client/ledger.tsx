@@ -3,15 +3,11 @@
 // Order (0.3.0): title + kernel health, the paste-a-link composer, the three
 // state cards (which double as filters), the risk queue, the filter/selection
 // toolbar, then the ledger grouped workspace → session title.
-//
-// The same `RecordRow` primitive is reused by the session right-sidebar tab;
-// `variant` only changes the progress device (byte meter vs micro strip) and
-// whether the selection checkbox exists.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { controlTasks, errorText, openTask, startTask } from './api'
+import { controlTasks, errorText, openFailureTitle, openTask, startTask } from './api'
 import { copyText } from './clipboard'
-import { useGlobalLedger, refreshGlobalLedger, useTaskDetail, type RateHistory } from './data'
+import { useGlobalLedger, refreshGlobalLedger, useTaskDetail } from './data'
 import {
   formatPercent,
   formatSpeed,
@@ -55,6 +51,7 @@ import {
   sealFor,
   sessionFallbackId,
   statusLabel,
+  taskFolder,
   taskPath,
   toneOf,
   type ConnectionInfo,
@@ -72,13 +69,13 @@ import {
   IconButton,
   KernelDot,
   LiveRegion,
+  NoticeBar,
   ReviewStyle,
   Seal,
   SkeletonRows,
   StatusGlyph,
   TextButton,
 } from './primitives'
-import { Waveform } from './wave'
 import { EvidenceDrawer } from './drawer'
 import type { TFunction, TaskView } from './types'
 
@@ -121,11 +118,8 @@ function EtaGroup({ t, task }: { t: TFunction; task: TaskView }) {
 export interface RecordRowProps {
   t: TFunction
   task: TaskView
-  variant: 'page' | 'session'
-  history: RateHistory
   expanded: boolean
   onToggle: (id: string) => void
-  /** Page selection (absent on the session surface). */
   selected?: boolean
   onSelect?: (id: string, next: boolean) => void
   onPause?: (task: TaskView) => void
@@ -133,30 +127,26 @@ export interface RecordRowProps {
   onDelete?: (task: TaskView) => void
   onOpen?: (task: TaskView, target: 'file' | 'folder') => void
   onCopyId?: (task: TaskView) => void
-  /** Session surface: reveal in the host file viewer. */
-  onReveal?: (path: string) => void
   /** Drawer id shared with `aria-controls`. */
   domId: string
 }
 
 /** One record in the ledger. The name line is the keyboard toggle. */
 export function RecordRow(props: RecordRowProps) {
-  const { t, task, variant, history, expanded } = props
+  const { t, task, expanded } = props
   const [reloadToken, setReloadToken] = useState(0)
   const detail = useTaskDetail(task, expanded, reloadToken)
   const tone = toneOf(task)
   const label = statusLabel(t, task.status)
   const seal = sealFor(t, task)
   const chips = chipsFor(t, task)
-  const moving = isMoving(task)
-  const samples = variant === 'session' ? (history.tasks.get(task.id) ?? []) : []
   const elapsed = elapsedOf(task)
   const host = hostOf(task)
   const folderPath = taskPath(task)
   const filePath = task.path ?? ''
   const info = connectionInfoOf(task)
   const current = currentConnections(task)
-  const hasSelection = variant === 'page' && props.onSelect !== undefined
+  const hasSelection = props.onSelect !== undefined
   const finished = task.status === 'completed' || task.status === 'cancelled'
   const terminal = finished || task.status === 'failed'
   // A terminal record does not need the "ranges/resume" reassurance on every
@@ -216,7 +206,7 @@ export function RecordRow(props: RecordRowProps) {
                 />
               </span>
             ) : null}
-            {variant === 'page' ? <span className="rdm2-meta-item rdm2-record-size">{byteMeterLabel(t, task)}</span> : null}
+            <span className="rdm2-meta-item rdm2-record-size">{byteMeterLabel(t, task)}</span>
             {host !== '' ? <span className="rdm2-meta-item rdm2-record-host">{host}</span> : null}
             <span className="rdm2-record-spacer" />
             {elapsed !== null ? <span className="rdm2-meta-item rdm2-record-elapsed">{elapsed}</span> : null}
@@ -235,20 +225,9 @@ export function RecordRow(props: RecordRowProps) {
             </button>
           </div>
 
-          {variant === 'page' ? (
-            finished ? null : <ByteMeter fraction={progressFraction(task.downloaded, task.total)} tone={tone} />
-          ) : finished ? null : (
-            <Waveform
-              values={samples}
-              capacity={40}
-              height={26}
-              mini
-              live={moving && task.speedBps > 0}
-              ariaLabel={t('record.pulse', { name: fileNameOf(task) })}
-            />
-          )}
+          {finished ? null : <ByteMeter fraction={progressFraction(task.downloaded, task.total)} tone={tone} />}
 
-          <ChipRow chips={visibleChips} max={variant === 'session' ? 3 : 4} />
+          <ChipRow chips={visibleChips} max={4} />
         </div>
 
         <div className="rdm2-record-actions">
@@ -292,7 +271,6 @@ export function RecordRow(props: RecordRowProps) {
           task={task}
           detail={detail}
           onRetry={() => setReloadToken((value) => value + 1)}
-          onReveal={folderPath !== '' ? props.onReveal : undefined}
           id={props.domId}
         />
       ) : null}
@@ -576,6 +554,15 @@ interface PendingDelete {
   name: string | null
 }
 
+/** Visible outcome of a row action that can degrade (open file/folder). */
+interface ActionNotice {
+  tone: 'success' | 'info' | 'error'
+  title: string
+  hint?: string
+  /** Host-resolved path offered for copying when opening failed. */
+  copyPath?: string
+}
+
 export interface ReviewPageProps {
   t: TFunction
 }
@@ -588,10 +575,13 @@ export function ReviewPage(props: ReviewPageProps) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<ActionNotice | null>(null)
+  const [noticeCopied, setNoticeCopied] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const say = (message: string): void => {
     setFeedback(message)
@@ -602,8 +592,32 @@ export function ReviewPage(props: ReviewPageProps) {
   useEffect(() => {
     return () => {
       if (feedbackTimer.current !== undefined) clearTimeout(feedbackTimer.current)
+      if (noticeTimer.current !== undefined) clearTimeout(noticeTimer.current)
     }
   }, [])
+
+  /** Show an action outcome; a success notice fades out, a failure waits for the user. */
+  const showNotice = (next: ActionNotice): void => {
+    if (noticeTimer.current !== undefined) clearTimeout(noticeTimer.current)
+    setNoticeCopied(false)
+    setNotice(next)
+    if (next.tone === 'success') {
+      noticeTimer.current = setTimeout(() => setNotice(null), 4500)
+    }
+  }
+
+  const dismissNotice = (): void => {
+    if (noticeTimer.current !== undefined) clearTimeout(noticeTimer.current)
+    setNoticeCopied(false)
+    setNotice(null)
+  }
+
+  const copyNoticePath = async (): Promise<void> => {
+    if (notice === null || notice.copyPath === undefined) return
+    const ok = await copyText(notice.copyPath)
+    setNoticeCopied(ok)
+    if (!ok) say(t('common.copyFailed'))
+  }
 
   // A record that disappeared (removed elsewhere, or the kernel restarted)
   // must not stay selected; bulk actions would silently address nothing.
@@ -671,15 +685,14 @@ export function ReviewPage(props: ReviewPageProps) {
     setFilter((previous) => ({ ...previous, bucket: previous.bucket === bucket ? 'all' : bucket }))
   }
 
-  /** Run one control verb over ids, collecting per-id failures and notices. */
+  /** Run one control verb over ids, collecting per-id failures. */
   const performControl = async (ids: string[], action: 'pause' | 'resume' | 'remove'): Promise<void> => {
     if (ids.length === 0 || busy) return
     setBusy(true)
     setActionError(null)
     try {
-      const result = await controlTasks(ids, action, { notify: action !== 'resume' })
+      const result = await controlTasks(ids, action)
       const failures = result.results.filter((outcome) => !outcome.ok)
-      const notified = result.results.some((outcome) => outcome.notified)
       const nameOf = (id: string): string => {
         const task = tasksById.get(id)
         return task === undefined ? id : fileNameOf(task)
@@ -697,7 +710,7 @@ export function ReviewPage(props: ReviewPageProps) {
             : name !== null
               ? t('record.deletedOne', { name })
               : t('record.deletedMany', { n: ids.length })
-      say(failures.length === 0 && notified ? `${base} ${t('record.agentNotified')}` : base)
+      say(base)
       if (failures.length > 0) {
         const first = failures[0]!
         setActionError(t('record.partialFailure', { n: failures.length, message: errorText(t, first.error) }))
@@ -741,15 +754,41 @@ export function ReviewPage(props: ReviewPageProps) {
 
   const handleOpen = async (task: TaskView, target: 'file' | 'folder'): Promise<void> => {
     setActionError(null)
+    // The host resolves and reports the real path; this local value is only the
+    // copy fallback when the request itself failed before reaching the host.
+    const fallbackPath = target === 'file' ? (task.path ?? '') : taskFolder(task)
     try {
       const result = await openTask(task.id, target)
+      const path = result.path !== null && result.path !== '' ? result.path : fallbackPath
       if (!result.opened) {
-        setActionError(result.error === null ? t('error.code.open_failed') : errorText(t, result.error))
+        const code = result.error === null ? 'open_failed' : result.error.code
+        showNotice({
+          tone: 'error',
+          title: openFailureTitle(t, code, result.error),
+          hint:
+            code === 'unsupported'
+              ? t('record.openUnavailableHint')
+              : path !== ''
+                ? t('record.openPathHint', { path })
+                : undefined,
+          copyPath: path !== '' ? path : undefined,
+        })
         return
       }
-      say(target === 'file' ? t('record.openedFile', { name: fileNameOf(task) }) : t('record.openedFolder'))
+      // A successful launch may still be invisible in a remote browser (the
+      // file manager opened on the host machine), so confirm it on screen.
+      showNotice({
+        tone: 'success',
+        title: target === 'file' ? t('record.openedFile', { name: fileNameOf(task) }) : t('record.openedFolder'),
+        hint: path !== '' ? t('record.openPathHint', { path }) : undefined,
+      })
     } catch (error) {
-      setActionError(errorText(t, error))
+      showNotice({
+        tone: 'error',
+        title: errorText(t, error),
+        hint: fallbackPath !== '' ? t('record.openPathHint', { path: fallbackPath }) : undefined,
+        copyPath: fallbackPath !== '' ? fallbackPath : undefined,
+      })
     }
   }
 
@@ -783,6 +822,23 @@ export function ReviewPage(props: ReviewPageProps) {
         {state.banner !== null && state.phase === 'ready' ? <Banner title={errorText(t, state.banner)} hint={t('route.hint')} /> : null}
         {actionError !== null ? (
           <Banner title={actionError} onDismiss={() => setActionError(null)} dismissLabel={t('common.dismiss')} />
+        ) : null}
+        {notice !== null ? (
+          <NoticeBar
+            tone={notice.tone}
+            title={notice.title}
+            hint={notice.hint}
+            action={
+              notice.copyPath === undefined
+                ? undefined
+                : {
+                    label: noticeCopied ? t('record.copiedPath') : t('record.copyPath'),
+                    onClick: () => void copyNoticePath(),
+                  }
+            }
+            onDismiss={dismissNotice}
+            dismissLabel={t('common.dismiss')}
+          />
         ) : null}
 
         <div className="rdm2-toolbar">
@@ -945,8 +1001,6 @@ export function ReviewPage(props: ReviewPageProps) {
                             key={task.id}
                             t={t}
                             task={task}
-                            variant="page"
-                            history={state.history}
                             selected={selected.has(task.id)}
                             onSelect={onSelect}
                             expanded={expandedId === task.id}

@@ -8,11 +8,59 @@
 import React from 'react'
 import type { ChipModel, SealModel } from './model'
 import { REVIEW_CSS } from './review-css'
-import { ChevronGlyph } from './icons'
+import { ChevronGlyph, CloseGlyph } from './icons'
 
 /** The one keyed style element both surfaces render (CSS lives in review-css.ts). */
 export function ReviewStyle() {
   return <style data-rdm2-styles="">{REVIEW_CSS}</style>
+}
+
+/** One action offered beside a notice (e.g. copy a path that could not be opened). */
+export interface NoticeAction {
+  label: string
+  onClick: () => void
+}
+
+export interface NoticeBarProps {
+  /** `success` confirms a completed user action; `info` explains a limitation; `error` reports a failure. */
+  tone?: 'success' | 'info' | 'error'
+  title: string
+  hint?: string
+  action?: NoticeAction
+  onDismiss?: () => void
+  dismissLabel?: string
+}
+
+/**
+ * Visible outcome bar for a user action.
+ *
+ * `LiveRegion` alone is screen-reader-only: a sighted user clicking an action
+ * that produces no window on the host (file opener, desktop-only capability)
+ * otherwise sees nothing at all. Actions that can silently degrade render this
+ * bar so the outcome — success, limitation, or failure — is always on screen.
+ */
+export function NoticeBar(props: NoticeBarProps) {
+  const tone = props.tone ?? 'info'
+  return (
+    <div className="rdm2-banner" data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
+      <div className="rdm2-banner-copy">
+        <span className="rdm2-banner-title">{props.title}</span>
+        {props.hint !== undefined ? <span className="rdm2-banner-hint">{props.hint}</span> : null}
+      </div>
+      <div className="rdm2-banner-actions">
+        {props.action !== undefined ? (
+          <TextButton label={props.action.label} onClick={props.action.onClick}>
+            {props.action.label}
+          </TextButton>
+        ) : null}
+        {props.onDismiss !== undefined ? (
+          <IconButton label={props.dismissLabel ?? 'Dismiss'} onClick={props.onDismiss}>
+            <CloseGlyph size={12} />
+          </IconButton>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 /** The six shapes a record's status can take, as a 10×10 mark. */

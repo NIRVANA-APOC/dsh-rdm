@@ -14,16 +14,26 @@
  * - `list` — kernel + tasks + aggregate + `sessions`/`workspaces` labels;
  * - `get` / `stats` / `start` — unchanged;
  * - `control` — `ids[]` (1..100) or a legacy single `id`, executed
- *   sequentially with one result per id. `pause`/`cancel`/`remove` queue a
- *   short notice to the owning agent when that session has a live agent;
+ *   sequentially with one result per id. A user action on a download record is
+ *   executed only; the owning session agent is not notified;
  * - `open` — resolve a task's `path`/`dir` on the host and launch the desktop
- *   opener. The browser never supplies a path.
+ *   opener. The browser never supplies a path. Failures keep the catalog's
+ *   stable code (`invalid_request`, `not_found`, `io`, `unsupported`); the
+ *   `unsupported` code means this host has no graphical desktop session or no
+ *   `xdg-open`, so the panel can offer a copy-path fallback instead of a
+ *   silent no-op.
  *
  * @module dsh-rdm/host-api
  */
 
 import { createSessionCatalog, resolveTaskOpenPath } from './session-catalog'
-import type { OpenPathResult, SessionCatalogResult, SessionMeta, WorkspaceMeta } from './session-catalog'
+import type {
+  OpenPathFailure,
+  OpenPathResult,
+  SessionCatalogResult,
+  SessionMeta,
+  WorkspaceMeta,
+} from './session-catalog'
 import { toKernelLogger } from './kernel-client'
 import {
   KernelError,
@@ -40,7 +50,6 @@ import {
   DEFAULT_LIST_LIMIT,
   MAX_LIST_LIMIT,
   ROUTE_MAX_EVENTS,
-  TERMINAL_STATUSES,
   type Aggregate,
   type ApiErrorEnvelope,
   type ApiSuccessEnvelope,
@@ -57,13 +66,9 @@ export const RDM_API_PATH = '/api/dsh-rdm/api'
 /** Batch-control bound (design §4: 1..100 ids per request). */
 const MAX_CONTROL_IDS = 100
 
-/** Control verbs that may notify the owning agent (design §4). */
-const NOTIFY_ACTIONS: ReadonlySet<ControlAction> = new Set<ControlAction>(['pause', 'cancel', 'remove'])
-
 /** The catalog surface this route reads (tests substitute a fake). */
 export interface HostApiCatalog {
   describe(ids: readonly string[]): Promise<SessionCatalogResult>
-  notify(sessionId: string, text: string): Promise<boolean>
   openPath(path: string, target: 'file' | 'folder'): Promise<OpenPathResult>
 }
 
@@ -156,11 +161,6 @@ function errorPayload(error: unknown): { code: string; message: string } {
   return { code: 'internal', message: String(error) }
 }
 
-/** `true` when a task has not reached a terminal status yet. */
-function isUnfinished(task: TaskView): boolean {
-  return !TERMINAL_STATUSES.includes(task.status)
-}
-
 /** Unique non-empty owning-session ids of a task list (bounded by the catalog). */
 function taskSessionIds(tasks: readonly TaskView[]): string[] {
   const ids: string[] = []
@@ -219,8 +219,6 @@ export interface ControlResultItem {
   task?: TaskView | null
   /** Failure detail when `ok` is false. */
   error?: { code: string; message: string }
-  /** Whether the owning live agent was told this was a user action. */
-  notified?: boolean
 }
 
 /** Payload of a successful `control` (batch `results` plus legacy fields). */
@@ -242,10 +240,23 @@ interface OpenValue {
 }
 
 /**
+ * Fallback envelope text per opener failure code.
+ *
+ * The catalog usually supplies a precise message; this table keeps the route
+ * envelope actionable if a future catalog (or a mocked one in tests) omits it.
+ */
+const OPEN_FAILURE_FALLBACKS: Record<OpenPathFailure, string> = {
+  invalid_request: 'the desktop opener rejected this request',
+  not_found: 'the path to open does not exist on the host',
+  io: 'the desktop opener failed to start on the host',
+  unsupported: 'this host cannot open a file manager window',
+}
+
+/**
  * `list`: kernel status, tasks, their aggregate and the display catalog.
  *
- * `sessionId` scopes the list to one agent session (the right-sidebar tab);
- * omitting it returns every session's tasks (the global review page). A kernel
+ * `sessionId` scopes the list to one agent session (kept for API callers; the
+ * UI polls every session); omitting it returns every session's tasks. A kernel
  * that cannot start is reported through `kernel.error` with an empty task list
  * instead of failing the whole response, because the panel polls this action
  * every second. Catalog failures are equally non-fatal.
@@ -290,70 +301,6 @@ async function getAction(kernel: KernelService, body: Record<string, unknown>): 
 }
 
 /**
- * Read the pre-action task so a notice can name the file and session and only
- * fire when the task was still unfinished (design §4). Returns `null` when no
- * notice is requested or the task cannot be read; the control verb itself then
- * reports the real outcome.
- */
-async function readTaskForNotice(
-  kernel: KernelService,
-  id: string,
-  wanted: boolean,
-): Promise<TaskView | null> {
-  if (!wanted) return null
-  try {
-    const result = await kernel.get(id, 0)
-    return result.task
-  } catch {
-    return null
-  }
-}
-
-/** Sanitize a file name for one-line model-facing prose. */
-function sanitizeName(fileName: string): string {
-  if (typeof fileName !== 'string') return ''
-  const text = fileName.replace(/[\r\n\t"]/g, ' ').replace(/\s+/g, ' ').trim()
-  return text.length > 120 ? text.slice(0, 120) : text
-}
-
-/** Build the short agent notice for one user-initiated control action. */
-function controlNotice(verb: 'pause' | 'cancel' | 'remove', task: TaskView): string {
-  const name = sanitizeName(task.fileName)
-  const label = name === '' ? 'an unnamed file' : `"${name}"`
-  const action = verb === 'pause' ? 'paused' : verb === 'cancel' ? 'cancelled' : 'removed'
-  const head =
-    `[dsh-rdm] The user ${action} download ${task.id} (${label}) from the Downloads panel. ` +
-    'This was a user action, not a failure.'
-  if (verb === 'remove') {
-    return `${head} The task record is gone, so start a new download if it is still wanted.`
-  }
-  return `${head} It can be resumed with rdm_control action=resume taskId=${task.id} if it is still wanted.`
-}
-
-/**
- * Notify the owning live agent after a successful control action.
- *
- * The pre-action record decides: only an unfinished task with a session id is
- * worth a notice, and only a live agent accepts one (a cold session is never
- * resumed just to read a UI click). Everything here is best-effort.
- */
-async function notifyControl(
-  catalog: HostApiCatalog | null,
-  verb: 'pause' | 'cancel' | 'remove',
-  pre: TaskView | null,
-): Promise<boolean> {
-  if (catalog === null || pre === null) return false
-  const sessionId = pre.sessionId
-  if (typeof sessionId !== 'string' || sessionId === '') return false
-  if (!isUnfinished(pre)) return false
-  try {
-    return (await catalog.notify(sessionId, controlNotice(verb, pre))) === true
-  } catch {
-    return false
-  }
-}
-
-/**
  * Read the bounded id list of a `control` action.
  *
  * `ids` (1..100, duplicates collapsed) is the v3 form; a lone `id`/`taskId`
@@ -390,15 +337,11 @@ function readControlIds(body: Record<string, unknown>): { ids: string[]; legacyS
 
 /**
  * `control`: apply one verb to a bounded batch, sequentially, with one result
- * per id. A failing id never aborts the remaining ids.
- *
- * `pause`/`cancel`/`remove` notify the owning agent by default (design §4);
- * `notify:false` opts out. `remove` reads the task before deleting it so the
- * notice still carries the file name and session id.
+ * per id. A failing id never aborts the remaining ids. This is a plain
+ * execution of the user's action: the owning session agent is not notified.
  */
 async function controlAction(
   kernel: KernelService,
-  catalog: HostApiCatalog | null,
   body: Record<string, unknown>,
 ): Promise<ControlBatchValue> {
   // `control` is the panel's verb field; `op`/`command` are tolerated aliases
@@ -406,23 +349,11 @@ async function controlAction(
   const verb = normalizeControlAction(body.control ?? body.op ?? body.command)
   const { ids, legacySingle } = readControlIds(body)
   const deletePart = body.deletePart === true
-  const notifyWanted = NOTIFY_ACTIONS.has(verb) && body.notify !== false
   const results: ControlResultItem[] = []
   for (const id of ids) {
-    const pre = await readTaskForNotice(kernel, id, notifyWanted)
     try {
       const task = await kernel.control(id, verb, deletePart)
-      const notified = await notifyControl(
-        catalog,
-        verb as 'pause' | 'cancel' | 'remove',
-        notifyWanted ? pre : null,
-      )
-      results.push({
-        id,
-        ok: true,
-        task: task ?? null,
-        ...(notifyWanted ? { notified } : {}),
-      })
+      results.push({ id, ok: true, task: task ?? null })
     } catch (error) {
       results.push({ id, ok: false, task: null, error: errorPayload(error) })
     }
@@ -444,7 +375,8 @@ async function controlAction(
 /**
  * `open`: resolve a task's file/folder on the host and launch the desktop
  * opener. Only a task id and the two fixed targets are accepted, so a browser
- * can never hand an arbitrary path to the shell.
+ * can never hand an arbitrary path to the shell. A host that cannot open a
+ * desktop window answers `{ok:false,error:{code:'unsupported',message}}`.
  */
 async function openAction(
   kernel: KernelService,
@@ -469,10 +401,8 @@ async function openAction(
   }
   const opened = await catalog.openPath(path, target)
   if (opened.opened !== true) {
-    throw new KernelError(
-      opened.code ?? 'io',
-      opened.error ?? 'the desktop opener did not accept the path',
-    )
+    const code: OpenPathFailure = opened.code ?? 'io'
+    throw new KernelError(code, opened.error ?? OPEN_FAILURE_FALLBACKS[code])
   }
   return { opened: true, path }
 }
@@ -526,7 +456,7 @@ export async function handleRdmApiRequest(
         return okResponse({ task })
       }
       case 'control':
-        return okResponse(await controlAction(kernel, catalog, record))
+        return okResponse(await controlAction(kernel, record))
       case 'open':
         return okResponse(await openAction(kernel, catalog, record))
       case 'stats':

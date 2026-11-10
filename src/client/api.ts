@@ -3,7 +3,7 @@
 // Protocol v2 (docs/design/0.2.0-agent-native.md §4.2) exposes four actions:
 // `list` ({sessionId? status? limit?}) -> {kernel, tasks, aggregate},
 // `get` ({id, events?}) -> {task, detail, events}, `stats` ({}),
-// `control` ({ids, action, deletePart?, notify?}), `open` ({id, target}) and
+// `control` ({ids, action, deletePart?}), `open` ({id, target}) and
 // `start` ({url}) — the workbench composer uses `start`.
 //
 // The kernel and host land separately from this client, so every response is
@@ -145,6 +145,29 @@ export function toRouteError(error: unknown): RouteError {
 }
 
 /**
+ * Localized title for a failed `open` result.
+ *
+ * Two opener failures get product copy rather than the generic code label:
+ * `unsupported` means this deployment has no graphical desktop to open on, and
+ * `not_found` here means the saved file/directory vanished after the download
+ * (not that the task record is unknown). Everything else uses the shared error
+ * vocabulary.
+ *
+ * @param t - bound locale translator.
+ * @param code - failure code from the open result (or `open_failed`).
+ * @param error - structured failure carried by the result, when present.
+ */
+export function openFailureTitle(
+  t: TFunction,
+  code: string,
+  error: { code: string; message: string } | null,
+): string {
+  if (code === 'unsupported') return t('record.openUnavailableTitle')
+  if (code === 'not_found') return t('record.openMissingTitle')
+  return error === null ? t(`error.code.${code}`) : errorText(t, error)
+}
+
+/**
  * Translate a failure for display: a known error code becomes localized text;
  * unknown codes fall back to the message, then to the generic unknown-error
  * string. Raw kernel messages are never appended to the localized label — the
@@ -191,31 +214,48 @@ export async function controlTask(id: string, control: ControlOp, deletePart = f
 }
 
 /**
- * Control one or more tasks, optionally telling the owning agent that the stop
- * was a user action. The host executes the batch sequentially and returns one
- * outcome per id; per-id failures stay in `results`.
+ * Control one or more tasks. The host executes the batch sequentially and
+ * returns one outcome per id; per-id failures stay in `results`.
  */
 export async function controlTasks(
   ids: string[],
   control: ControlOp,
-  options: { deletePart?: boolean; notify?: boolean } = {},
+  options: { deletePart?: boolean } = {},
 ): Promise<ControlResult> {
   const payload: Record<string, unknown> = { action: 'control', ids, control }
   if (options.deletePart === true) payload.deletePart = true
-  if (options.notify !== undefined) payload.notify = options.notify
   const value = await request<unknown>(payload, 30000)
   return normalizeControl(value, control, ids)
 }
 
-/** Open a task's saved file, or the folder that contains it, on the host desktop. */
+/** Failure codes the host's `open` action reports as a normal (non-transport) outcome. */
+const OPEN_FAILURE_CODES = new Set(['unsupported', 'io', 'not_found', 'invalid_request'])
+
+/**
+ * Open a task's saved file, or the folder that contains it, on the host desktop.
+ *
+ * Opener failures are part of this action's ordinary outcome, not an exceptional
+ * transport error: the host answers `{ok:false, error:{code,message}}` when it
+ * refuses or cannot launch a desktop window (for example a headless deployment
+ * answering `unsupported`). Those codes are returned as `{opened:false, error}`
+ * so the surface can explain the limitation and offer the resolved path for
+ * copying; network/timeout failures still throw.
+ */
 export async function openTask(id: string, target: OpenTarget): Promise<OpenResult> {
-  const value = await request<unknown>({ action: 'open', id, target }, 12000)
-  const record = asRecord(value) ?? {}
-  const error = normalizeError(record.error)
-  return {
-    opened: record.opened === true,
-    path: asString(record.path),
-    error: error === null ? null : { code: error.code, message: error.message },
+  try {
+    const value = await request<unknown>({ action: 'open', id, target }, 12000)
+    const record = asRecord(value) ?? {}
+    const error = normalizeError(record.error)
+    return {
+      opened: record.opened === true,
+      path: asString(record.path),
+      error: error === null ? null : { code: error.code, message: error.message },
+    }
+  } catch (error) {
+    if (error instanceof RouteError && OPEN_FAILURE_CODES.has(error.code)) {
+      return { opened: false, path: null, error: { code: error.code, message: error.message } }
+    }
+    throw error
   }
 }
 
@@ -555,7 +595,6 @@ function normalizeControl(value: unknown, action: ControlOp, ids: string[]): Con
       ok: item.ok === true,
       task: item.task === null || item.task === undefined ? null : normalizeTask(item.task),
       error: normalizeError(item.error),
-      notified: item.notified === true,
     })
   }
   if (results.length > 0) return { action, results }
@@ -565,10 +604,10 @@ function normalizeControl(value: unknown, action: ControlOp, ids: string[]): Con
   if (fallbackId !== '' && (legacyTask !== null || action === 'remove')) {
     return {
       action,
-      results: [{ id: fallbackId, ok: true, task: legacyTask, error: null, notified: false }],
+      results: [{ id: fallbackId, ok: true, task: legacyTask, error: null }],
     }
   }
-  return { action, results: ids.map((id) => ({ id, ok: false, task: null, error: { code: 'invalid_response', message: 'no result' }, notified: false })) }
+  return { action, results: ids.map((id) => ({ id, ok: false, task: null, error: { code: 'invalid_response', message: 'no result' } })) }
 }
 
 /** Normalize the `list` action value; tolerates a pre-v2 `{kernel, tasks}`. */

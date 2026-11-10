@@ -60,8 +60,7 @@
     "global": "No downloads recorded yet. Anything an agent fetches with rdm_download appears here, with its evidence.",
     "globalHint": "Files fetched through rdm_download appear here with their evidence.",
     "filtered": "No records match",
-    "filteredHint": "Change the filter, or paste a link above to start a download.",
-    "session": "No downloads in this session yet."
+    "filteredHint": "Change the filter, or paste a link above to start a download."
   },
   "group": {
     "unattributed": "Unattributed",
@@ -69,17 +68,7 @@
     "sessionFallback": "Session {id}",
     "records": "{n} records",
     "active": "Active: {n}",
-    "live": "live",
-    "session": "Session {id}"
-  },
-  "session": {
-    "title": "Downloads",
-    "unknownScope": "This tab is not attached to a session yet.",
-    "verifiedCount": "{n} verified",
-    "riskCount": "{n} at risk"
-  },
-  "guide": {
-    "description": "Reviews this session's downloads"
+    "live": "live"
   },
   "popup": {
     "title": "Downloading: {n}",
@@ -108,9 +97,7 @@
   "record": {
     "etaLabel": "ETA",
     "etaConfidence": "ETA confidence: {level}",
-    "pulse": "Throughput pulse for {name}",
     "sizeUnknown": "size unknown",
-    "reveal": "Reveal file",
     "copyPath": "Copy path",
     "copyHash": "Copy hash",
     "copyId": "Copy download id",
@@ -137,13 +124,12 @@
     "resumedMany": "Resumed {n} downloads",
     "deletedOne": "Deleted {name}",
     "deletedMany": "Deleted {n} records",
-    "agentNotified": "The session agent was told this was a user action.",
     "openedFile": "Opened {name}",
     "openedFolder": "Opened the containing folder",
-    "stop": "Stop",
-    "confirmStop": "Confirm stop",
-    "toggle": "{name}, {status}. Show the evidence record.",
-    "stopRequested": "Stopping {name}"
+    "openUnavailableTitle": "Cannot open the system file manager here",
+    "openUnavailableHint": "The host has no graphical desktop session (remote or headless deployment). The file is still on the host disk; copy the path to reach it another way.",
+    "openPathHint": "Location: {path}",
+    "openMissingTitle": "Cannot open: the record or file is no longer on the host"
   },
   "common": {
     "copyFailed": "Could not copy",

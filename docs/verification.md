@@ -1,5 +1,67 @@
 # dsh-rdm 0.3.0 — verification report
 
+> **0.3.3 (2026-11-10) — download-UI agent notices removed.** Acting on a
+> download record in the workbench page or its batch toolbar no longer tells the
+> owning session agent that the user did it: the client sends no
+> `notify` field, the host route only calls `kernel.control` (no pre-action task
+> snapshot, no live-agent gate, no `sessionController.prompt`), control results
+> carry no `notified` field, `SessionCatalog.notify` is gone and the
+> `record.agentNotified` locale strings are deleted. The same round re-anchors
+> the `dsh-rdm:downloads` system-prompt section from the environment suffix into
+> the harness tool-guidance band (`MCP_SERVERS + 1`), makes it tool-aware
+> (renders only while `rdm_download` is admitted), and adds the 0.3.3 workflow
+> facts (silent panel actions → re-read `rdm_tasks`; destructive verbs only on
+> user request; `rdm_probe` mirrors → `rdm_download` sources), keeping the
+> section a bounded policy block (111 → 160 words). Research and open receipt
+> defects: [research/agent-prompt-and-workflow.md](research/agent-prompt-and-workflow.md).
+> The same round removes the session-scoped "Downloads" tab from the right
+> sidebar: `native.ts`, `session-tab.tsx`, `wave.tsx`, the scoped poll/pulse
+> data, the reveal/stop drawer actions and the `sidebarRight*` client
+> boilerplate are gone, `@deepseek-ai/dsh-client-ui-sidebar-right` is no longer
+> injected, and `tests/client-activation.test.mjs` now asserts that no native
+> right-sidebar surface registers. `lib/client.js` shrank to 204,807 B (−12.9%).
+> Repo gates:
+> `tests/host-api.test.mjs` **22/22**, `tests/client-activation.test.mjs`
+> **8/8**, `tests/session-catalog-open.test.mjs` **13/13**,
+> `tests/tools-receipts.test.mjs` **56/56**, `check-release` **PASS**
+> (package = kernel = `0.3.3`), `tsc --noEmit` has no new error locations (the
+> count dropped from 10 to 9 because one pre-existing error lived in the deleted
+> `session-tab.tsx`). The rebuilt
+> `lib/index.js` / `lib/client.js` contain no `notified` / `agentNotified`
+> member or the old notice prose.
+
+> **0.3.2 (2026-11-10) — released fix round.** Four reported defects were fixed
+> and re-verified end-to-end in an isolated `dsh web` harness (headless Firefox/
+> geckodriver, profile `/tmp/dsh-e2e`, plugin installed from this checkout).
+> 1. **“打开所在目录 / 打开文件” had no visible response.** The host spawned the
+>    OS opener detached, ignored asynchronous spawn errors, and always answered
+>    `opened:true`; on a headless host `xdg-open` exits without a window while the
+>    client only wrote to an sr-only live region. The host now detects desktop
+>    capability (`DISPLAY`/`WAYLAND_DISPLAY` + resolvable `xdg-open` on Linux),
+>    waits for the child `spawn`/`error` signal, and answers
+>    `{ok:false,error:{code:'unsupported'}}` when it cannot open a window; the
+>    client renders a visible banner with the resolved path and a copy-path
+>    fallback. Evidence: `verify-item1-*`, `verify-locale-zh-0{3,4}*.png`.
+> 2. **Popup “打开下载页” did nothing.** The optional `layout` service was
+>    captured during client `apply`; the DSH page starts every client entry in
+>    one pass, so a sibling entry's service may still be pending and the captured
+>    value stayed `undefined` forever. It is now resolved at click time and the
+>    layout package is declared in `dsh.client.inject`; a regression test
+>    (`tests/client-activation.test.mjs`: lazy-layout test; fails on the 0.3.1
+>    bundle) locks the ordering. Evidence: `verify-item2-*`.
+> 3. **Popup moved to the bottom-right** (`bottom/right: 16px`, responsive 12px;
+>    no horizontal overflow at 390/768/1440). Evidence: `verify-item3-*`.
+> 4. **Popup rows are now per download and titled by file name**; the owning
+>    session is secondary meta. Evidence: `verify-item4-popup-rows.png`,
+>    `verify-locale-zh-02-popup.png`.
+>
+> Regressions: 4 fresh boots with zero `Failed to load plugins` / `[dsh-rdm]`
+> errors; workbench, collapse/expand, en+zh parity checked. Repo gates:
+> `tsc --noEmit` unchanged from HEAD's 10 pre-existing errors (no new),
+> `tests/host-api.test.mjs` 23/23, `tests/client-activation.test.mjs` 8/8,
+> `tests/session-catalog-open.test.mjs` 13/13,
+> `tests/tools-receipts.test.mjs` 56/56, `check-release` PASS.
+
 > **0.3.1 hotfix (2026-11-10):** `apply` in the client half read `ctx.layout`
 > without declaring `layout` in `inject`. Cordis throws on an un-injected
 > service read (`cannot get property "layout" without inject`), so the client

@@ -60,9 +60,9 @@ async function loadClientFace() {
  * Build a strict, Cordis-shaped client context.
  *
  * @param options - `provide` maps service names to objects; `inject` is the
- *   plugin's declared dependency list; both optional services (`layout`,
- *   `sidebarRight*`) default to present so a pass proves they are reachable
- *   through the guarded path rather than the throwing protperty read.
+ *   plugin's declared dependency list. Optional services (such as `layout`) are
+ *   provided per test; reading one through the property path must still throw
+ *   unless it is declared in `inject`.
  */
 function strictContext({ inject, provide = {}, throwOnRegister = null }) {
   const registered = []
@@ -116,7 +116,7 @@ function strictContext({ inject, provide = {}, throwOnRegister = null }) {
       },
     },
   )
-  return { ctx, registered }
+  return { ctx, registered, services }
 }
 
 const layout = { selectPanel: (panelId) => { layout.selected = panelId }, selected: undefined }
@@ -155,6 +155,26 @@ test('activation registers the sidebar entry, the main panel and the popup', asy
   )
 })
 
+test('the popup resolves layout at click time, not during activation', async () => {
+  // Real boot race: the page starts every client entry in one pass, so the
+  // layout package's fiber is usually still pending while this plugin's
+  // `apply` runs. A service captured then would stay undefined forever; the
+  // click must resolve it lazily.
+  const { face } = await loadClientFace()
+  const { ctx, registered, services } = strictContext({ inject: face.inject, provide: {} })
+  face.apply(ctx)
+  const popup = registered.find((entry) => entry.descriptor.name === 'shell.overlay')
+  const element = popup.component()
+  // Boot stage: layout is not published yet — the click is a guarded no-op.
+  layout.selected = undefined
+  assert.doesNotThrow(() => element.props.onOpen())
+  assert.equal(layout.selected, undefined)
+  // The page finishes booting and the layout entry becomes active.
+  services.layout = layout
+  element.props.onOpen()
+  assert.equal(layout.selected, 'rdm')
+})
+
 test('the popup opens the workbench through layout.selectPanel', async () => {
   const { face } = await loadClientFace()
   const { ctx, registered } = strictContext({ inject: face.inject, provide: { layout } })
@@ -186,16 +206,20 @@ test('a throwing optional surface is contained instead of failing the fiber', as
   assert.ok(registered.some((entry) => entry.descriptor.name === 'main'), 'earlier surfaces stay registered')
 })
 
-test('the native right-sidebar tab registers through ctx.get when the registry mounts', async () => {
+test('the removed right-sidebar tab registers no native surface', async () => {
   const { face } = await loadClientFace()
-  const tabs = { ids: [], register(descriptor) { this.ids.push(descriptor.id) }, registered: [] }
-  const { ctx } = strictContext({
+  const tabs = { ids: [], register(descriptor) { this.ids.push(descriptor.id) } }
+  const { ctx, registered } = strictContext({
     inject: face.inject,
-    provide: { layout, sidebarRightTabs: tabs, sidebar: {}, sidebarRight: { openResource() {} } },
+    provide: { layout, sidebarRightTabs: tabs, sidebarRight: { openResource() {} } },
   })
-  assert.throws(() => {
-    void ctx.sidebarRightTabs
-  }, /cannot get property "sidebarRightTabs" without inject/)
   face.apply(ctx)
-  assert.deepEqual(tabs.ids, ['dsh-rdm/downloads'])
+  assert.deepEqual(tabs.ids, [], 'the native tab type is no longer registered')
+  const names = registered.map((entry) => entry.descriptor.name)
+  assert.ok(
+    !names.some((name) => typeof name === 'string' && name.startsWith('sidebar.right.pane.tab')),
+    'no native right-sidebar slot is registered',
+  )
+  assert.ok(names.includes('main'), 'the workbench panel stays registered')
+  assert.ok(names.includes('shell.overlay'), 'the popup stays registered')
 })

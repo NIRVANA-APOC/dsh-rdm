@@ -32,14 +32,30 @@ export { Config }
 export const PROMPT_SECTION_NAME = 'dsh-rdm:downloads'
 
 /**
- * System-prompt section: download policy, stated once (design §3.1, ~90 words).
+ * Named prompt-section anchor this section follows.
  *
- * Tool behavior, return shapes and parameter rules live on the tools
- * themselves; nothing here repeats them.
+ * `MCP_SERVERS` is the last first-party tool-guidance order (1000–3100 in the
+ * harness's central allocation), so placing the download policy at anchor + 1
+ * groups it with the other tool rules and keeps it before the tools-SDK,
+ * structured-output and environment-bearing suffix sections (5000+). The old
+ * `DEPLOYMENT_PERSONA_SUFFIX + 1` anchor put it after the environment suffix.
+ */
+export const PROMPT_SECTION_ORDER_ANCHOR = 'MCP_SERVERS'
+
+/** Order used only when the harness does not expose named section orders. */
+const PROMPT_SECTION_FALLBACK_ORDER = 3101
+
+/**
+ * System-prompt section: download policy, stated once (design §3.1).
+ *
+ * Policy only: tool behavior, return shapes and parameter rules live on the
+ * tools themselves; nothing here repeats them. The section reflects the 0.3.3
+ * workflow: panel actions are silent, destructive verbs need a user request,
+ * and discovered mirrors are the multi-source path.
  */
 export const PROMPT_SECTION_TEXT = `## File downloads — use the rdm_* tools
 
-Use the rdm_* tools for every HTTP(S) file download instead of shell downloaders (curl/wget/PowerShell). When the source is unknown, rdm_probe first; rdm_download returns a live task id, rdm_control pauses/resumes/cancels/removes it, and rdm_wait long-polls instead of a tight loop. rdm_search finds existing download records by name or id across sessions. The kernel records per-sample telemetry to disk; read it back with rdm_history to replay a transfer. Their receipts are structured key=value lines — quote them and do not parse human prose; "-" means unknown. Downloads persist across turns, so check rdm_tasks before re-downloading. Use a shell downloader only when the user explicitly demands one.`
+Use the rdm_* tools for every HTTP(S) file download instead of shell downloaders (curl/wget/PowerShell). When the source is unknown, rdm_probe first; rdm_download returns a live task id, rdm_control pauses/resumes/cancels/retries/removes it, and rdm_wait long-polls instead of tight polling. rdm_search finds existing download records by name or id across sessions, and rdm_history reads back a recorded transfer. The user can also pause, resume, cancel or remove downloads from the panel, and those clicks are not announced to you — re-read rdm_tasks before acting on a task whose state you saw earlier. Pause, cancel, retry or remove only when the user asks. Pass mirrors reported by rdm_probe as rdm_download sources when a transfer should hedge or fail over. Receipts are structured key=value lines — quote them and do not parse human prose; "-" means unknown. Downloads persist across turns, so check rdm_tasks before re-downloading. Use a shell downloader only when the user explicitly demands one.`
 
 // Re-export the tool surface, protocol pin and pure receipt helpers so tests
 // and docs can inspect them from the built host bundle (`lib/index.js`).
@@ -67,7 +83,13 @@ export {
   sessionIdFromExec,
 } from './tools'
 export { handleRdmApiRequest, registerRdmHostApi } from './host-api'
-export { SessionCatalog, createSessionCatalog, resolveTaskOpenPath } from './session-catalog'
+export {
+  SessionCatalog,
+  createSessionCatalog,
+  desktopAvailability,
+  resolveOpener,
+  resolveTaskOpenPath,
+} from './session-catalog'
 export {
   KernelError,
   normalizeAggregate,
@@ -84,10 +106,35 @@ export { PROTOCOL_VERSION } from './protocol'
 export { PLUGIN_VERSION } from './version'
 
 /**
+ * The section text for one agent/step, or `''` when the rdm_* tools are not
+ * visible there.
+ *
+ * Tool restrictions (read-only agents, plan mode, subagent masks) hide tools
+ * per agent and per step. A policy section that outlived its tools would tell
+ * the model to call tools it does not have, so the section follows the same
+ * visibility check first-party tool-guidance sections use:
+ * `ctx.tools.get(name, scope, toolSet)`. When the registry lookup is absent
+ * (older harness), keep the text rather than silently dropping the policy.
+ */
+function promptSectionText(ctx: HostContext, context: HostPromptSectionContext): string {
+  const tools = ctx.tools as HostToolsService
+  if (typeof tools.get !== 'function') return PROMPT_SECTION_TEXT
+  const sectionContext = context ?? {}
+  try {
+    return tools.get('rdm_download', sectionContext.scope, sectionContext.toolSet) === undefined
+      ? ''
+      : PROMPT_SECTION_TEXT
+  } catch {
+    return PROMPT_SECTION_TEXT
+  }
+}
+
+/**
  * Register the plugin's prompt section. The `systemPrompt` service is declared
- * in {@link inject}, so Cordis only runs `apply` when it exists; place the
- * section directly after the deployment persona so download routing is read
- * before the main task instructions.
+ * in {@link inject}, so Cordis only runs `apply` when it exists. The section
+ * sits in the tool-guidance band (after the last first-party tool order, before
+ * the tools-SDK and environment-bearing suffix) and renders only while the
+ * rdm_* tools are admitted for the current agent/step.
  */
 function registerPromptSection(ctx: HostContext): void {
   const systemPrompt = ctx.systemPrompt as HostSystemPromptService | undefined
@@ -100,16 +147,16 @@ function registerPromptSection(ctx: HostContext): void {
   }
   const baseOrder =
     typeof systemPrompt.getSectionOrder === 'function'
-      ? systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX')
+      ? systemPrompt.getSectionOrder(PROMPT_SECTION_ORDER_ANCHOR)
       : Number.NaN
-  const order = Number.isFinite(baseOrder) ? baseOrder + 1 : 1_000
+  const order = Number.isFinite(baseOrder) ? baseOrder + 1 : PROMPT_SECTION_FALLBACK_ORDER
   ctx.effect(
     () =>
       systemPrompt.section({
         name: PROMPT_SECTION_NAME,
         order,
         interpolate: false,
-        text: PROMPT_SECTION_TEXT,
+        text: (context: HostPromptSectionContext) => promptSectionText(ctx, context),
       }),
     'dsh-rdm: downloads prompt section',
   )

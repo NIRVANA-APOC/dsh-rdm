@@ -1,4 +1,4 @@
-// Client half of the dsh-rdm plugin (0.3.0).
+// Client half of the dsh-rdm plugin (0.3.3).
 //
 // Compiled by scripts/dev-build.sh into the Harness module-loader format:
 // `window.__ModuleLoader__.load({ id: 'dsh-rdm', factory(require) { ... } })`.
@@ -8,19 +8,13 @@
 // Surfaces:
 //   * `sidebar.panellist` entry (id `rdm`) → the root-scoped `main` keyed slot
 //     `rdm`, which renders the download workbench (composer, cards, ledger);
-//   * `shell.overlay` (id `dsh-rdm-progress`) → the active-download popup;
-//   * the session right-sidebar native tab `dsh-rdm/downloads`, registered only
-//     when the profile injects `@deepseek-ai/dsh-client-ui-sidebar-right`.
-//
-// A missing sidebar service must never break the left page: the native
-// registration is awaited in the background and is fully guarded.
+//   * `shell.overlay` (id `dsh-rdm-progress`) → the active-download popup.
 
 import React from 'react'
 import en from '../../locale/en.json'
 import zh from '../../locale/zh.json'
 import { Icon } from './icon'
 import { ReviewPage } from './ledger'
-import { registerNativeSidebar } from './native'
 import { DownloadsPopup } from './overlay'
 import { optionalService } from './services'
 import type { ClientContext, LayoutService, TFunction } from './types'
@@ -94,16 +88,27 @@ function activate(ctx: ClientContext): void {
 
   // Frame-wide active-download popup. This is the one surface that is visible
   // outside the plugin panel, so it renders nothing unless a session is running
-  // a download. The layout service is optional: it is read through `ctx.get`
-  // because `ctx.layout` throws for a service outside `inject`, and declaring
-  // `layout` in `inject` would leave the fiber pending (equally fatal) on a
-  // profile that does not mount it.
-  const layout = optionalService<LayoutService>(ctx, 'layout')
+  // a download.
+  //
+  // The layout service is optional and must be resolved at USE time, not
+  // captured during activation: the DSH page starts every client entry in the
+  // same boot pass, so a service provided by a sibling entry (the layout
+  // package) may still be `pending` while this plugin's `apply` runs — Cordis
+  // publishes a service only once its fiber is active. A value captured here
+  // would therefore stay `undefined` for the life of the page, and the popup's
+  // "open downloads page" button would silently do nothing. It is also read
+  // through `ctx.get` because `ctx.layout` throws for a service outside
+  // `inject`.
   const openDownloads = (): void => {
     try {
       // Throws when the shell has not registered the `rdm` main panel; the
       // popup's own button then stays a no-op instead of failing activation.
-      if (typeof layout?.selectPanel === 'function') layout.selectPanel(SLOT_ID)
+      const layout = optionalService<LayoutService>(ctx, 'layout')
+      if (typeof layout?.selectPanel !== 'function') {
+        console.warn('[dsh-rdm] layout service is unavailable; the downloads panel cannot be selected')
+        return
+      }
+      layout.selectPanel(SLOT_ID)
     } catch (error) {
       console.warn('[dsh-rdm] could not open the downloads panel:', error)
     }
@@ -119,13 +124,6 @@ function activate(ctx: ClientContext): void {
     console.warn('[dsh-rdm] active-download popup registration skipped:', error)
   }
 
-  // Session review surface: native right-sidebar tab. Optional by construction —
-  // when the sidebar package is not injected this logs and returns.
-  try {
-    registerNativeSidebar(ctx, { t })
-  } catch (error) {
-    console.warn('[dsh-rdm] native right-sidebar registration skipped:', error)
-  }
 }
 
 const name = 'dsh-rdm'

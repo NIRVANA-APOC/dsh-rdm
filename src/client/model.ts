@@ -36,6 +36,23 @@ export function taskPath(task: TaskView): string {
   return ''
 }
 
+/**
+ * The directory that contains a record's saved file.
+ *
+ * Finished tasks carry the full file path, so the containing directory is its
+ * parent; running or unfinished tasks only know their destination directory.
+ * This is the path the "open containing folder" affordance acts on (and the
+ * one offered for copying when the host cannot open it).
+ */
+export function taskFolder(task: TaskView): string {
+  if (task.path !== null && task.path !== '') {
+    const trimmed = task.path.replace(/[\\/]+$/, '')
+    const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    if (at > 0) return trimmed.slice(0, at)
+  }
+  return task.dir !== null && task.dir !== '' ? task.dir.replace(/[\\/]+$/, '') : taskPath(task)
+}
+
 /** One server-risk chip. */
 export interface ChipModel {
   key: string
@@ -326,7 +343,7 @@ export function groupByWorkspace(
   return groups
 }
 
-/** Rows grouped by owning session, newest first (session tab / legacy callers). */
+/** Rows grouped by owning session, newest first (legacy callers). */
 export function groupBySession(tasks: TaskView[]): SessionGroup[] {
   const map = new Map<string, SessionGroup>()
   for (const task of tasks) pushTask(map, task, null)
@@ -553,11 +570,6 @@ export function toneOf(task: TaskView): 'live' | 'paused' | 'done' | 'failed' | 
   const state = taskStateOf(task.status)
   if (state === 'done' && task.verified === false) return 'failed'
   return state
-}
-
-/** Whether Stop (cancel) is offered for a record. */
-export function canStop(task: TaskView): boolean {
-  return task.status === 'running' || task.status === 'probing' || task.status === 'queued' || task.status === 'paused'
 }
 
 /** Whether the record's rate is expected to move right now. */

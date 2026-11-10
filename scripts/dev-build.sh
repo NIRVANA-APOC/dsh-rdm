@@ -26,6 +26,9 @@ esac
 
 ESBUILD="$ROOT/node_modules/@esbuild/$OS-$ARCH/esbuild.exe"
 [ -x "$ESBUILD" ] || ESBUILD="$ROOT/node_modules/@esbuild/$OS-$ARCH/esbuild"
+# npm places the platform binary under `bin/`; pnpm hoists it to the package root.
+[ -x "$ESBUILD" ] || ESBUILD="$ROOT/node_modules/@esbuild/$OS-$ARCH/bin/esbuild.exe"
+[ -x "$ESBUILD" ] || ESBUILD="$ROOT/node_modules/@esbuild/$OS-$ARCH/bin/esbuild"
 [ -x "$ESBUILD" ] || { echo "dev-build: esbuild binary not found for $OS-$ARCH" >&2; exit 1; }
 
 # Native tools on Windows need Windows-style paths; MSYS passes /c/... through

@@ -2,26 +2,24 @@
 //
 // Order is fixed by docs/design/0.2.0-agent-native.md §6.2: request chain,
 // full server facts, timing, telemetry, verification, destination, resume
-// state, bounded event log. The drawer is the same component on the global
-// page and in the session tab; the two-column arrangement is presentational
-// only (left: the request's own trace; right: what the server and kernel
-// reported and how it ended).
+// state, bounded event log. The two-column arrangement is presentational only
+// (left: the request's own trace; right: what the server and kernel reported
+// and how it ended).
 //
 // Rules:
 //   * unknown facts render `—`, never a fabricated value and never a row of
 //     ten dashes — a block whose source is absent renders one sentence instead;
 //   * raw kernel messages appear as their own code row, never appended to a
 //     localized label;
-//   * the waveform is client-sampled, so the telemetry block says so in words
-//     (Lead note 2026-11-08) and the kernel's own windows are listed separately;
-//   * actions are low-risk only: reveal, copy, and a two-click Stop.
+//   * the kernel's own trailing windows are listed with their sampling note;
+//   * actions are low-risk only: copy.
 
 import React, { useEffect, useRef, useState } from 'react'
 import { errorText } from './api'
 import { copyText } from './clipboard'
 import type { DetailState } from './data'
 import { eventDetail, formatBytes, formatClock, formatDuration, formatElapsed, formatSpeed, hashPrefix, shortHash } from './format'
-import { canStop, taskPath } from './model'
+import { taskPath } from './model'
 import { LiveRegion, Note, Seal } from './primitives'
 import type { MirrorSource, SourceView, TFunction, TaskDetail, TaskEvent, TaskView } from './types'
 
@@ -56,22 +54,12 @@ function ms(value: number | null): string {
   return formatElapsed(value)
 }
 
-/** Whether the drawer should offer the reveal action. */
-function revealTarget(task: TaskView): string | null {
-  const path = taskPath(task)
-  return path === '' ? null : path
-}
-
 export interface EvidenceDrawerProps {
   t: TFunction
   task: TaskView
   detail: DetailState
   /** Retry a failed detail load. */
   onRetry: () => void
-  /** Reveal the saved file in the host (session surface only). */
-  onReveal?: (path: string) => void
-  /** Stop the transfer (two clicks, handled here). */
-  onStop?: (task: TaskView) => void
   /** DOM id owned by the row for `aria-controls`. */
   id: string
 }
@@ -80,10 +68,9 @@ type CopyKind = 'path' | 'hash' | 'id' | null
 
 /** The evidence drawer for one record. */
 export function EvidenceDrawer(props: EvidenceDrawerProps) {
-  const { t, task, detail, onRetry, onReveal, onStop } = props
+  const { t, task, detail, onRetry } = props
   const [copied, setCopied] = useState<CopyKind>(null)
   const [copyFailed, setCopyFailed] = useState(false)
-  const [confirmStop, setConfirmStop] = useState(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
@@ -96,7 +83,6 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
   useEffect(() => {
     setCopied(null)
     setCopyFailed(false)
-    setConfirmStop(false)
   }, [task.id])
 
   const flash = (kind: CopyKind, ok: boolean): void => {
@@ -109,7 +95,7 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
     }, 2000)
   }
 
-  const path = revealTarget(task)
+  const path = taskPath(task)
   const hash = task.sha256 ?? task.expectedSha256
   const value = detail.value
   const full: TaskDetail | null = value?.detail ?? null
@@ -140,18 +126,6 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
   return (
     <div className="rdm2-drawer" id={props.id} role="region" aria-label={t('drawer.regionLabel', { name: task.fileName || task.id })}>
       <div className="rdm2-drawer-actions">
-        {onReveal !== undefined && path !== null ? (
-          <button
-            type="button"
-            className="rdm2-button"
-            data-rdm2-action="reveal"
-            onClick={() => {
-              onReveal(path)
-            }}
-          >
-            {t('record.reveal')}
-          </button>
-        ) : null}
         {path !== null ? (
           <button
             type="button"
@@ -186,25 +160,6 @@ export function EvidenceDrawer(props: EvidenceDrawerProps) {
         >
           {t('record.copyId')}
         </button>
-        {onStop !== undefined && canStop(task) ? (
-          <button
-            type="button"
-            className="rdm2-button"
-            data-tone="danger"
-            data-rdm2-action="stop"
-            data-confirm={confirmStop ? 'true' : 'false'}
-            onClick={() => {
-              if (!confirmStop) {
-                setConfirmStop(true)
-                return
-              }
-              setConfirmStop(false)
-              onStop(task)
-            }}
-          >
-            {confirmStop ? t('record.confirmStop') : t('record.stop')}
-          </button>
-        ) : null}
         {copyLabel !== '' ? <span className="rdm2-copy-flash">{copyLabel}</span> : null}
         <LiveRegion message={copyLabel} />
       </div>

@@ -8,9 +8,11 @@
 // only caller that supplies the real catalog.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { dirname } from 'node:path'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 
-import { apply, KernelError, SessionCatalog, createSessionCatalog, handleRdmApiRequest, resolveTaskOpenPath } from '../lib/index.js'
+import { PROMPT_SECTION_TEXT, apply, KernelError, SessionCatalog, createSessionCatalog, handleRdmApiRequest, resolveTaskOpenPath } from '../lib/index.js'
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -78,7 +80,8 @@ const WORKSPACES = [{ id: 'ws1', title: 'dsh-rdm', path: 'C:\\ws' }]
 
 /**
  * Fake kernel. Behavior is overridable per test while the call log always
- * records the real invocation order (needed for the remove-notify snapshot).
+ * records the real invocation order (e.g. a UI control action must not read
+ * the task before acting).
  */
 function makeKernel(options = {}) {
   const log = []
@@ -117,23 +120,17 @@ function makeKernel(options = {}) {
   }
 }
 
-/** Fake catalog that records every describe/notify/openPath invocation. */
+/** Fake catalog that records every describe/openPath invocation. */
 function makeCatalog(options = {}) {
   const described = []
-  const notified = []
   const opened = []
   return {
     described,
-    notified,
     opened,
     async describe(ids) {
       described.push([...ids])
       if (options.describeError !== undefined) throw options.describeError
       return options.describeResult ?? { sessions: SESSIONS, workspaces: WORKSPACES }
-    },
-    async notify(sessionId, text) {
-      notified.push({ sessionId, text })
-      return options.notifyResult !== false
     },
     async openPath(path, target) {
       opened.push({ path, target })
@@ -212,7 +209,7 @@ test('batch control returns one result per id and keeps going after a failure', 
   const catalog = makeCatalog()
   const payload = await call(
     kernel,
-    { action: 'control', ids: ['t_a', 't_b', 't_c'], control: 'pause', notify: false },
+    { action: 'control', ids: ['t_a', 't_b', 't_c'], control: 'pause' },
     catalog,
   )
 
@@ -230,7 +227,7 @@ test('batch control returns one result per id and keeps going after a failure', 
   assert.deepEqual(controlled, ['t_a', 't_b', 't_c'])
 })
 
-test('control notifies only an unfinished task owned by a live-agent session', async () => {
+test('control executes the verb only and never announces a user action to an agent', async () => {
   const kernel = makeKernel({
     tasks: [
       task({ id: 't_running', status: 'running' }),
@@ -238,6 +235,8 @@ test('control notifies only an unfinished task owned by a live-agent session', a
       task({ id: 't_orphan', status: 'paused', sessionId: null }),
     ],
   })
+  // The catalog deliberately exposes no `notify` surface anymore: the route
+  // must not depend on one to execute a control action.
   const catalog = makeCatalog()
   const payload = await call(
     kernel,
@@ -246,72 +245,43 @@ test('control notifies only an unfinished task owned by a live-agent session', a
   )
 
   assert.equal(payload.ok, true)
-  assert.equal(catalog.notified.length, 1, 'only the unfinished, session-owned task is announced')
-  assert.equal(catalog.notified[0].sessionId, 'sess_one')
-  assert.match(catalog.notified[0].text, /^\[dsh-rdm\] The user paused download t_running \("file\.zip"\)/)
-  assert.match(catalog.notified[0].text, /user action, not a failure/)
-  assert.match(catalog.notified[0].text, /rdm_control action=resume taskId=t_running/)
   assert.deepEqual(
-    payload.value.results.map((item) => item.notified),
-    [true, false, false],
+    payload.value.results.map((item) => item.ok),
+    [true, true, true],
   )
-})
-
-test('notify:false, a cold agent and a failed notification never fail the control result', async () => {
-  const kernel = makeKernel({ tasks: [task({ id: 't_a' }), task({ id: 't_b' })] })
-  const muted = makeCatalog()
-  await call(kernel, { action: 'control', ids: ['t_a'], control: 'pause', notify: false }, muted)
-  assert.equal(muted.notified.length, 0, 'notify:false suppresses the notice')
-  // notify is only defined for pause/cancel/remove; resume never announces.
-  const resumed = makeCatalog()
-  await call(kernel, { action: 'control', ids: ['t_a'], control: 'resume', notify: true }, resumed)
-  assert.equal(resumed.notified.length, 0, 'resume is not a notifying verb')
-
-  const cold = makeCatalog({ notifyResult: false })
-  const coldPayload = await call(kernel, { action: 'control', ids: ['t_b'], control: 'cancel' }, cold)
-  assert.equal(coldPayload.ok, true)
-  assert.equal(coldPayload.value.results[0].ok, true)
-  assert.equal(coldPayload.value.results[0].notified, false)
-
-  const broken = makeCatalog()
-  broken.notify = async () => {
-    throw new Error('session controller gone')
-  }
-  const brokenPayload = await call(
+  assert.equal('notified' in payload.value.results[0], false, 'the result has no notice flag')
+  assert.equal('notify' in catalog, false, 'no catalog notification surface is needed')
+  // No pre-action read: each id gets exactly one control call.
+  assert.deepEqual(
+    kernel.log.map((entry) => entry.method),
+    ['control', 'control', 'control'],
+  )
+  // A caller that still sends the removed `notify` field is simply ignored.
+  const legacy = await call(
     kernel,
-    { action: 'control', ids: ['t_a'], control: 'cancel' },
-    broken,
+    { action: 'control', ids: ['t_running'], control: 'pause', notify: true },
+    catalog,
   )
-  assert.equal(brokenPayload.ok, true)
-  assert.equal(brokenPayload.value.results[0].ok, true)
-  assert.equal(brokenPayload.value.results[0].notified, false)
+  assert.equal(legacy.ok, true)
+  assert.equal('notified' in legacy.value.results[0], false)
 })
 
-test('remove reads the task before removing so the notice has the record', async () => {
+test('remove acts on the id directly and reports the removed record', async () => {
   const kernel = makeKernel({ tasks: [task({ id: 't_remove', status: 'running' })] })
-  const catalog = makeCatalog()
   const payload = await call(
     kernel,
     { action: 'control', ids: ['t_remove'], control: 'remove', deletePart: true },
-    catalog,
+    makeCatalog(),
   )
 
   assert.equal(payload.ok, true)
   assert.deepEqual(
     kernel.log.map((entry) => entry.method),
-    ['get', 'control'],
-    'the pre-remove record is read first',
+    ['control'],
+    'remove does not read a pre-action snapshot',
   )
-  assert.equal(kernel.log[1].deletePart, true)
-  assert.equal(catalog.notified.length, 1)
-  assert.match(catalog.notified[0].text, /The user removed download t_remove \("file\.zip"\)/)
-  assert.match(catalog.notified[0].text, /task record is gone/)
-  assert.deepEqual(payload.value.results[0], {
-    id: 't_remove',
-    ok: true,
-    task: null,
-    notified: true,
-  })
+  assert.equal(kernel.log[0].deletePart, true)
+  assert.deepEqual(payload.value.results[0], { id: 't_remove', ok: true, task: null })
 })
 
 test('legacy single-id control keeps the {action, task, deletePart} envelope', async () => {
@@ -421,6 +391,55 @@ test('open rejects unknown tasks, missing paths, bad targets and opener failures
   )
   assert.equal(failed.ok, false)
   assert.equal(failed.error.code, 'not_found')
+})
+
+test('open surfaces the host capability gap as the unsupported code', async () => {
+  const kernel = makeKernel({
+    tasks: [task({ id: 't_done', status: 'completed', path: '/downloads/done.zip', dir: '/downloads' })],
+  })
+  const detail =
+    'the host has no graphical desktop session (DISPLAY and WAYLAND_DISPLAY are unset), so it cannot open a file manager window'
+  const catalog = makeCatalog({
+    openResult: { opened: false, code: 'unsupported', error: detail },
+  })
+  const payload = await call(kernel, { action: 'open', id: 't_done', target: 'file' }, catalog)
+  assert.equal(payload.ok, false)
+  assert.deepEqual(payload.error, { code: 'unsupported', message: detail })
+  // The task path is still resolved on the host; only the opener refused.
+  assert.deepEqual(catalog.opened, [{ path: '/downloads/done.zip', target: 'file' }])
+
+  // A catalog that explains nothing still yields an actionable envelope.
+  const bare = makeCatalog({ openResult: { opened: false, code: 'unsupported' } })
+  const barePayload = await call(kernel, { action: 'open', id: 't_done', target: 'file' }, bare)
+  assert.equal(barePayload.ok, false)
+  assert.equal(barePayload.error.code, 'unsupported')
+  assert.match(barePayload.error.message, /cannot open a file manager window/)
+})
+
+test('open reports unsupported end-to-end on a headless POSIX host', async (t) => {
+  if (process.platform !== 'linux') {
+    return t.skip('the headless capability branch is Linux-specific')
+  }
+  if ((process.env.DISPLAY ?? '') !== '' || (process.env.WAYLAND_DISPLAY ?? '') !== '') {
+    return t.skip('this host has a graphical session; the real opener would launch')
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-rdm-hostapi-'))
+  const filePath = join(dir, 'done.zip')
+  writeFileSync(filePath, 'payload')
+  try {
+    const kernel = makeKernel({
+      tasks: [task({ id: 't_file', status: 'completed', path: filePath, dir })],
+    })
+    // The real catalog reads the real environment: no display here, so the
+    // route must answer unsupported instead of the old silent opened:true.
+    const catalog = createSessionCatalog(makeContext({}))
+    const payload = await call(kernel, { action: 'open', id: 't_file', target: 'file' }, catalog)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'unsupported')
+    assert.match(payload.error.message, /DISPLAY/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // ── envelope ────────────────────────────────────────────────────────────────
@@ -572,47 +591,9 @@ test('catalog single-flights concurrent describe batches and never throws', asyn
   assert.deepEqual(degraded.workspaces, [])
 })
 
-test('catalog notify only reaches a live agent through sessionController.prompt', async () => {
-  const prompts = []
-  const liveServices = {
-    agents: { get: (id) => (id === 's1' ? { id } : undefined) },
-    sessionController: {
-      prompt: async (request) => {
-        prompts.push(request)
-        return { accepted: true }
-      },
-    },
-  }
-  const live = createSessionCatalog(makeContext(liveServices))
-  assert.equal(await live.notify('s1', 'hello agent'), true)
-  assert.equal(prompts.length, 1)
-  assert.equal(prompts[0].sessionId, 's1')
-  assert.equal(prompts[0].mode, 'queue')
-  assert.deepEqual(prompts[0].content, [{ type: 'text', text: 'hello agent' }])
-  assert.match(prompts[0].requestId, /^rdm-s1-\d+-\d+$/)
-  assert.ok(typeof prompts[0].clientTimeZone === 'string' && prompts[0].clientTimeZone !== '')
-
-  // A cold session is never resumed for a notice.
-  const cold = createSessionCatalog(
-    makeContext({ agents: { get: () => undefined }, sessionController: liveServices.sessionController }),
-  )
-  assert.equal(await cold.notify('s1', 'hello agent'), false)
-  assert.equal(prompts.length, 1, 'no prompt for a cold agent')
-
-  // A failing controller is reported as "not notified", never thrown.
-  const failing = createSessionCatalog(
-    makeContext({
-      agents: { get: () => ({ id: 's1' }) },
-      sessionController: {
-        prompt: async () => {
-          throw new Error('controller disposed')
-        },
-      },
-    }),
-  )
-  assert.equal(await failing.notify('s1', 'hello agent'), false)
-  assert.equal(await failing.notify('', 'hello agent'), false)
-  assert.equal(await failing.notify('s1', '   '), false)
+test('catalog has no agent-notification surface', () => {
+  const catalog = createSessionCatalog(makeContext({}))
+  assert.equal(typeof catalog.notify, 'undefined')
 })
 
 test('catalog openPath validates before launching any opener', async () => {
@@ -625,7 +606,13 @@ test('catalog openPath validates before launching any opener', async () => {
   assert.equal(nul.opened, false)
   assert.equal(nul.code, 'invalid_request')
 
-  const missing = await catalog.openPath('C:\\definitely-missing\\dsh-rdm-test.zip', 'file')
+  // The absolute-path dialect depends on the host, so the missing-target probe
+  // must use the dialect of the platform the test actually runs on.
+  const missingPath =
+    process.platform === 'win32'
+      ? 'C:\\definitely-missing\\dsh-rdm-test.zip'
+      : '/definitely-missing/dsh-rdm-test.zip'
+  const missing = await catalog.openPath(missingPath, 'file')
   assert.equal(missing.opened, false)
   assert.equal(missing.code, 'not_found')
 
@@ -650,10 +637,18 @@ test('apply registers seven tools, the v3 route and the prompt section', () => {
   const routes = []
   const sections = []
   const effects = []
+  let toolsVisible = true
+  const sectionOrders = { HARNESS_IDENTITY: -1000, MCP_SERVERS: 3100, DEPLOYMENT_PERSONA_SUFFIX: 10200 }
   const ctx = {
-    tools: { register: (tool) => tools.push(tool) },
+    tools: {
+      register: (tool) => tools.push(tool),
+      get: (name) => (name === 'rdm_download' && toolsVisible ? { name } : undefined),
+    },
     connection: { fetch: { register: (registration) => routes.push(registration) } },
-    systemPrompt: { section: (section) => sections.push(section), getSectionOrder: () => 7 },
+    systemPrompt: {
+      section: (section) => sections.push(section),
+      getSectionOrder: (name) => sectionOrders[name],
+    },
     effect: (callback) => {
       effects.push(callback)
       return callback()
@@ -669,7 +664,19 @@ test('apply registers seven tools, the v3 route and the prompt section', () => {
   assert.equal(routes.length, 1)
   assert.equal(routes[0].path, '/api/dsh-rdm/api')
   assert.deepEqual(routes[0].methods, ['POST'])
+
+  // The prompt section sits in the tool-guidance band (after the last
+  // first-party tool order) and renders only while the rdm_* tools are visible
+  // to the agent/step.
+  assert.equal(sections.length, 1)
   assert.equal(sections[0].name, 'dsh-rdm:downloads')
+  assert.equal(sections[0].order, 3101)
+  assert.equal(sections[0].interpolate, false)
+  assert.equal(typeof sections[0].text, 'function')
+  assert.equal(sections[0].text({ scope: {}, toolSet: undefined }), PROMPT_SECTION_TEXT)
+  toolsVisible = false
+  assert.equal(sections[0].text({ scope: {}, toolSet: undefined }), '')
+  toolsVisible = true
 
   // Disposing every registered effect (the KernelService was never started)
   // must tear down cleanly.

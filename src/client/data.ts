@@ -1,37 +1,16 @@
 // Live data layer for the review surfaces.
 //
-// Two feeds share one polling contract:
-//   * `useGlobalLedger()` — one process-wide poll of every task, shared by the
-//     global workbench and the top-right progress popup. The poll starts with
-//     the first subscriber and stops with the last, so a closed panel leaves no
-//     timer behind.
-//   * `useLedger({ sessionId })` — a scoped poll for the session right-sidebar
-//     tab (the host filters, and this client filters defensively).
-//
-// The kernel exposes trailing throughput *windows*, not a stored series, so the
-// session tab's micro strip is sampled here: one sample per poll, newest at the
-// right edge. `historySeed` exists only so the static preview harness can render
-// a steady state; the product never passes it.
+// One process-wide poll (`useGlobalLedger()`) feeds every mounted review
+// surface: the workbench page and the active-download popup. The poll starts
+// with the first subscriber and stops with the last, so a closed panel leaves no
+// timer behind.
 
-import { useEffect, useRef, useState } from 'react'
-import { aggregateOf, getTask, listTasks, RouteError, toRouteError } from './api'
+import { useEffect, useState } from 'react'
+import { getTask, listTasks, RouteError, toRouteError } from './api'
 import type { Aggregate, GetValue, KernelInfo, SessionMeta, TaskView, WorkspaceMeta } from './types'
 
 /** Poll cadence in milliseconds (protocol design: 1 s self-healing poll). */
 export const POLL_MS = 1000
-
-/** Samples kept per record for the session tab: 40 s at 1 Hz. */
-export const ROW_SAMPLES = 40
-
-/** Optional pre-seeded history for the static preview harness only. */
-export interface HistorySeed {
-  tasks?: Record<string, number[]>
-}
-
-/** Per-record rate history for the session tab's micro strips. */
-export interface RateHistory {
-  tasks: Map<string, number[]>
-}
 
 /** What a review surface needs to render. */
 export interface LedgerState {
@@ -46,15 +25,6 @@ export interface LedgerState {
   /** Set when a later poll failed after data existed; polling keeps retrying. */
   banner: RouteError | null
   updatedAt: number
-  history: RateHistory
-}
-
-/** Options for the scoped poll loop. */
-export interface UseLedgerOptions {
-  /** Native session surface scope; the host filters, and this client also filters defensively. */
-  sessionId?: string
-  /** Preview-only seed for the micro strips. */
-  historySeed?: HistorySeed
 }
 
 const IDLE_KERNEL: KernelInfo = {
@@ -81,8 +51,6 @@ const EMPTY_AGGREGATE: Aggregate = {
   riskCount: 0,
 }
 
-const NO_HISTORY: RateHistory = { tasks: new Map() }
-
 function emptyState(): LedgerState {
   return {
     phase: 'loading',
@@ -94,53 +62,25 @@ function emptyState(): LedgerState {
     error: null,
     banner: null,
     updatedAt: 0,
-    history: NO_HISTORY,
   }
-}
-
-function seedHistory(seed: HistorySeed | undefined): RateHistory {
-  const tasks = new Map<string, number[]>()
-  if (seed?.tasks !== undefined) {
-    for (const [id, values] of Object.entries(seed.tasks)) tasks.set(id, values.slice(-ROW_SAMPLES))
-  }
-  return { tasks }
-}
-
-function isSamplingStatus(status: string): boolean {
-  return status !== 'completed' && status !== 'failed' && status !== 'cancelled'
-}
-
-function pushSample(values: number[], sample: number, capacity: number): number[] {
-  const next = values.length >= capacity ? values.slice(values.length - capacity + 1) : values.slice()
-  next.push(Math.max(0, sample))
-  return next
 }
 
 function visible(): boolean {
   return typeof document === 'undefined' || document.visibilityState !== 'hidden'
 }
 
-/** Turn one list payload into a ready state (shared by both feeds). */
-function readyState(
-  value: Awaited<ReturnType<typeof listTasks>>,
-  history: RateHistory,
-  scopedSession: string | undefined,
-): LedgerState {
-  const scoped = scopedSession !== undefined && scopedSession !== ''
-  // Defensive client-side scope: while the host/kernel pair lands session
-  // attribution, a host may ignore the `sessionId` request field.
-  const tasks = scoped ? value.tasks.filter((task) => task.sessionId === scopedSession) : value.tasks
+/** Turn one list payload into a ready state. */
+function readyState(value: Awaited<ReturnType<typeof listTasks>>): LedgerState {
   return {
     phase: 'ready',
     kernel: value.kernel,
-    tasks,
-    aggregate: scoped ? aggregateOf(tasks) : value.aggregate,
+    tasks: value.tasks,
+    aggregate: value.aggregate,
     sessions: value.sessions,
     workspaces: value.workspaces,
     error: null,
     banner: null,
     updatedAt: Date.now(),
-    history,
   }
 }
 
@@ -192,7 +132,7 @@ async function tickGlobal(feed: GlobalFeed): Promise<void> {
   try {
     const value = await listTasks({})
     if (!feed.started) return
-    publish(feed, readyState(value, NO_HISTORY, undefined))
+    publish(feed, readyState(value))
   } catch (error) {
     if (!feed.started) return
     const routeError = toRouteError(error)
@@ -200,7 +140,7 @@ async function tickGlobal(feed: GlobalFeed): Promise<void> {
     publish(
       feed,
       previous.phase === 'ready'
-        ? { ...previous, banner: routeError, history: NO_HISTORY }
+        ? { ...previous, banner: routeError }
         : { ...previous, phase: 'error', error: routeError, banner: routeError },
     )
   } finally {
@@ -272,96 +212,6 @@ export function refreshGlobalLedger(): void {
     feed.timer = undefined
   }
   void tickGlobal(feed)
-}
-
-/* -------------------------------------------------------------- session feed */
-
-/**
- * Poll `list` for one session-scoped surface.
- *
- * The returned object is replaced on every successful poll, so a component
- * that consumes it re-renders once a second.
- */
-export function useLedger(options: UseLedgerOptions = {}): LedgerState {
-  const sessionId = options.sessionId
-  const [state, setState] = useState<LedgerState>(() => ({
-    ...emptyState(),
-    history: seedHistory(options.historySeed),
-  }))
-  // The poll loop reads these refs instead of closing over state, so the
-  // interval is created once and never restarted by a render.
-  const historyRef = useRef<RateHistory>(state.history)
-  const aliveRef = useRef(true)
-  const busyRef = useRef(false)
-
-  useEffect(() => {
-    aliveRef.current = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let cancelled = false
-
-    const schedule = (delay: number): void => {
-      if (cancelled) return
-      timer = setTimeout(() => {
-        void tick()
-      }, delay)
-    }
-
-    const tick = async (): Promise<void> => {
-      if (cancelled) return
-      if (!visible() || busyRef.current) {
-        schedule(POLL_MS)
-        return
-      }
-      busyRef.current = true
-      try {
-        const value = await listTasks(sessionId === undefined || sessionId === '' ? {} : { sessionId })
-        if (cancelled || !aliveRef.current) return
-        // One sample per unfinished record for the session tab's micro strip.
-        const previous = historyRef.current
-        const nextTasks = new Map<string, number[]>()
-        for (const task of value.tasks) {
-          if (!isSamplingStatus(task.status)) continue
-          const prior = previous.tasks.get(task.id) ?? []
-          nextTasks.set(task.id, pushSample(prior, task.speedBps, ROW_SAMPLES))
-        }
-        historyRef.current = { tasks: nextTasks }
-        setState(readyState(value, historyRef.current, sessionId))
-      } catch (error) {
-        if (cancelled || !aliveRef.current) return
-        const routeError = toRouteError(error)
-        setState((previous) => {
-          if (previous.phase === 'ready') return { ...previous, banner: routeError }
-          return { ...previous, phase: 'error', error: routeError, banner: routeError, history: historyRef.current }
-        })
-      } finally {
-        busyRef.current = false
-        schedule(POLL_MS)
-      }
-    }
-
-    const onVisibility = (): void => {
-      if (!visible() || cancelled) return
-      if (timer !== undefined) clearTimeout(timer)
-      void tick()
-    }
-
-    if (options.historySeed !== undefined) {
-      historyRef.current = seedHistory(options.historySeed)
-    }
-
-    void tick()
-    document.addEventListener?.('visibilitychange', onVisibility)
-    return () => {
-      cancelled = true
-      aliveRef.current = false
-      if (timer !== undefined) clearTimeout(timer)
-      document.removeEventListener?.('visibilitychange', onVisibility)
-    }
-    // The loop is intentionally created once per mount/session scope.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, options.historySeed])
-
-  return state
 }
 
 /* ------------------------------------------------------------------- detail */

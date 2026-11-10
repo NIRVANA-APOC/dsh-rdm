@@ -257,11 +257,17 @@ interface HostConnectionService {
   }
 }
 
+/** Context the system-prompt service passes to a section's text callback. */
+interface HostPromptSectionContext {
+  scope?: unknown
+  toolSet?: unknown
+}
+
 /** One ordered system-prompt section. */
 interface HostPromptSection {
   name: string
   order: number
-  text: string | ((context: unknown) => string)
+  text: string | ((context: HostPromptSectionContext) => string)
   interpolate?: boolean
 }
 
@@ -272,6 +278,11 @@ interface HostSystemPromptService {
 
 interface HostToolsService {
   register(tool: unknown): () => void
+  /**
+   * Registry lookup used by tool-guidance sections: `undefined` when the tool
+   * is not visible to this agent/step (restricted away by a preset or mask).
+   */
+  get?(name: string, scope?: unknown, toolSet?: unknown): unknown
 }
 
 /** A Cordis effect callback: registers something and returns its disposer. */

@@ -6,15 +6,17 @@
  * for every owning session. That resolution is shared by the browser route
  * (`list`) and the model-facing `rdm_search` tool, cached briefly, and kept
  * strictly optional: a deployment without `sessionQuery`,
- * `workspaceRegistry`, `sessions`, `agents` or `sessionController` still
- * serves a complete (if unlabelled) task list.
+ * `workspaceRegistry` or `sessions` still serves a complete (if unlabelled)
+ * task list.
  *
- * The same module owns the two side effects the review UI triggers:
- *  - {@link SessionCatalog.notify} hands a short model-facing note to a live
- *    agent (never resumes a cold session);
+ * The same module owns the side effect the review UI triggers:
  *  - {@link SessionCatalog.openPath} launches the host desktop opener for a
  *    file or folder (the route resolves the path from the task, so no
- *    arbitrary browser-supplied path reaches the shell).
+ *    arbitrary browser-supplied path reaches the shell). The opener is honest
+ *    about deployment limits: a host without a graphical session or a
+ *    resolvable `xdg-open` reports `unsupported` instead of pretending a
+ *    window appeared, and a failed spawn (ENOENT, EACCES, ...) is observed
+ *    before success is reported.
  *
  * This module imports Node built-ins only; like the rest of the host half it
  * must not depend on `@deepseek-ai/*` packages at runtime.
@@ -23,10 +25,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 
-import { normalizeSessionId } from './kernel-client'
 import type { TaskView } from './protocol'
 
 // ── Public value shapes ─────────────────────────────────────────────────────
@@ -62,7 +63,7 @@ export interface SessionCatalogResult {
 }
 
 /** Failure classification carried by {@link OpenPathResult}. */
-export type OpenPathFailure = 'invalid_request' | 'not_found' | 'io'
+export type OpenPathFailure = 'invalid_request' | 'not_found' | 'io' | 'unsupported'
 
 /** Canonical value of {@link SessionCatalog.openPath}. */
 export interface OpenPathResult {
@@ -71,6 +72,61 @@ export interface OpenPathResult {
   error?: string
   /** Stable classification for the route's error envelope. */
   code?: OpenPathFailure
+}
+
+/** One resolved desktop opener command line. */
+export interface OpenerSpec {
+  /** Executable to spawn (an absolute path on POSIX). */
+  command: string
+  /** Arguments passed verbatim; on POSIX the resolved task path comes last. */
+  args: string[]
+}
+
+/** Outcome of {@link desktopAvailability}: can this host open a file manager? */
+export interface DesktopAvailability {
+  /** `true` when the platform/env pair has a launchable desktop opener. */
+  available: boolean
+  /** Why the host cannot open a desktop window (`ready` when it can). */
+  reason: 'ready' | 'no_display' | 'no_opener'
+  /** Human-readable explanation; present only when `available` is false. */
+  error?: string
+}
+
+/** Discriminated result of {@link resolveOpener}. */
+export type OpenerResolution =
+  | { ok: true; spec: OpenerSpec }
+  | { ok: false; code: 'unsupported'; error: string }
+
+/** The subset of a spawned child that the opener launcher observes. */
+export interface OpenerChildLike {
+  /** Listens for `'spawn'` (success) and `'error'` (spawn failure). */
+  on(event: string, listener: (...args: any[]) => void): unknown
+  /** Detaches the started child from the host event loop. */
+  unref(): void
+}
+
+/** Child-process factory signature of {@link OpenPathEnvironment.spawn}. */
+export type SpawnOpener = (
+  command: string,
+  args: readonly string[],
+  options: { detached: boolean; stdio: 'ignore'; windowsHide: boolean },
+) => OpenerChildLike
+
+/**
+ * Injectable host facts for {@link SessionCatalog.openPath}.
+ *
+ * Production uses `process.platform`, `process.env` and `child_process.spawn`;
+ * tests substitute these fields to exercise every platform/branch from one OS.
+ */
+export interface OpenPathEnvironment {
+  /** Host platform discriminant (`process.platform` by default). */
+  platform: string
+  /** Environment read for DISPLAY/WAYLAND_DISPLAY and PATH detection. */
+  env: Record<string, string | undefined>
+  /** Child-process factory (defaults to `child_process.spawn`). */
+  spawn: SpawnOpener
+  /** Bound on the child 'spawn' vs 'error' race. */
+  startTimeoutMs: number
 }
 
 /**
@@ -128,31 +184,6 @@ interface WorkspaceEntryLike {
 /** `ctx.workspaceRegistry` (durable workspace registry; `list()` is synchronous). */
 interface WorkspaceRegistryService {
   list(): unknown
-}
-
-/** `ctx.agents` (live-agent registry). */
-interface AgentsService {
-  get(id: string): unknown
-}
-
-/**
- * Request shape of `sessionController.prompt` (`SessionPromptRequest`).
- *
- * The Harness service accepts a second cancellation argument; the catalog
- * deliberately omits it so a notice is never cancelled by a background route.
- */
-interface SessionPromptRequestLike {
-  requestId: string
-  sessionId: string
-  mode: 'queue'
-  content: Array<{ type: 'text'; text: string }>
-  clientTimeZone: string
-}
-
-/** `ctx.sessionController` (the host service behind `ctx.remote.session`). */
-interface SessionControllerService {
-  /** The real Host method takes a cancellation signal second (it may be unused). */
-  prompt(request: SessionPromptRequestLike, signal?: AbortSignal): unknown
 }
 
 // ── Cache / bound constants ─────────────────────────────────────────────────
@@ -286,16 +317,24 @@ export class SessionCatalog implements SessionCatalogLike {
   private workspaceCache: { entries: WorkspaceEntryLike[]; at: number } | null = null
   /** Single-flight title batch: concurrent describe calls join one read. */
   private titleInflight: Promise<void> | null = null
-  /** Monotonic suffix so notice request ids are unique within a process. */
-  private promptSeq = 0
+  /** Platform/env/spawn facts the desktop opener reads (injectable for tests). */
+  private readonly openEnvironment: OpenPathEnvironment
 
   /**
    * @param ctx - Host plugin context (services are read through `ctx.get`).
    * @param now - Clock seam for tests; defaults to `Date.now`.
+   * @param openEnvironment - Platform/env/spawn seam for tests; production
+   *   omits it and the real process environment and `child_process.spawn` are
+   *   used.
    */
-  constructor(ctx: HostContext, now: () => number = Date.now) {
+  constructor(
+    ctx: HostContext,
+    now: () => number = Date.now,
+    openEnvironment: Partial<OpenPathEnvironment> = {},
+  ) {
     this.ctx = ctx
     this.now = now
+    this.openEnvironment = resolveOpenPathEnvironment(openEnvironment)
   }
 
   /**
@@ -341,64 +380,23 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   /**
-   * Deliver one short note to the live agent that owns a session.
-   *
-   * A cold (not currently live) session is never resumed for a notice: the
-   * agent could otherwise wake up just to read "a human clicked pause". The
-   * prompt is queued so it is processed with the agent's next turn.
-   *
-   * @param sessionId - owning session id.
-   * @param text - model-facing notice text.
-   * @returns `true` only when the live agent accepted the prompt.
-   */
-  async notify(sessionId: string, text: string): Promise<boolean> {
-    try {
-      const id = normalizeSessionId(sessionId)
-      if (id === null || text.trim() === '') return false
-      const agents = this.ctx.get<AgentsService>('agents')
-      const agent = agents === undefined || agents === null ? undefined : agents.get(id)
-      if (agent === undefined || agent === null) return false
-      const controller = this.ctx.get<SessionControllerService>('sessionController')
-      if (
-        controller === undefined ||
-        controller === null ||
-        typeof controller.prompt !== 'function'
-      ) {
-        return false
-      }
-      this.promptSeq += 1
-      await controller.prompt(
-        {
-          requestId: `rdm-${id}-${Date.now()}-${this.promptSeq}`,
-          sessionId: id,
-          mode: 'queue',
-          content: [{ type: 'text', text }],
-          clientTimeZone: resolveClientTimeZone(),
-        },
-        // The Host prompt gate calls `signal.throwIfAborted()` before admitting
-        // the message, so a real (never-aborted) signal keeps this call valid
-        // while still letting it run detached from any request.
-        new AbortController().signal,
-      )
-      return true
-    } catch {
-      // Notification is best-effort by contract; the control result stands.
-      return false
-    }
-  }
-
-  /**
    * Open a file or folder with the host desktop opener.
    *
    * Validation happens here (absolute path, no NUL, existing target) so the
-   * browser route can only ever launch paths it resolved from a task. The
-   * opener is spawned detached with ignored stdio: the plugin never waits for
-   * or reports the file manager's exit status.
+   * browser route can only ever launch paths it resolved from a task. Then:
+   *  1. capability detection ({@link resolveOpener}) rejects a host without a
+   *     graphical session or a resolvable `xdg-open` as `unsupported`;
+   *  2. the child 'spawn' vs 'error' race is observed before success is
+   *     reported, so a missing/unlaunchable opener becomes `io` instead of a
+   *     silent no-op;
+   *  3. the started child is detached and unref'd; the plugin never waits for
+   *     the file manager to exit.
    *
    * @param path - absolute file or directory path.
    * @param target - `file` opens the file, `folder` reveals/opens its folder.
    */
   async openPath(path: string, target: 'file' | 'folder'): Promise<OpenPathResult> {
+    const platform = this.openEnvironment.platform
     if (target !== 'file' && target !== 'folder') {
       return { opened: false, code: 'invalid_request', error: 'target must be "file" or "folder"' }
     }
@@ -409,25 +407,24 @@ export class SessionCatalog implements SessionCatalogLike {
     if (candidate.includes('\0')) {
       return { opened: false, code: 'invalid_request', error: 'the path contains a NUL character' }
     }
-    if (!isAbsolutePath(candidate)) {
+    if (!isAbsolutePath(candidate, platform)) {
       return { opened: false, code: 'invalid_request', error: `the path is not absolute: ${candidate}` }
     }
     if (!existsSync(candidate)) {
       return { opened: false, code: 'not_found', error: `the path does not exist: ${candidate}` }
     }
+    const resolution = resolveOpener(candidate, target, platform, this.openEnvironment.env)
+    if (!resolution.ok) {
+      return { opened: false, code: resolution.code, error: resolution.error }
+    }
     try {
-      const spec = openerSpec(candidate, target)
-      const child = spawn(spec.command, spec.args, {
+      const child = this.openEnvironment.spawn(resolution.spec.command, resolution.spec.args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
       })
-      // `error` has no listener by default and would crash the host process.
-      child.on('error', () => {
-        /* The opener is advisory; an async spawn failure is not actionable. */
-      })
-      child.unref()
-      return { opened: true }
+      const failure = await confirmOpenerStart(child, this.openEnvironment.startTimeoutMs)
+      return failure === null ? { opened: true } : { opened: false, code: 'io', error: failure }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { opened: false, code: 'io', error: `the desktop opener failed: ${message}` }
@@ -586,44 +583,221 @@ export class SessionCatalog implements SessionCatalogLike {
 
 // ── Desktop opener helpers ──────────────────────────────────────────────────
 
+/**
+ * Bound on the child `'spawn'` vs `'error'` race.
+ *
+ * A successful fork reports `'spawn'` within a tick or two; a missing or
+ * unlaunchable executable reports `'error'` just as quickly. The bound only
+ * protects the route against a pathological host, it is not a "file manager
+ * launched" delay.
+ */
+const OPENER_START_TIMEOUT_MS = 1_500
+
+/** Environment variables that mark a live graphical session on POSIX hosts. */
+const DISPLAY_VARIABLES = ['DISPLAY', 'WAYLAND_DISPLAY'] as const
+
+/** Capability failure when the host has no graphical desktop session. */
+const NO_DISPLAY_ERROR =
+  'the host has no graphical desktop session (DISPLAY and WAYLAND_DISPLAY are unset), ' +
+  'so it cannot open a file manager window; copy the path and open it on the machine running this download'
+
+/** Capability failure when the POSIX opener is not installed. */
+const NO_OPENER_ERROR =
+  'the host has no xdg-open executable on PATH, so it cannot open a file manager window; ' +
+  'copy the path and open it manually'
+
 /** Absolute-path check for the two path dialects the host may run on. */
-function isAbsolutePath(path: string): boolean {
-  if (process.platform === 'win32') {
+function isAbsolutePath(path: string, platform: string): boolean {
+  if (platform === 'win32') {
     // Drive-qualified (`C:\dir`, `C:/dir`) or UNC (`\\server\share`).
     return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\]/.test(path)
   }
   return path.startsWith('/')
 }
 
-/** Pick the OS opener for one target (`folder` uses reveal semantics on macOS). */
-function openerSpec(path: string, target: 'file' | 'folder'): { command: string; args: string[] } {
-  switch (process.platform) {
-    case 'win32':
-      // `explorer.exe <path>` opens a file or a folder; `/select,` is not used
-      // because the route already resolves the folder itself.
-      return { command: 'explorer.exe', args: [path] }
-    case 'darwin':
-      return target === 'folder'
-        ? { command: 'open', args: ['-R', path] }
-        : { command: 'open', args: [path] }
-    default:
-      return { command: 'xdg-open', args: [path] }
+/** `true` when the environment names a live graphical session. */
+function hasGraphicalSession(env: Record<string, string | undefined>): boolean {
+  for (const name of DISPLAY_VARIABLES) {
+    const value = env[name]
+    if (typeof value === 'string' && value.trim() !== '') return true
+  }
+  return false
+}
+
+/** `true` when `candidate` is a regular file the host can execute. */
+function isExecutableFile(candidate: string, platform: string): boolean {
+  try {
+    if (!statSync(candidate).isFile()) return false
+    // Windows has no execute bit; `PATHEXT` resolution is unnecessary because
+    // the only Windows opener (`explorer.exe`) is a system executable.
+    if (platform === 'win32') return true
+    accessSync(candidate, constants.X_OK)
+    return true
+  } catch {
+    return false
   }
 }
 
 /**
- * IANA time zone of the host, used to stamp agent notices.
+ * Resolve a bare executable name against `env.PATH`.
  *
- * `clientTimeZone` is optional in `SessionPromptRequest`; sending the host
- * zone lets the receiving agent render relative times correctly.
+ * Filesystem probing only (never a shell), so the opener that is spawned is
+ * exactly the executable the capability check saw. Relative PATH entries are
+ * resolved against the host cwd; empty entries (which would mean cwd) are
+ * skipped instead of being trusted.
  */
-function resolveClientTimeZone(): string {
-  try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    return typeof zone === 'string' && zone !== '' ? zone : 'UTC'
-  } catch {
-    return 'UTC'
+function findExecutable(
+  name: string,
+  env: Record<string, string | undefined>,
+  platform: string,
+): string | null {
+  const pathValue = env.PATH ?? env.Path ?? env.path
+  if (typeof pathValue !== 'string' || pathValue.trim() === '') return null
+  const separator = platform === 'win32' ? ';' : ':'
+  for (const entry of pathValue.split(separator)) {
+    const dir = entry.trim()
+    if (dir === '') continue
+    const candidate = resolve(dir, name)
+    if (isExecutableFile(candidate, platform)) return candidate
   }
+  return null
+}
+
+/**
+ * Decide whether this host can show a file manager window at all.
+ *
+ * Windows and macOS always have a system opener; the Linux/POSIX branch needs
+ * both a live graphical session and a resolvable `xdg-open`. This is the honest
+ * replacement for spawning blindly: a headless or SSH host now reports
+ * `unsupported` (which the panel renders with a copy-path fallback) instead of
+ * claiming a window opened that can never appear.
+ *
+ * @param platform - host platform discriminant (`process.platform`).
+ * @param env - host environment (`DISPLAY`/`WAYLAND_DISPLAY` and `PATH` read).
+ */
+export function desktopAvailability(
+  platform: string,
+  env: Record<string, string | undefined>,
+): DesktopAvailability {
+  if (platform === 'win32' || platform === 'darwin') {
+    return { available: true, reason: 'ready' }
+  }
+  if (!hasGraphicalSession(env)) {
+    return { available: false, reason: 'no_display', error: NO_DISPLAY_ERROR }
+  }
+  if (findExecutable('xdg-open', env, platform) === null) {
+    return { available: false, reason: 'no_opener', error: NO_OPENER_ERROR }
+  }
+  return { available: true, reason: 'ready' }
+}
+
+/**
+ * Resolve the opener command line for one path, or an `unsupported` failure.
+ *
+ * Pure apart from the PATH probe: no process is spawned here. On Linux the
+ * `xdg-open` path is made absolute so the execution cannot resolve to a
+ * different executable than the capability check saw.
+ *
+ * @param path - absolute file or directory path.
+ * @param target - `file` opens the file, `folder` reveals/opens its folder.
+ * @param platform - host platform discriminant (`process.platform`).
+ * @param env - host environment (`PATH` is read on POSIX hosts).
+ */
+export function resolveOpener(
+  path: string,
+  target: 'file' | 'folder',
+  platform: string,
+  env: Record<string, string | undefined>,
+): OpenerResolution {
+  switch (platform) {
+    case 'win32':
+      // `explorer.exe <path>` opens a file or a folder; `/select,` is not used
+      // because the route already resolves the folder itself.
+      return { ok: true, spec: { command: 'explorer.exe', args: [path] } }
+    case 'darwin':
+      return {
+        ok: true,
+        spec:
+          target === 'folder'
+            ? { command: 'open', args: ['-R', path] }
+            : { command: 'open', args: [path] },
+      }
+    default: {
+      const availability = desktopAvailability(platform, env)
+      if (!availability.available) {
+        return { ok: false, code: 'unsupported', error: availability.error ?? NO_DISPLAY_ERROR }
+      }
+      const command = findExecutable('xdg-open', env, platform)
+      if (command === null) {
+        return { ok: false, code: 'unsupported', error: NO_OPENER_ERROR }
+      }
+      return { ok: true, spec: { command, args: [path] } }
+    }
+  }
+}
+
+/** Production child-process factory: detached, ignored stdio, hidden console. */
+function spawnOpener(
+  command: string,
+  args: readonly string[],
+  options: { detached: boolean; stdio: 'ignore'; windowsHide: boolean },
+): OpenerChildLike {
+  return spawn(command, args, {
+    detached: options.detached,
+    stdio: options.stdio,
+    windowsHide: options.windowsHide,
+  })
+}
+
+/** Merge the injectable opener environment with production defaults. */
+function resolveOpenPathEnvironment(overrides: Partial<OpenPathEnvironment>): OpenPathEnvironment {
+  return {
+    platform: overrides.platform ?? process.platform,
+    env: overrides.env ?? process.env,
+    spawn: overrides.spawn ?? spawnOpener,
+    startTimeoutMs: overrides.startTimeoutMs ?? OPENER_START_TIMEOUT_MS,
+  }
+}
+
+/**
+ * Wait for the child `'spawn'` vs `'error'` event before reporting success.
+ *
+ * `child_process.spawn` reports an asynchronous failure through `'error'`
+ * (ENOENT, EACCES, EMFILE, ...); treating the call itself as success is why a
+ * missing opener used to look like an opened window. `'spawn'` is the only
+ * success signal; without it the opener did not start.
+ *
+ * @param child - spawned opener process.
+ * @param timeoutMs - bound on the race.
+ * @returns `null` when the opener started, the failure message otherwise.
+ */
+function confirmOpenerStart(child: OpenerChildLike, timeoutMs: number): Promise<string | null> {
+  return new Promise((done) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const settle = (failure: string | null): void => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      if (failure === null) {
+        try {
+          child.unref()
+        } catch {
+          /* A started child that cannot be detached still opened; no failure. */
+        }
+      }
+      done(failure)
+    }
+    timer = setTimeout(
+      () => settle(`the desktop opener did not report a successful start within ${timeoutMs}ms`),
+      timeoutMs,
+    )
+    child.on('spawn', () => settle(null))
+    child.on('error', (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      settle(`the desktop opener failed to start: ${message}`)
+    })
+  })
 }
 
 // ── Task-path resolution (shared with the browser route) ────────────────────

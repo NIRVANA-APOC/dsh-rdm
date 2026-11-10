@@ -1,10 +1,15 @@
-// The floating active-download popup (top-right, `shell.overlay`).
+// The floating active-download popup (bottom-right, `shell.overlay`).
 //
 // Product rule: this surface exists **iff** at least one session has an active
 // download (queued / probing / running). With nothing active the component
 // renders nothing at all, so the frame carries no empty chrome. While active it
 // can be collapsed to a pill but never dismissed: the running work stays visible
 // until it settles.
+//
+// Each row is one download, titled by its file name. The owning session is
+// secondary metadata only: a popup headed by session names made several
+// concurrent files in one session look like a single transfer and was reported
+// as misleading. The aggregate header still sums every active task.
 //
 // It shares the global feed with the workbench page, so the popup costs no extra
 // polling when the page is open.
@@ -13,19 +18,23 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useGlobalLedger } from './data'
 import { formatPercent, formatSpeed, shortSessionId } from './format'
 import { ChevronGlyph, CloseGlyph, DownloadGlyph } from './icons'
-import { currentConnections, isActive } from './model'
+import { currentConnections, fileNameOf, isActive } from './model'
 import { ReviewStyle } from './primitives'
 import type { TFunction, TaskView } from './types'
 
-/** One session row inside the popup. */
-interface ActiveSession {
-  sessionId: string | null
+/** One active download row inside the popup. */
+interface ActiveTaskRow {
+  /** Kernel task id, stable across polls. */
+  id: string
+  /** File name: the row's visible title. */
   title: string
-  tasks: TaskView[]
+  /** Owning session's display name, secondary metadata. */
+  sessionTitle: string
+  task: TaskView
   percent: number | null
   speedBps: number
   connections: number
-  /** 0..1 for the row's meter; unknown totals fall back to the mean percent. */
+  /** 0..1 for the row's meter. */
   fraction: number
 }
 
@@ -53,35 +62,31 @@ function aggregatePercent(tasks: TaskView[]): number | null {
   return null
 }
 
-function sessionsOf(t: TFunction, tasks: TaskView[], sessions: ReturnType<typeof useGlobalLedger>['sessions']): ActiveSession[] {
-  const map = new Map<string, TaskView[]>()
-  for (const task of tasks) {
-    const key = task.sessionId ?? ''
-    const bucket = map.get(key)
-    if (bucket === undefined) map.set(key, [task])
-    else bucket.push(task)
-  }
-  const rows: ActiveSession[] = []
-  for (const [key, bucket] of map) {
-    const sessionId = key === '' ? null : key
-    const meta = sessionId === null ? null : (sessions[sessionId] ?? null)
-    const percent = aggregatePercent(bucket)
-    const fallback =
-      sessionId === null
-        ? t('group.unattributedSession')
-        : t('group.sessionFallback', { id: shortSessionId(sessionId) })
-    rows.push({
-      sessionId,
-      title: meta !== null && meta.title !== null && meta.title.trim() !== '' ? meta.title : fallback,
-      tasks: bucket,
-      percent,
-      speedBps: bucket.reduce((sum, task) => sum + task.speedBps, 0),
-      connections: bucket.reduce((sum, task) => sum + (currentConnections(task) ?? 0), 0),
-      fraction: percent === null ? 0 : Math.max(0, Math.min(1, percent / 100)),
+/** The owning session's display name; unattributed tasks say so explicitly. */
+function sessionTitleOf(task: TaskView, sessions: ReturnType<typeof useGlobalLedger>['sessions'], t: TFunction): string {
+  if (task.sessionId === null) return t('group.unattributedSession')
+  const meta = sessions[task.sessionId] ?? null
+  if (meta !== null && meta.title !== null && meta.title.trim() !== '') return meta.title
+  return t('group.sessionFallback', { id: shortSessionId(task.sessionId) })
+}
+
+/** One row per active download, sorted by file name. */
+function rowsOf(t: TFunction, tasks: TaskView[], sessions: ReturnType<typeof useGlobalLedger>['sessions']): ActiveTaskRow[] {
+  return tasks
+    .map((task) => {
+      const percent = task.percent
+      return {
+        id: task.id,
+        title: fileNameOf(task),
+        sessionTitle: sessionTitleOf(task, sessions, t),
+        task,
+        percent,
+        speedBps: task.speedBps,
+        connections: currentConnections(task) ?? 0,
+        fraction: percent === null ? 0 : Math.max(0, Math.min(1, percent / 100)),
+      }
     })
-  }
-  rows.sort((left, right) => left.title.localeCompare(right.title))
-  return rows
+    .sort((left, right) => left.title.localeCompare(right.title) || left.sessionTitle.localeCompare(right.sessionTitle))
 }
 
 export interface DownloadsPopupProps {
@@ -94,7 +99,7 @@ export interface DownloadsPopupProps {
 export function DownloadsPopup({ t, onOpen }: DownloadsPopupProps) {
   const state = useGlobalLedger()
   const active = useMemo(() => state.tasks.filter(isActive), [state.tasks])
-  const rows = useMemo(() => sessionsOf(t, active, state.sessions), [t, active, state.sessions])
+  const rows = useMemo(() => rowsOf(t, active, state.sessions), [t, active, state.sessions])
   const [collapsed, setCollapsed] = useState(false)
   // A newly started task always re-expands the popup, even after a manual collapse.
   const seenRef = useRef<Set<string>>(new Set())
@@ -169,12 +174,12 @@ export function DownloadsPopup({ t, onOpen }: DownloadsPopupProps) {
             <button
               type="button"
               className="rdm2-pop-row"
-              key={row.sessionId ?? 'unattributed'}
+              key={row.id}
               onClick={onOpen}
               title={t('popup.openPanel')}
             >
               <span className="rdm2-pop-row-top">
-                <span className="rdm2-pop-session" title={row.title}>
+                <span className="rdm2-pop-file" title={row.title}>
                   {row.title}
                 </span>
                 <span className="rdm2-pop-percent">{row.percent === null ? '' : formatPercent(row.percent)}</span>
@@ -183,7 +188,9 @@ export function DownloadsPopup({ t, onOpen }: DownloadsPopupProps) {
                 <span className="rdm2-pop-meter-fill" style={{ width: `${Math.round(row.fraction * 100)}%` }} />
               </span>
               <span className="rdm2-pop-row-meta">
-                <span>{t('popup.tasks', { n: row.tasks.length })}</span>
+                <span className="rdm2-pop-session" title={row.sessionTitle}>
+                  {row.sessionTitle}
+                </span>
                 {row.speedBps > 0 ? <span>{formatSpeed(row.speedBps)}</span> : null}
                 {row.connections > 0 ? <span>{t('popup.connections', { n: row.connections })}</span> : null}
               </span>

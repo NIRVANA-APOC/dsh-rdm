@@ -1,5 +1,5 @@
-// Styles for the three review surfaces (global workbench, session tab,
-// active-download popup).
+// Styles for the two review surfaces (global workbench, active-download
+// popup).
 //
 // One token block on `.rdm2` maps host theme tokens to local names; every rule
 // consumes those locals and there are no literal colours. The workbench is a
@@ -40,8 +40,6 @@ export const REVIEW_CSS = `
   --rdm2-focus: color-mix(in srgb, var(--dsw-alias-state-business-primary) 72%, var(--dsw-alias-label-primary));
   --rdm2-code: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
   --rdm2-track: color-mix(in srgb, var(--dsw-alias-label-tertiary) 18%, transparent);
-  --rdm2-wave-fill: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
-  --rdm2-wave-line: color-mix(in srgb, var(--dsw-alias-state-business-primary) 78%, var(--dsw-alias-label-primary));
   --rdm2-skeleton: var(--dsw-alias-bg-skeleton, color-mix(in srgb, var(--dsw-alias-label-tertiary) 16%, transparent));
   --rdm2-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
   --rdm2-shadow-lift: 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
@@ -291,7 +289,13 @@ export const REVIEW_CSS = `
 }
 .rdm2-banner-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .rdm2-banner-title { color: var(--rdm2-ink); font-weight: 500; }
-.rdm2-banner-hint { color: var(--rdm2-ink-2); }
+.rdm2-banner-hint { color: var(--rdm2-ink-2); overflow-wrap: anywhere; }
+.rdm2-banner-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.rdm2-banner[data-tone='success'] {
+  border-color: color-mix(in srgb, var(--rdm2-ok) 42%, transparent);
+  background: color-mix(in srgb, var(--rdm2-ok) 7%, var(--rdm2-card));
+}
+.rdm2-banner[data-tone='info'] { border-color: var(--rdm2-line-2); background: var(--rdm2-wash); }
 
 /* --------------------------------------------------------------- toolbar */
 
@@ -455,7 +459,6 @@ export const REVIEW_CSS = `
 .rdm2-confirm-title { font-size: 12.5px; line-height: 18px; font-weight: 500; color: var(--rdm2-ink); }
 .rdm2-confirm-hint { font-size: 11.5px; line-height: 17px; color: var(--rdm2-ink-2); }
 .rdm2-confirm-actions { display: flex; gap: 6px; flex: none; }
-.rdm2-confirm-inline { margin: 0 14px 8px; }
 
 /* -------------------------------------------------------------- feedback */
 
@@ -764,50 +767,6 @@ export const REVIEW_CSS = `
   border: 0;
 }
 
-/* --------------------------------------------------------------- waveform */
-
-.rdm2-wave { display: flex; flex-direction: column; min-width: 0; width: 100%; }
-.rdm2-wave-plot { position: relative; flex: 1 1 auto; min-height: 0; }
-.rdm2-wave-svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.rdm2-wave-baseline { stroke: var(--rdm2-line-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.rdm2-wave-flat { stroke: var(--rdm2-ink-3); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
-.rdm2-wave-area { fill: var(--rdm2-wave-fill); stroke: none; }
-.rdm2-wave-line {
-  fill: none;
-  stroke: var(--rdm2-wave-line);
-  stroke-width: 1.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-.rdm2-wave-head {
-  position: absolute;
-  right: 0;
-  width: 7px;
-  height: 7px;
-  margin-top: -3.5px;
-  border-radius: 50%;
-  background: var(--rdm2-live);
-  box-shadow: 0 0 0 3px var(--rdm2-live-soft);
-  transform: translate(50%, 0);
-  animation: rdm2-head-pulse 2.4s ease-in-out infinite;
-}
-.rdm2-wave-labels {
-  display: flex;
-  justify-content: space-between;
-  height: 16px;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--rdm2-ink-3);
-}
-.rdm2-wave-label { font-variant-numeric: tabular-nums; }
-.rdm2-session .rdm2-wave { gap: 2px; }
-.rdm2-session .rdm2-wave-labels { display: none; }
-@keyframes rdm2-head-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 3px var(--rdm2-live-soft); }
-  50% { opacity: 0.72; box-shadow: 0 0 0 5px color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); }
-}
-
 /* ---------------------------------------------------------------- drawer */
 
 .rdm2-drawer {
@@ -902,49 +861,12 @@ export const REVIEW_CSS = `
 .rdm2-empty-hint { margin: 0; font-size: 12px; line-height: 18px; color: var(--rdm2-ink-3); max-width: 46ch; }
 .rdm2-empty-action { display: flex; justify-content: center; margin-top: 8px; }
 
-/* ---------------------------------------------------------------- session */
-
-.rdm2-session { box-sizing: border-box; height: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; background: var(--rdm2-base); }
-.rdm2-session-header { position: sticky; top: 0; z-index: 2; padding: 12px 14px 10px; background: var(--rdm2-base); border-bottom: 1px solid var(--rdm2-line); }
-.rdm2-session-title-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.rdm2-session-title { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--rdm2-ink); }
-.rdm2-session-sub { display: flex; gap: 12px; font-size: 11.5px; line-height: 18px; color: var(--rdm2-ink-3); white-space: nowrap; }
-.rdm2-session-body { display: flex; flex-direction: column; gap: 0; padding: 0 14px 24px; }
-.rdm2-session .rdm2-record { border: 0; border-top: 1px solid var(--rdm2-line); border-radius: 0; box-shadow: none; background: transparent; }
-.rdm2-session .rdm2-record:first-child { border-top: 0; }
-.rdm2-session .rdm2-record:hover { border-color: var(--rdm2-line); box-shadow: none; }
-.rdm2-session .rdm2-record-row {
-  position: relative;
-  display: block;
-  padding: 11px 0 12px;
-}
-.rdm2-session .rdm2-record-actions {
-  position: absolute;
-  top: 5px;
-  right: 0;
-}
-.rdm2-session .rdm2-record-name-line { padding-right: 116px; }
-.rdm2-session .rdm2-seal-hash { display: none; }
-.rdm2-session .rdm2-record-meta { padding-right: 0; }
-.rdm2-session .rdm2-record-actions { opacity: 1; }
-.rdm2-session .rdm2-checkbox { display: none; }
-.rdm2-session .rdm2-drawer { margin: 0 0 12px; background: transparent; }
-.rdm2-session .rdm2-drawer-cols { grid-template-columns: 1fr; gap: 12px; }
-.rdm2-session .rdm2-event { grid-template-columns: 56px minmax(0, 1fr); }
-.rdm2-session .rdm2-event-kind { display: none; }
-.rdm2-session .rdm2-banner { margin: 8px 14px 0; }
-.rdm2-session .rdm2-note { padding: 14px 0; }
-.rdm2-session .rdm2-skeleton-list { padding-top: 6px; }
-.rdm2-session .rdm2-skeleton-card { padding: 10px 0; border: 0; border-top: 1px solid var(--rdm2-line); border-radius: 0; background: transparent; }
-.rdm2-tab-title { display: inline-flex; align-items: center; gap: 6px; }
-.rdm2-confirm-inline { margin: 8px 14px; }
-
 /* ------------------------------------------------------------------ popup */
 
 .rdm2-pop {
   position: fixed;
-  top: calc(14px + var(--dsh-frame-top-clearance, 0px));
   right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   z-index: 60;
   width: 300px;
   max-width: calc(100vw - 24px);
@@ -991,7 +913,8 @@ export const REVIEW_CSS = `
 }
 .rdm2-pop-row:hover { background: var(--rdm2-hover); }
 .rdm2-pop-row-top { display: flex; align-items: baseline; gap: 8px; }
-.rdm2-pop-session { flex: 1 1 auto; min-width: 0; font-size: 12.5px; line-height: 18px; font-weight: 500; color: var(--rdm2-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rdm2-pop-file { flex: 1 1 auto; min-width: 0; font-size: 12.5px; line-height: 18px; font-weight: 500; color: var(--rdm2-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rdm2-pop-session { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rdm2-pop-percent { flex: none; font-size: 12px; line-height: 18px; font-weight: 600; color: var(--rdm2-ink); }
 .rdm2-pop-meter { display: block; height: 3px; border-radius: 2px; background: var(--rdm2-track); overflow: hidden; }
 .rdm2-pop-meter-fill { display: block; height: 100%; border-radius: 2px; background: var(--rdm2-live); transition: width 0.4s var(--ds-ease-in-out, ease); }
@@ -1039,7 +962,7 @@ export const REVIEW_CSS = `
 .rdm2-pop-pill-text { white-space: nowrap; }
 .rdm2-pop-pill-chevron { display: inline-flex; color: var(--rdm2-ink-3); }
 @keyframes rdm2-pop-in {
-  from { opacity: 0; transform: translateY(-4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes rdm2-pop-pulse {
@@ -1077,7 +1000,7 @@ export const REVIEW_CSS = `
   .rdm2-drawer-cols { grid-template-columns: 1fr; }
   .rdm2-record-host { display: none; }
   .rdm2-event { grid-template-columns: 56px 76px minmax(0, 1fr); }
-  .rdm2-pop { right: 12px; }
+  .rdm2-pop { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (max-width: 560px) {
   .rdm2-page-inner { padding: 14px 12px 32px; }

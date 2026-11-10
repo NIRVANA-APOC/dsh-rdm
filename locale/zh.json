@@ -60,8 +60,7 @@
     "global": "还没有下载记录。智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
     "globalHint": "智能体用 rdm_download 获取的文件都会连同证据出现在这里。",
     "filtered": "没有符合条件的记录",
-    "filteredHint": "调整筛选，或在上方粘贴链接开始新的下载。",
-    "session": "这个会话还没有下载。"
+    "filteredHint": "调整筛选，或在上方粘贴链接开始新的下载。"
   },
   "group": {
     "unattributed": "未归属会话",
@@ -69,17 +68,7 @@
     "sessionFallback": "会话 {id}",
     "records": "{n} 条记录",
     "active": "{n} 个进行中",
-    "live": "活跃",
-    "session": "会话 {id}"
-  },
-  "session": {
-    "title": "下载",
-    "unknownScope": "此标签页尚未绑定到会话。",
-    "verifiedCount": "{n} 个已校验",
-    "riskCount": "{n} 个有风险"
-  },
-  "guide": {
-    "description": "查看本会话的下载"
+    "live": "活跃"
   },
   "popup": {
     "title": "{n} 个下载中",
@@ -108,9 +97,7 @@
   "record": {
     "etaLabel": "剩余",
     "etaConfidence": "剩余时间置信度：{level}",
-    "pulse": "{name} 的吞吐曲线",
     "sizeUnknown": "大小未知",
-    "reveal": "在侧栏打开",
     "copyPath": "复制路径",
     "copyHash": "复制哈希",
     "copyId": "复制下载 ID",
@@ -137,13 +124,12 @@
     "resumedMany": "已继续 {n} 个下载",
     "deletedOne": "已删除 {name}",
     "deletedMany": "已删除 {n} 条记录",
-    "agentNotified": "已告知对应会话的 Agent 这是用户操作。",
     "openedFile": "已打开 {name}",
     "openedFolder": "已打开所在目录",
-    "stop": "停止",
-    "confirmStop": "确认停止",
-    "toggle": "{name}，{status}。展开证据记录。",
-    "stopRequested": "正在停止 {name}"
+    "openUnavailableTitle": "当前部署无法打开系统文件管理器",
+    "openUnavailableHint": "宿主没有图形桌面会话（远程或无头部署）。文件仍保存在主机磁盘上，可复制路径后用其他方式访问。",
+    "openPathHint": "位置：{path}",
+    "openMissingTitle": "无法打开：任务记录或文件已不在主机上"
   },
   "common": {
     "copyFailed": "复制失败",
