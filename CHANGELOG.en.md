@@ -11,11 +11,64 @@ or creates the tag. There is no release without a changelog entry; run
 equality and the matching `[X.Y.Z]` section).
 
 Starting with **0.2.2**, the resident kernel and the plugin package share one
-version number. The current merged tree is **0.3.3** (protocol 2):
+version number. The current merged tree is **0.3.4** (protocol 2):
 `package.json`, `kernel/Cargo.toml` and the kernel's ready/initialize/stats
-frames all report `0.3.3`. Historical recordings keep the strings their
+frames all report `0.3.4`. Historical recordings keep the strings their
 binaries actually wrote (`0.2.1` kernel = `1.1.0`; pre-unification `0.2.2`
 builds = `1.2.0`).
+
+## [0.3.4] — 2026-11-10
+
+0.3.4 is a patch release for a permanent kernel stall at the tail of a transfer.
+The real task `t_c88d0535089afb3c` (690 MiB, one source, 87 × 8 MiB chunks)
+reached 98 % with 86 chunks done, then dropped to zero connections and sat for
+six minutes with no bytes, no retries and no error while still reporting
+`running`; a manual pause + resume downloaded only the missing 8 MiB chunk and
+the file verified against its SHA-256. Root cause: one range request was
+answered with a **200 full-body response** (the edge ignored Range or If-Range
+stopped matching). The `ClaimOutcome::Downgrade` branch returned without
+settling the claimed range, and `downgrade` was not part of
+`Shared::stopped()`, so 23 idle workers spun on an empty pending queue while the
+engine main loop stayed parked on its sequential worker JoinHandles and could
+never observe the downgrade. Protocol stays **2**.
+
+### Fixes
+- **A Range request answered with 200 no longer loses its claim.** `downgrade`
+  is a terminal decision and is now part of `Shared::stopped()`; the claim-path
+  stop checks use `stopped()` so both workers and the engine leave immediately.
+- **A mid-transfer 200 now fails resumably.** Once any bytes are settled the
+  engine returns `remote_changed` and keeps the `.part` plus resume state
+  instead of silently restarting the whole transfer from zero through the
+  single-stream fallback; only a transfer that has settled nothing downgrades.
+- **Claim-leak safety net.** `Claim::drop` re-queues the range of a claim whose
+  worker task ended unexpectedly (panic/cancel). The whole range is queued
+  again, not just the reported prefix: `tokio::fs` buffers are not flushed on
+  unwind, so progress bytes are not durable. `Scheduler::abandon` uses
+  `PoisonError::into_inner`, so unwinding through a poisoned mutex cannot panic
+  a second time.
+- **Worker failures are visible.** Workers run in an inner task, so a
+  panic/cancel is written to the task timeline as an `info` event carrying the
+  panic payload, and three abandoned workers fail the task instead of
+  re-queueing forever.
+
+### Verification
+- New deterministic regression tests: the fixture ignores Range after N served
+  bytes. On the pre-fix code the two engine tests reproduce the exact incident
+  signature (stuck `running`, `active_workers=0`, `retries=0`); after the fix a
+  fresh transfer downgrades to a single stream, while a mid-transfer 200 fails
+  with `remote_changed` and resumes to a byte-identical file.
+- `cargo test` **161/161** (lib 78, engine 17, multi-source 8, protocol 5,
+  unit 19, v022 13, v030 21); `cargo build --release` clean.
+- `node scripts/check-release.mjs` **PASS** (package = kernel = `0.3.4`);
+  `node scripts/verify-kernels.mjs` **PASS** (5 targets); host-api,
+  client-activation, session-catalog-open, tools-receipts and verify-fixture
+  green; `lib/index.js` / `lib/client.js` rebuilt for 0.3.4.
+- `node scripts/verify-kernel.mjs` against the local 0.3.4 release kernel:
+  **15/15 scenarios, 256/256 checks** (pause→resume, resume across kernel
+  restart, remote-change handling included).
+- The pause/resume integration tests' `Status::Queued` assertion race is fixed
+  as well: the resume control reply may arrive after the engine entered
+  `Probing`/`Running`.
 
 ## [0.3.3] — 2026-11-10
 

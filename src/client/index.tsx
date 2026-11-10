@@ -1,4 +1,4 @@
-// Client half of the dsh-rdm plugin (0.3.3).
+// Client half of the dsh-rdm plugin (0.3.4).
 //
 // Compiled by scripts/dev-build.sh into the Harness module-loader format:
 // `window.__ModuleLoader__.load({ id: 'dsh-rdm', factory(require) { ... } })`.

@@ -9,9 +9,51 @@
 `node scripts/check-release.mjs` 会检查 package/kernel 版本一致性和对应章节是否存在。
 
 从 **0.2.2** 起，常驻内核与插件包共用同一版本号。当前合并树为
-**0.3.3**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
-ready/initialize/stats 帧都报告 `0.3.3`。历史录制保留二进制实际写入的
+**0.3.4**（协议 2）：`package.json`、`kernel/Cargo.toml` 以及内核的
+ready/initialize/stats 帧都报告 `0.3.4`。历史录制保留二进制实际写入的
 版本串（0.2.1 内核 = `1.1.0`；版本统一前的 0.2.2 构建 = `1.2.0`）。
+
+## [0.3.4] — 2026-11-10
+
+0.3.4 补丁版：修复内核在尾部只剩个别 chunk 时永久挂死的问题。真实任务
+`t_c88d0535089afb3c`（690 MiB、单源、87 × 8 MiB chunk）下载到 98%、86 个 chunk
+完成后，连接数掉到 0，连续 6 分钟无字节、无重试、无错误，任务一直显示
+`running`；用户手动暂停再续传后，只补下缺失的 1 个 8 MiB chunk，SHA-256 校验
+通过。根因是其中一次 Range 请求被服务器/代理用 **200 全量响应**回答：内核走
+`ClaimOutcome::Downgrade` 分支时没有结算已认领的 claim，而 `downgrade` 又不在
+`Shared::stopped()` 里，于是 23 个空闲 worker 在空 pending 队列上自旋，引擎主
+循环停在顺序 await 的 worker JoinHandle 上，永远看不到降级信号。协议仍为 **2**。
+
+### 修复
+- **Range 请求被 200 回答时不再丢 claim。** `downgrade` 作为终态判定进入
+  `Shared::stopped()`；claim 循环的停止检查改用 `stopped()`，worker 与引擎都能
+  立即观察降级并退出。
+- **中途收到 200 改为可续传失败。** 已经落盘过字节时返回 `remote_changed`
+  （保留 `.part` 与 resume state），不再静默走 single-stream 清空 98% 从头重下；
+  只有尚未结算任何字节的全新传输才降级为单流。
+- **claim 泄漏兜底。** `Claim::drop` 把异常结束（panic/取消）的 worker 未结算的
+  claim 整段重新入队——整段而非“进度前缀”，因为 `tokio::fs` 的缓冲在任务展开时
+  不会 flush，进度字节不可信；`Scheduler::abandon` 用
+  `PoisonError::into_inner`，panic 展开期间不会二次 panic。
+- **worker 异常可见。** worker 在 inner task 中运行，panic/取消会写入一条含 panic
+  payload 的 `info` 事件；连续 3 个 worker 异常结束时显式失败，避免无限重排。
+
+### 验证
+- 新增确定性回归测试：fixture 在服务 N 字节后忽略 Range。修复前两个引擎测试分别
+  复现“停在 `running`、`active_workers=0`、`retries=0`”的挂死；修复后全新传输
+  降级单流完成，中途 200 以 `remote_changed` 失败、resume 后字节一致地完成。
+- `cargo test` **161/161**（lib 78、engine 17、multi-source 8、protocol 5、
+  unit 19、v022 13、v030 21）；`cargo build --release` 通过。
+- `node scripts/check-release.mjs` **PASS**（package = kernel = `0.3.4`）；
+  `node scripts/verify-kernels.mjs` **PASS**（5 个目标）；
+  `tests/host-api.test.mjs`、`tests/client-activation.test.mjs`、
+  `tests/session-catalog-open.test.mjs`、`tests/tools-receipts.test.mjs`、
+  `node scripts/verify-fixture.mjs` 全绿；`lib/index.js` / `lib/client.js` 按
+  0.3.4 重建。
+- 用 0.3.4 本地 release 内核跑 `node scripts/verify-kernel.mjs`：**15/15 场景、
+  256/256 检查**通过（含 pause→resume、跨内核重启续传、remote change 等）。
+- 顺带修复 pause/resume 集成测试里 `Status::Queued` 断言的竞态（resume 的
+  control 回复可能晚于引擎进入 `Probing`/`Running`）。
 
 ## [0.3.3] — 2026-11-10
 

@@ -1,5 +1,22 @@
 # dsh-rdm 0.3.0 — verification report
 
+> **0.3.4 (2026-11-10) — no more 98 % / zero-connection kernel stall.** A real
+> download (`t_c88d0535089afb3c`, 690 MiB, 87 × 8 MiB chunks) stalled after 86
+> chunks when one range request was answered HTTP 200: the downgrade branch left
+> the claim unsettled, `downgrade` was not part of `Shared::stopped()`, so 23
+> idle workers spun on an empty queue while the engine stayed parked on its
+> worker JoinHandles. The kernel now treats downgrade as terminal, fails a
+> mid-transfer 200 resumably (`remote_changed`, `.part` and resume state kept)
+> instead of silently restarting from zero, re-queues any claim whose worker
+> task ended unexpectedly, and reports worker panics in the task timeline.
+> Regression coverage: a fixture that ignores Range after N served bytes plus
+> scheduler drop-reclaim tests; on the pre-fix code the engine tests reproduce
+> the exact incident signature (`running`, `active_workers=0`, `retries=0`).
+> Repo gates: `cargo test` **161/161**, `check-release` **PASS**
+> (package = kernel = `0.3.4`), `verify-kernels` **PASS** (5 targets),
+> host-api / client-activation / session-catalog-open / tools-receipts /
+> verify-fixture green, `cargo build --release` clean.
+
 > **0.3.3 (2026-11-10) — download-UI agent notices removed.** Acting on a
 > download record in the workbench page or its batch toolbar no longer tells the
 > owning session agent that the user did it: the client sends no

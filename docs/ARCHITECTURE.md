@@ -1,4 +1,4 @@
-# dsh-rdm — architecture (0.3.3)
+# dsh-rdm — architecture (0.3.4)
 
 `dsh-rdm` embeds a **resident downloader kernel** into DeepSeek Harness: one
 long-lived Rust process that stays warm and is driven by model-facing tools and
